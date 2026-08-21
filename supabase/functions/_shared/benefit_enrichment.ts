@@ -1,10 +1,48 @@
+import {
+  canonicalBenefitCategory,
+  canonicalBenefitHash,
+  type CanonicalBenefitInput,
+  canonicalConditionObject,
+  canonicalExclusions,
+  canonicalValueConfig,
+  cardScopedBenefitKey,
+  stableCanonicalJson,
+} from "./benefit_contract.ts";
+import {
+  redactSensitiveUrlsInText,
+  redactSensitiveUrlsInValue,
+  safeHttpsDisplayUrl,
+} from "./benefit_source_privacy.ts";
+
 export type BenefitDocument = {
+  /** Full canonical URL requested by trusted fetch code; never persisted. */
   sourceUrl: string;
+  /** Redirect-resolved canonical URL used only for redacted presentation. */
+  finalUrl?: string;
+  /** Exact approved functional resources used only to derive replay identity. */
+  requestedResourceUrl?: string;
+  finalResourceUrl?: string;
+  /** Opaque identities retained for replay binding; never rendered as URLs. */
+  requestedResourceIdentityHash?: string;
+  finalResourceIdentityHash?: string;
   text: string;
   contentHash?: string;
+  /** Bounded, privacy-safe classifier input retained only for pilot replay. */
+  replayLinks?: Array<{
+    href: string;
+    resourceUrl?: string;
+    anchorText: string;
+    resourceIdentityHash: string;
+    queryPolicy?: "functional_only";
+  }>;
+  replayLinkOverflow?: boolean;
 };
 
 export type BenefitProposal = {
+  /** Existing live benefits row UUID; never used as canonical proposal identity. */
+  liveBenefitId?: string;
+  benefitId?: string;
+  offerSubject?: string;
   dedupeKey: string;
   title: string;
   description: string;
@@ -24,6 +62,8 @@ export type BenefitProposal = {
   effectiveTo?: string;
   sourceUrl: string;
   sourceUrls?: string[];
+  sourceIdentity?: string;
+  sourceIdentities?: string[];
   sourceExcerpt: string;
   contentHash: string;
   parserVersion: string;
@@ -32,20 +72,255 @@ export type BenefitProposal = {
   warnings: string[];
 };
 
+export type BenefitProposalV6 =
+  & Omit<BenefitProposal, "dedupeKey" | "valueConfig" | "exclusions">
+  & {
+    benefitId: string;
+    offerSubject: string;
+    dedupeKey: string;
+    conditionHash: string;
+    valueConfig: Record<string, unknown>;
+    exclusions: Record<string, unknown>;
+  };
+
+export type BenefitComparisonProposal = BenefitProposal | BenefitProposalV6;
+
 export type BenefitDiff = {
-  additions: BenefitProposal[];
-  modifications: Array<{ current: BenefitProposal; proposed: BenefitProposal }>;
-  possibleRemovals: Array<{ benefit: BenefitProposal; informational: true }>;
-  unchanged: Array<{ current: BenefitProposal; proposed: BenefitProposal }>;
+  additions: BenefitComparisonProposal[];
+  modifications: Array<{
+    current: BenefitComparisonProposal;
+    proposed: BenefitComparisonProposal;
+    changeType?: "identity_migration";
+  }>;
+  possibleRemovals: Array<{
+    benefit: BenefitComparisonProposal;
+    informational: true;
+  }>;
+  unchanged: Array<{
+    current: BenefitComparisonProposal;
+    proposed: BenefitComparisonProposal;
+  }>;
   conflicts: Array<{
     code:
       | "ambiguous_benefit_match"
       | "conflicting_proposed_terms"
       | "dedupe_key_condition_mismatch";
-    current?: BenefitProposal[];
-    proposed: BenefitProposal[];
+    current?: BenefitComparisonProposal[];
+    proposed: BenefitComparisonProposal[];
   }>;
 };
+
+function safeSourceUrl(value: unknown): string {
+  return safeHttpsDisplayUrl(value) ?? "invalid-source";
+}
+
+function canonicalRequestedSourceUrl(value: unknown): string | null {
+  try {
+    const url = new URL(String(value ?? ""));
+    if (
+      url.protocol !== "https:" || !url.hostname || url.username ||
+      url.password || url.hash
+    ) return null;
+    url.searchParams.sort();
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+async function sha256SourceIdentity(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return [...new Uint8Array(digest)].map((byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
+}
+
+function finiteConfigNumber(
+  config: Record<string, unknown>,
+  ...keys: string[]
+): number | undefined {
+  for (const key of keys) {
+    const value = config[key];
+    if (
+      (typeof value === "number" || typeof value === "string") &&
+      value !== "" && Number.isFinite(Number(value))
+    ) {
+      return Number(value);
+    }
+  }
+  return undefined;
+}
+
+function persistedFlatCommercialTerms(
+  config: Record<string, unknown>,
+  benefitType: unknown,
+): Pick<
+  BenefitComparisonProposal,
+  "value" | "rate" | "cap" | "threshold" | "frequency" | "period"
+> {
+  const normalizedType = String(benefitType ?? "").toLowerCase();
+  const usageCount = finiteConfigNumber(
+    config,
+    "max_usage_per_month",
+    "max_usage_per_period",
+  );
+  const bogoValue = normalizedType === "bogo"
+    ? finiteConfigNumber(config, "max_discount_per_transaction")
+    : undefined;
+  const annualValue = normalizedType === "annual_allowance"
+    ? finiteConfigNumber(config, "annual_cap")
+    : undefined;
+  const rewardValue = ["reward_points", "miles"].includes(normalizedType)
+    ? finiteConfigNumber(config, "multiplier")
+    : undefined;
+  const hasMonthlyPeriod =
+    (usageCount !== undefined && config.max_usage_per_month !== undefined) ||
+    String(config.milestone_type ?? "").toLowerCase() === "monthly";
+  const period = typeof config.period === "string" && config.period.trim()
+    ? config.period
+    : typeof config.usage_period === "string" && config.usage_period.trim()
+    ? config.usage_period
+    : hasMonthlyPeriod
+    ? "month"
+    : normalizedType === "annual_allowance"
+    ? "year"
+    : undefined;
+  return {
+    value: finiteConfigNumber(
+      config,
+      "value",
+      "discount_amount",
+      "reward_value",
+    ) ?? bogoValue ?? annualValue ?? rewardValue,
+    rate: finiteConfigNumber(config, "rate", "discount_percent"),
+    cap: finiteConfigNumber(config, "cap"),
+    threshold: finiteConfigNumber(config, "threshold", "threshold_amount"),
+    frequency: typeof config.frequency === "string" && config.frequency.trim()
+      ? config.frequency
+      : usageCount === undefined
+      ? undefined
+      : `${usageCount} redemptions`,
+    period,
+  };
+}
+
+export function currentBenefitProposal(
+  row: Record<string, any>,
+): BenefitComparisonProposal | null {
+  const benefit = row.benefit ?? row.benefits ?? row;
+  if (!benefit || typeof benefit !== "object" || !benefit.dedupe_key) {
+    return null;
+  }
+  const rawConfig =
+    benefit.value_config && typeof benefit.value_config === "object"
+      ? benefit.value_config
+      : {};
+  const config = redactSensitiveUrlsInValue(rawConfig) as Record<string, any>;
+  const flatTerms = persistedFlatCommercialTerms(
+    config,
+    benefit.benefit_type,
+  );
+  const canonicalV6 = String(benefit.dedupe_key).startsWith(
+    "card-benefit-v2:",
+  );
+  const persistedExclusions = config.exclusions ?? benefit.exclusions;
+  const canonicalExclusionTerms = persistedExclusions &&
+      typeof persistedExclusions === "object" &&
+      !Array.isArray(persistedExclusions) &&
+      (persistedExclusions as Record<string, any>).additional &&
+      typeof (persistedExclusions as Record<string, any>).additional ===
+        "object" &&
+      Array.isArray(
+        (persistedExclusions as Record<string, any>).additional.source_terms,
+      )
+    ? (persistedExclusions as Record<string, any>).additional.source_terms.map(
+      String,
+    )
+    : [];
+  const presentedCategory = redactSensitiveUrlsInText(
+    String(benefit.benefit_category ?? "other"),
+  );
+  const proposal = {
+    ...(benefit.benefit_id
+      ? { liveBenefitId: String(benefit.benefit_id) }
+      : {}),
+    ...(canonicalV6 ? { benefitId: String(benefit.dedupe_key) } : {}),
+    dedupeKey: String(benefit.dedupe_key),
+    title: redactSensitiveUrlsInText(
+      String(benefit.title ?? "Existing benefit"),
+    ),
+    description: redactSensitiveUrlsInText(
+      String(benefit.description ?? ""),
+    ).slice(0, 500),
+    // Database category codes/names are presentation aliases, not condition
+    // identity. Normalize every generation while leaving legacy dedupe IDs in
+    // their original identifier lane.
+    category: canonicalBenefitCategory(presentedCategory) ?? presentedCategory,
+    ...(benefit.benefit_type
+      ? { valueType: redactSensitiveUrlsInText(String(benefit.benefit_type)) }
+      : {}),
+    ...(flatTerms.value === undefined ? {} : { value: flatTerms.value }),
+    ...(flatTerms.rate === undefined ? {} : { rate: flatTerms.rate }),
+    ...(flatTerms.cap === undefined ? {} : { cap: flatTerms.cap }),
+    ...(flatTerms.threshold === undefined
+      ? {}
+      : { threshold: flatTerms.threshold }),
+    ...(flatTerms.frequency === undefined
+      ? {}
+      : { frequency: flatTerms.frequency }),
+    ...(flatTerms.period === undefined ? {} : { period: flatTerms.period }),
+    valueConfig: config,
+    ...(Array.isArray(benefit.partners) && benefit.partners.length > 0
+      ? {
+        partners: benefit.partners.map((partner: unknown) =>
+          redactSensitiveUrlsInText(String(partner))
+        ),
+      }
+      : {}),
+    restrictions: Array.isArray(config.restrictions)
+      ? config.restrictions.map(String).slice(0, 32)
+      : [],
+    exclusions: !canonicalV6 && Array.isArray(persistedExclusions)
+      ? persistedExclusions.map(String)
+      : !canonicalV6 &&
+          (!persistedExclusions || typeof persistedExclusions !== "object")
+      ? canonicalExclusionTerms
+      : boundedCanonicalExclusions(
+        persistedExclusions ?? canonicalExclusionTerms,
+      ),
+    ...(benefit.valid_from
+      ? { effectiveFrom: String(benefit.valid_from) }
+      : {}),
+    ...(benefit.valid_until
+      ? { effectiveTo: String(benefit.valid_until) }
+      : {}),
+    sourceUrl: safeSourceUrl(benefit.source_url),
+    sourceExcerpt: redactSensitiveUrlsInText(
+      String(benefit.description ?? ""),
+    ).slice(0, 500),
+    contentHash: "current-approved-benefit",
+    parserVersion: "current-approved-benefit",
+    confidence: {},
+    evidence: {},
+    warnings: [],
+  } as BenefitComparisonProposal;
+  if (
+    canonicalV6 && typeof config.offer_subject === "string" &&
+    config.offer_subject.trim()
+  ) {
+    proposal.offerSubject = config.offer_subject.trim().slice(0, 256);
+  } else if (!canonicalV6) {
+    proposal.offerSubject = offerSubjectForProposal({
+      category: proposal.category,
+      valueType: proposal.valueType,
+      sourceExcerpt: proposal.sourceExcerpt,
+    });
+  }
+  return proposal;
+}
 
 type ParsedFields = Pick<
   BenefitProposal,
@@ -69,6 +344,7 @@ type ParsedBenefit = ParsedFields & {
   title: string;
   description: string;
   sourceUrl: string;
+  sourceIdentity?: string;
   sourceExcerpt: string;
   contentHash: string;
   parserVersion: string;
@@ -76,6 +352,8 @@ type ParsedBenefit = ParsedFields & {
   evidence: Record<string, string>;
   warnings: string[];
 };
+
+type TrustedBenefitDocument = BenefitDocument & { sourceIdentity?: string };
 
 function normalize(value: string): string {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
@@ -96,7 +374,7 @@ function stableHash(value: string): string {
 }
 
 function sanitize(value: string): string {
-  return value
+  return redactSensitiveUrlsInText(value)
     .replace(/(?<!\d)(?:\d[\s-]*){6,}(?!\d)/g, "[redacted]")
     .replace(/\s+/g, " ")
     .trim()
@@ -104,7 +382,7 @@ function sanitize(value: string): string {
 }
 
 function readableText(value: string): string {
-  return value
+  return redactSensitiveUrlsInText(value)
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
     .replace(
@@ -119,6 +397,461 @@ function readableText(value: string): string {
     .replace(/[ \t]+/g, " ")
     .replace(/\n\s*\n+/g, "\n")
     .trim();
+}
+
+const replayBenefitSignal =
+  /(?:cashback|cash\s+back|reward|points?|miles?|discount|waiver|lounge|insurance|movie|fuel|dining|travel|spend|annual\s+fee|joining\s+fee|interest|apr|valid|expires?|effective|cap(?:ped)?|maximum|minimum|threshold|per\s+(?:month|quarter|year|annum|week|day)|\b\d+(?:\.\d+)?\s*%|(?:₹|rs\.?|inr)\s*\d)/i;
+const replayDirectPii =
+  /(?:[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|\+?(?:\d[()\s.-]*){10,}|\b[A-Z]{5}\d{4}[A-Z]\b|\bname\s*[:=#-]\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}|(?:customer|account|card|payment|pan|phone|mobile)\s*(?:(?:name|number|no\.?|id)\s*[:=#-]?|[:=#])\s*\S+|relationship\s+manager\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/i;
+const replayCardIdentitySignal =
+  /\b(?:amex|american\s+express|(?:credit\s+)?card|mastercard|rupay|visa)\b/i;
+const MAX_REPLAY_FACTS = 256;
+const MAX_REPLAY_FACT_BYTES = 4_096;
+const MAX_REPLAY_FACT_TOTAL_BYTES = 65_536;
+const MAX_PRIVACY_PROBE_BYTES = 1_048_576;
+const MAX_PRIVACY_DECODE_PASSES = 8;
+const commercialTitleWords = new Set([
+  "access",
+  "accelerated",
+  "annual",
+  "airport",
+  "bank",
+  "benefit",
+  "benefits",
+  "bonus",
+  "cap",
+  "cashback",
+  "card",
+  "conditions",
+  "complimentary",
+  "credit",
+  "cover",
+  "dining",
+  "discount",
+  "domestic",
+  "earn",
+  "enjoy",
+  "exclusive",
+  "fee",
+  "fees",
+  "forex",
+  "fuel",
+  "get",
+  "international",
+  "insurance",
+  "interest",
+  "lounge",
+  "mastercard",
+  "markup",
+  "maximum",
+  "milestone",
+  "miles",
+  "minimum",
+  "mitc",
+  "most",
+  "movie",
+  "offer",
+  "offers",
+  "important",
+  "points",
+  "program",
+  "reward",
+  "rewards",
+  "rupay",
+  "spend",
+  "surcharge",
+  "terms",
+  "threshold",
+  "ticket",
+  "tickets",
+  "travel",
+  "unlimited",
+  "visa",
+  "waiver",
+  "welcome",
+  "zero",
+  "apr",
+  "renewal",
+]);
+const publicBenefitSubjectWords = new Set([
+  "applicant",
+  "applicants",
+  "cardholder",
+  "cardholders",
+  "customer",
+  "customers",
+  "member",
+  "members",
+  "user",
+  "users",
+  "cashback",
+  "card",
+]);
+
+const htmlEntityCharacters: Record<string, string> = {
+  amp: "&",
+  apos: "'",
+  colon: ":",
+  commat: "@",
+  gt: ">",
+  lt: "<",
+  nbsp: " ",
+  num: "#",
+  percnt: "%",
+  quest: "?",
+  quot: '"',
+  sol: "/",
+};
+
+const asciiConfusables: Record<string, string> = {
+  Α: "A",
+  Β: "B",
+  Ε: "E",
+  Ζ: "Z",
+  Η: "H",
+  Ι: "I",
+  Κ: "K",
+  Μ: "M",
+  Ν: "N",
+  Ο: "O",
+  Ρ: "P",
+  Τ: "T",
+  Υ: "Y",
+  Χ: "X",
+  α: "a",
+  β: "b",
+  ε: "e",
+  ι: "i",
+  κ: "k",
+  ν: "v",
+  ο: "o",
+  ρ: "p",
+  τ: "t",
+  υ: "y",
+  χ: "x",
+  А: "A",
+  В: "B",
+  Е: "E",
+  І: "I",
+  К: "K",
+  М: "M",
+  Н: "H",
+  О: "O",
+  Р: "P",
+  С: "C",
+  Т: "T",
+  Х: "X",
+  У: "Y",
+  а: "a",
+  е: "e",
+  і: "i",
+  ј: "j",
+  о: "o",
+  р: "p",
+  с: "c",
+  х: "x",
+  у: "y",
+};
+
+const unicodeDigitZeroes = [
+  0x0660,
+  0x06f0,
+  0x07c0,
+  0x0966,
+  0x09e6,
+  0x0a66,
+  0x0ae6,
+  0x0b66,
+  0x0be6,
+  0x0c66,
+  0x0ce6,
+  0x0d66,
+  0x0de6,
+  0x0e50,
+  0x0ed0,
+  0x0f20,
+  0x1040,
+  0x1090,
+  0x17e0,
+  0x1810,
+  0xff10,
+];
+
+function decodeHtmlEntity(match: string, body: string): string {
+  const normalized = body.toLowerCase().replace(/;$/, "");
+  let codePoint: number | null = null;
+  if (/^#x[0-9a-f]{1,6}$/i.test(normalized)) {
+    codePoint = Number.parseInt(normalized.slice(2), 16);
+  } else if (/^#[0-9]{1,7}$/.test(normalized)) {
+    codePoint = Number.parseInt(normalized.slice(1), 10);
+  }
+  if (
+    codePoint !== null && codePoint >= 0 && codePoint <= 0x10ffff &&
+    !(codePoint >= 0xd800 && codePoint <= 0xdfff)
+  ) return String.fromCodePoint(codePoint);
+  return htmlEntityCharacters[normalized] ?? match;
+}
+
+function decodePercentRuns(value: string): string {
+  return value.replace(/(?:%[0-9a-f]{2})+/gi, (candidate) => {
+    try {
+      return decodeURIComponent(candidate);
+    } catch {
+      return candidate;
+    }
+  });
+}
+
+function normalizeUnicodeDigits(value: string): string {
+  return [...value].map((character) => {
+    const codePoint = character.codePointAt(0)!;
+    for (const zero of unicodeDigitZeroes) {
+      if (codePoint >= zero && codePoint <= zero + 9) {
+        return String(codePoint - zero);
+      }
+    }
+    return character;
+  }).join("");
+}
+
+export function normalizedBenefitPrivacyProbe(value: string): {
+  text: string;
+  overflow: boolean;
+} {
+  if (new TextEncoder().encode(value).byteLength > MAX_PRIVACY_PROBE_BYTES) {
+    return { text: "", overflow: true };
+  }
+  let decoded = value;
+  for (let pass = 0; pass < MAX_PRIVACY_DECODE_PASSES; pass += 1) {
+    const next = decodePercentRuns(decoded).replace(
+      /&(#x[0-9a-f]{1,6}|#[0-9]{1,7}|[a-z]{2,10});?/gi,
+      decodeHtmlEntity,
+    );
+    if (next === decoded) break;
+    decoded = next;
+  }
+  const decodeOverflow =
+    /(?:%25|%[0-9a-f]{2}|&(?:#x?[0-9a-f]+|amp|apos|colon|commat|gt|lt|nbsp|num|percnt|quest|quot|sol);?)/i
+      .test(decoded);
+  let normalized = decoded.normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
+    .replace(
+      /[\u00ad\u034f\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/gu,
+      "",
+    )
+    .replace(/[‐‑‒–—―−]/gu, "-")
+    .replace(/[．。｡]/gu, ".")
+    .replace(/[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/gu, " ");
+  normalized = normalizeUnicodeDigits(
+    [...normalized].map((character) => asciiConfusables[character] ?? character)
+      .join(""),
+  );
+  const namedHtmlEntityOverflow = /&[a-z][a-z0-9]{1,31};?/i.test(normalized);
+  const residualUnicodeDigitOverflow = /\p{Nd}/u.test(
+    normalized.replace(/[0-9]/g, ""),
+  );
+  return {
+    text: normalized,
+    overflow: decodeOverflow || namedHtmlEntityOverflow ||
+      residualUnicodeDigitOverflow,
+  };
+}
+
+function normalizedIdentityPhrases(
+  context: { issuer?: string; identityLabels?: readonly string[] },
+): string[] {
+  return [
+    ...new Set(
+      [context.issuer ?? "", ...(context.identityLabels ?? [])]
+        .map((item) =>
+          normalizedBenefitPrivacyProbe(item).text.replace(/\s+/g, " ").trim()
+            .toLowerCase()
+        )
+        .filter((item) => item.length >= 3),
+    ),
+  ]
+    .sort((left, right) =>
+      right.length - left.length || left.localeCompare(right)
+    );
+}
+
+function maskKnownIdentityPhrases(
+  value: string,
+  identityPhrases: readonly string[],
+): string {
+  let probe = value;
+  for (const [index, phrase] of identityPhrases.entries()) {
+    if (!phrase) continue;
+    probe = probe.replaceAll(
+      new RegExp(
+        `(?<![\\p{L}\\p{M}\\p{N}])${
+          phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        }(?![\\p{L}\\p{M}\\p{N}])`,
+        "giu",
+      ),
+      ` knownidentity${index} `,
+    );
+  }
+  return probe;
+}
+
+function hasUnknownPersonLikeSpan(
+  value: string,
+  identityPhrases: readonly string[],
+): boolean {
+  const probe = maskKnownIdentityPhrases(value, identityPhrases);
+  return [...probe.matchAll(/\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){1,3}\b/g)]
+    .some((match) => {
+      // Unknown product names are deliberately retained for the real card
+      // identity classifier. A title ending in "Card" is an ambiguity fact,
+      // not a person-name exception.
+      if (replayCardIdentitySignal.test(match[0])) return false;
+      return match[0].split(/\s+/).some((word) =>
+        !commercialTitleWords.has(word.toLowerCase())
+      );
+    }) ||
+    /\b(?:for|to)\s+\p{Lu}[\p{L}\p{M}'-]{2,}\b/u.test(probe) ||
+    [...probe.matchAll(
+      /(?<![\p{L}\p{M}])([\p{L}][\p{L}\p{M}'-]{2,}(?:\s+[\p{L}][\p{L}\p{M}'-]{2,}){0,3})\s+(?:(?:gets?|receives?)\b|will\s+(?:call|contact)\b|is\s+the\s+(?:customer|cardholder|member)\b)/giu,
+    )]
+      .some((match) => {
+        const words = match[1].toLowerCase().split(/\s+/);
+        return words.some((word) =>
+          !publicBenefitSubjectWords.has(word) &&
+          !commercialTitleWords.has(word) &&
+          !/^knownidentity\d+$/.test(word)
+        );
+      }) ||
+    [...probe.matchAll(
+      /(?<![\p{L}\p{M}])(?:for|to)\s+([\p{L}][\p{L}\p{M}'-]{1,}(?:\s+[\p{L}][\p{L}\p{M}'-]{1,}){0,3}?)(?=\s+(?:is|gets?|receives?|will)\b|\s*[.,;:!?]|\s*$)/giu,
+    )].some((match) =>
+      match[1].toLowerCase().split(/\s+/).some((word) =>
+        !publicBenefitSubjectWords.has(word) &&
+        !commercialTitleWords.has(word) &&
+        !/^knownidentity\d+$/.test(word)
+      )
+    ) ||
+    (replayBenefitSignal.test(probe) &&
+      [...probe].some((character) =>
+        character.codePointAt(0)! > 0x7f && /\p{L}/u.test(character)
+      ));
+}
+
+export function containsPrivateBenefitData(
+  value: string,
+  context: { issuer?: string; identityLabels?: readonly string[] } = {},
+): boolean {
+  const normalized = normalizedBenefitPrivacyProbe(value);
+  if (normalized.overflow) return true;
+  const identityPhrases = normalizedIdentityPhrases(context);
+  const probe = maskKnownIdentityPhrases(normalized.text, identityPhrases);
+  const numericProbe = probe
+    .replace(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi,
+      "[uuid]",
+    )
+    .replace(/\b[0-9a-f]{64}\b/gi, "[digest]");
+  return /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i.test(probe) ||
+    /(?<![a-z0-9+])\+?(?:\d[()\s.-]*){10,}(?![a-z0-9])/i.test(
+      numericProbe,
+    ) ||
+    /\b[A-Z]{5}\d{4}[A-Z]\b/i.test(probe) ||
+    /\bname\s*[:=#-]\s*[a-z]{2,}(?:\s+[a-z]{2,}){0,3}\b/i.test(probe) ||
+    /(?:customer|account|card|payment|pan|phone|mobile)\s*(?:(?:name|number|no\.?|id)\s*[:=#-]|[:=#])\s*[^,;.\n]{2,128}/i
+      .test(probe) ||
+    /relationship\s+manager\s+[a-z]{2,}(?:\s+[a-z]{2,}){1,3}/i
+      .test(probe) ||
+    /\b(?:contact|call|ask)\s+[a-z]{2,}(?:\s+[a-z]{2,}){1,3}\b/i
+      .test(probe) ||
+    hasUnknownPersonLikeSpan(normalized.text, identityPhrases);
+}
+
+export type BenefitReplayFactEnvelope = {
+  publicText: string;
+  factCount: number;
+  factOverflow: boolean;
+  privacyNormalized: true;
+};
+
+/**
+ * Scans every source fragment. Facts are never sliced or silently dropped:
+ * crossing any count/fragment/total bound sets `factOverflow`, and callers
+ * must refuse replay extraction and pilot qualification.
+ */
+export function canonicalBenefitReplayFactEnvelope(
+  value: string,
+  context: { issuer?: string; identityLabels?: readonly string[] } = {},
+): BenefitReplayFactEnvelope {
+  const identityPhrases = normalizedIdentityPhrases(context);
+  const plain = readableText(value);
+  const fragments = plain.split(/(?<=[.!?])\s+|\n+/).map((item) =>
+    item.replace(/\s+/g, " ").trim()
+  ).filter(Boolean);
+  const retained: string[] = [];
+  const seen = new Set<string>();
+  let relevantFactCount = 0;
+  let totalBytes = 0;
+  let factOverflow = false;
+  for (const rawFragment of fragments) {
+    const normalized = normalizedBenefitPrivacyProbe(rawFragment);
+    const fragment = readableText(normalized.text).replace(/\s+/g, " ").trim();
+    const lowered = fragment.toLowerCase();
+    const identityFact = identityPhrases.some((phrase) =>
+      lowered.includes(phrase)
+    );
+    const relevant = !identityFact && !replayBenefitSignal.test(fragment) &&
+        !replayCardIdentitySignal.test(fragment)
+      ? false
+      : true;
+    const rawRelevant = replayBenefitSignal.test(rawFragment) ||
+      replayCardIdentitySignal.test(rawFragment);
+    if (!relevant && !rawRelevant) continue;
+    if (normalized.overflow || !fragment) {
+      factOverflow = true;
+      continue;
+    }
+    if (
+      replayDirectPii.test(fragment) ||
+      containsPrivateBenefitData(fragment, context)
+    ) {
+      factOverflow = true;
+      continue;
+    }
+    if (seen.has(fragment)) continue;
+    seen.add(fragment);
+    relevantFactCount += 1;
+    const fragmentBytes = new TextEncoder().encode(fragment).byteLength;
+    const separatorBytes = retained.length === 0 ? 0 : 1;
+    if (
+      fragmentBytes > MAX_REPLAY_FACT_BYTES ||
+      relevantFactCount > MAX_REPLAY_FACTS ||
+      totalBytes + separatorBytes + fragmentBytes >
+        MAX_REPLAY_FACT_TOTAL_BYTES
+    ) {
+      factOverflow = true;
+      continue;
+    }
+    retained.push(fragment);
+    totalBytes += separatorBytes + fragmentBytes;
+  }
+  return {
+    publicText: retained.join("\n"),
+    factCount: Math.min(relevantFactCount, MAX_REPLAY_FACTS + 1),
+    factOverflow,
+    privacyNormalized: true,
+  };
+}
+
+/**
+ * Minimal public facts retained for v6 replay. Arbitrary page prose and any
+ * sentence containing direct customer/payment data are discarded before the
+ * value can cross a persistence boundary.
+ */
+export function canonicalBenefitReplayText(
+  value: string,
+  context: { issuer?: string; identityLabels?: string[] } = {},
+): string {
+  return canonicalBenefitReplayFactEnvelope(value, context).publicText;
 }
 
 function decimal(value: string | undefined): number | undefined {
@@ -527,7 +1260,7 @@ function parseLounge(text: string): ParsedFields | null {
 
 function parseLine(
   text: string,
-  document: BenefitDocument,
+  document: TrustedBenefitDocument,
   parserVersion: string,
 ): ParsedBenefit | null {
   const fields = parseMovieBenefit(text) ?? parseCashback(text) ??
@@ -556,7 +1289,10 @@ function parseLine(
     ...fields,
     title,
     description: sourceExcerpt,
-    sourceUrl: document.sourceUrl,
+    sourceUrl: safeSourceUrl(document.finalUrl ?? document.sourceUrl),
+    ...(document.sourceIdentity
+      ? { sourceIdentity: document.sourceIdentity }
+      : {}),
     sourceExcerpt,
     contentHash: document.contentHash ?? stableHash(normalize(document.text)),
     parserVersion,
@@ -578,41 +1314,125 @@ function canonicalJson(value: unknown): unknown {
   return value;
 }
 
-function conditionKey(benefit: ParsedFields): string {
-  const hasStructuredValue = benefit.valueConfig !== undefined &&
-    Object.keys(benefit.valueConfig).length > 0;
+function comparisonExclusions(benefit: {
+  exclusions: unknown;
+  benefitId?: string;
+}): unknown {
+  return !Array.isArray(benefit.exclusions) ||
+      benefit.benefitId?.startsWith("card-benefit-v2:")
+    ? canonicalJson(canonicalExclusions(benefit.exclusions))
+    : benefit.exclusions.map((item) => normalize(String(item))).sort();
+}
+
+function conditionKey(
+  benefit: ParsedFields | BenefitProposalV6,
+  normalizeCategoryAlias = false,
+): string {
+  const projectedValueConfig = Object.fromEntries(
+    Object.entries(benefit.valueConfig ?? {}).filter(([key]) =>
+      ![
+        "value",
+        "rate",
+        "cap",
+        "threshold",
+        "frequency",
+        "period",
+        "offer_subject",
+        "restrictions",
+        "exclusions",
+      ].includes(key)
+    ),
+  );
   return JSON.stringify({
-    category: benefit.category,
+    category: normalizeCategoryAlias
+      ? canonicalBenefitCategory(benefit.category) ?? benefit.category
+      : benefit.category,
     valueType: benefit.valueType,
-    // Movie proposals persist their commercial terms in value_config. The
-    // flat parser fields are a transient projection of those same terms and
-    // are not stored in benefits, so comparing both creates false conflicts
-    // on the next identical crawl.
-    value: hasStructuredValue ? undefined : benefit.value,
-    rate: hasStructuredValue ? undefined : benefit.rate,
-    cap: hasStructuredValue ? undefined : benefit.cap,
-    threshold: hasStructuredValue ? undefined : benefit.threshold,
-    valueConfig: canonicalJson(benefit.valueConfig),
+    // Flat commercial terms remain identity-bearing even when a structured
+    // configuration exists. Publication persists both projections through
+    // canonicalValueConfig, so dropping the flat terms here can turn a real
+    // 5 -> 10 change into a false identity-only migration.
+    value: benefit.value,
+    rate: benefit.rate,
+    cap: benefit.cap,
+    threshold: benefit.threshold,
+    valueConfig: Object.keys(projectedValueConfig).length > 0
+      ? canonicalJson(projectedValueConfig)
+      : undefined,
     partners: benefit.partners?.map(normalize).sort(),
-    frequency: hasStructuredValue || benefit.frequency === undefined
+    frequency: benefit.frequency === undefined
       ? undefined
       : normalize(benefit.frequency),
-    period: hasStructuredValue || benefit.period === undefined
+    period: benefit.period === undefined
       ? undefined
       : normalize(benefit.period),
     restrictions: benefit.restrictions.map(normalize).sort(),
-    exclusions: benefit.exclusions.map(normalize).sort(),
+    exclusions: comparisonExclusions(benefit),
     effectiveFrom: benefit.effectiveFrom,
     effectiveTo: benefit.effectiveTo,
   });
 }
 
+/**
+ * Comparison-only projection for live and staged conditions. Publication IDs
+ * keep their generation-specific serializer, while review comparison uses the
+ * shared contract so legacy arrays and structured exclusion JSON mean the same
+ * thing.
+ */
+function canonicalComparisonConditionKey(
+  benefit: BenefitComparisonProposal,
+): string {
+  const projectedValueConfig = Object.fromEntries(
+    Object.entries(benefit.valueConfig ?? {}).filter(([key]) =>
+      ![
+        "value",
+        "rate",
+        "cap",
+        "threshold",
+        "frequency",
+        "period",
+        "offer_subject",
+        "restrictions",
+        "exclusions",
+      ].includes(key)
+    ),
+  );
+  return stableCanonicalJson(canonicalConditionObject({
+    title: benefit.title,
+    category: canonicalBenefitCategory(benefit.category) ?? benefit.category,
+    benefitType: benefit.valueType,
+    value: benefit.value,
+    rate: benefit.rate,
+    cap: benefit.cap,
+    threshold: benefit.threshold,
+    frequency: benefit.frequency,
+    period: benefit.period,
+    valueConfig: Object.keys(projectedValueConfig).length > 0
+      ? projectedValueConfig
+      : undefined,
+    partners: benefit.partners,
+    restrictions: benefit.restrictions,
+    exclusions: benefit.exclusions,
+    validFrom: benefit.effectiveFrom,
+    validUntil: benefit.effectiveTo,
+  }));
+}
+
 function semanticKey(
   benefit: Pick<
-    BenefitProposal,
-    "category" | "valueType" | "partners" | "restrictions" | "exclusions"
+    BenefitComparisonProposal,
+    | "category"
+    | "valueType"
+    | "partners"
+    | "restrictions"
+    | "exclusions"
+    | "offerSubject"
+    | "sourceExcerpt"
   >,
 ): string {
+  if (benefit.offerSubject) {
+    return `offer-subject:${benefit.offerSubject}`;
+  }
   return JSON.stringify({
     category: normalize(benefit.category),
     valueType: benefit.valueType === undefined
@@ -620,8 +1440,97 @@ function semanticKey(
       : normalize(benefit.valueType),
     partners: benefit.partners?.map(normalize).sort(),
     restrictions: benefit.restrictions.map(normalize).sort(),
-    exclusions: benefit.exclusions.map(normalize).sort(),
+    exclusions: comparisonExclusions(benefit),
   });
+}
+
+function conflictSubjectKey(
+  benefit: Pick<
+    BenefitComparisonProposal,
+    "category" | "valueType" | "offerSubject"
+  >,
+): string {
+  return benefit.offerSubject ?? JSON.stringify({
+    category: normalize(benefit.category),
+    valueType: benefit.valueType === undefined
+      ? undefined
+      : normalize(benefit.valueType),
+  });
+}
+
+export function offerSubjectForProposal(
+  benefit: Pick<BenefitProposal, "category" | "valueType" | "sourceExcerpt">,
+): string {
+  const text = normalize(benefit.sourceExcerpt);
+  const category = canonicalBenefitCategory(benefit.category) ??
+    normalize(benefit.category);
+  const subjectCategory = category === "points" ? "rewards" : category;
+  const qualifier = benefit.valueType === "lounge_access"
+    ? (/\bdomestic\b/.test(text)
+      ? "domestic"
+      : /\binternational\b/.test(text)
+      ? "international"
+      : "general")
+    : category === "cashback" || category === "points"
+    ? [
+      "dining",
+      "fuel",
+      "grocery",
+      "groceries",
+      "travel",
+      "movies",
+      "movie",
+      "online",
+      "international",
+      "utility",
+    ].map((term) => ({ term, index: text.search(new RegExp(`\\b${term}\\b`)) }))
+      .filter((candidate) => candidate.index >= 0)
+      .sort((left, right) => left.index - right.index)[0]?.term ?? "general"
+    : category === "entertainment"
+    ? "movie_tickets"
+    : "general";
+  const canonicalQualifier = ({
+    grocery: "grocery",
+    groceries: "grocery",
+    movie: "movie",
+    movies: "movie",
+  } as Record<string, string>)[qualifier] ?? qualifier;
+  return `${subjectCategory}:${
+    normalize(benefit.valueType ?? "benefit")
+  }:${canonicalQualifier}`;
+}
+
+function sourceIdentity(benefit: BenefitComparisonProposal): string {
+  return /^[0-9a-f]{64}$/i.test(benefit.sourceIdentity ?? "")
+    ? benefit.sourceIdentity!.toLowerCase()
+    : benefit.sourceUrl;
+}
+
+function boundedTerms(values: unknown): string[] {
+  return (Array.isArray(values) ? values : values == null ? [] : [values])
+    .flatMap((value) => typeof value === "string" ? [normalize(value)] : [])
+    .filter(Boolean).slice(0, 32).map((value) => value.slice(0, 500));
+}
+
+function boundedCanonicalExclusions(value: unknown): Record<string, unknown> {
+  const canonical = canonicalExclusions(value);
+  const additional = canonical.additional as Record<string, unknown>;
+  return {
+    additional: {
+      source_terms: boundedTerms(additional.source_terms),
+    },
+    categories: boundedTerms(canonical.categories),
+    days: boundedTerms(canonical.days),
+    mcc_codes: boundedTerms(canonical.mcc_codes),
+    merchants: boundedTerms(canonical.merchants),
+    transaction_types: boundedTerms(canonical.transaction_types),
+  };
+}
+
+function isCanonicalV6Proposal(
+  benefit: BenefitComparisonProposal,
+): boolean {
+  return benefit.benefitId?.startsWith("card-benefit-v2:") === true;
 }
 
 function sorted<T extends { dedupeKey: string }>(benefits: T[]): T[] {
@@ -634,11 +1543,11 @@ function sorted<T extends { dedupeKey: string }>(benefits: T[]): T[] {
  * Extracts only terms that state a concrete benefit. This intentionally does not
  * turn headings or implied eligibility into values, caps, or merchant restrictions.
  */
-export function extractGroundedBenefits(
-  documents: BenefitDocument[],
+function parsedGroundedBenefits(
+  documents: TrustedBenefitDocument[],
   parserVersion: string,
-): BenefitProposal[] {
-  const parsed = documents.flatMap((source) => {
+): ParsedBenefit[] {
+  return documents.flatMap((source) => {
     const document = { ...source, text: readableText(source.text) };
     const lines = document.text
       .split(/(?:\r?\n|(?<=[!?])\s+|(?<=\.)\s+(?=[A-Z]))/)
@@ -688,6 +1597,13 @@ export function extractGroundedBenefits(
       return assembled ? [assembled] : [];
     });
   });
+}
+
+export function extractGroundedBenefits(
+  documents: BenefitDocument[],
+  parserVersion: string,
+): BenefitProposal[] {
+  const parsed = parsedGroundedBenefits(documents, parserVersion);
   const byKey = new Map<string, ParsedBenefit[]>();
   for (const benefit of parsed) {
     const key = stableHash(conditionKey(benefit));
@@ -725,15 +1641,139 @@ export function extractGroundedBenefits(
 }
 
 /**
+ * Projects the existing deterministic parser into the v6 card-scoped contract.
+ * v5 deliberately remains on the synchronous legacy proposal shape for rollback.
+ */
+export async function extractGroundedBenefitsV6(
+  documents: BenefitDocument[],
+  parserVersion: "benefits-v6",
+  cardId: string,
+): Promise<BenefitProposalV6[]> {
+  const trustedDocuments = (await Promise.all(documents.map(
+    async (document): Promise<TrustedBenefitDocument | null> => {
+      const requestedUrl = canonicalRequestedSourceUrl(document.sourceUrl);
+      const finalUrl = canonicalRequestedSourceUrl(
+        document.finalUrl ?? document.sourceUrl,
+      );
+      if (!requestedUrl || !finalUrl) return null;
+      return {
+        sourceUrl: requestedUrl,
+        finalUrl,
+        text: document.text,
+        contentHash: document.contentHash,
+        sourceIdentity:
+          /^[0-9a-f]{64}$/.test(document.requestedResourceIdentityHash ?? "")
+            ? document.requestedResourceIdentityHash!
+            : await sha256SourceIdentity(requestedUrl),
+      };
+    },
+  ))).filter((document): document is TrustedBenefitDocument =>
+    document !== null
+  );
+  const parsed = parsedGroundedBenefits(trustedDocuments, parserVersion);
+  const canonical = parsed.filter((benefit) =>
+    !/\b(?:no\s+longer\s+available|discontinued)\b/i.test(
+      benefit.sourceExcerpt,
+    ) &&
+    !/\bup\s+to\s+(?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d{1,2})?\s+cashback\b/i
+      .test(benefit.sourceExcerpt)
+  );
+  const grouped = new Map<
+    string,
+    Array<ParsedBenefit & { offerSubject: string }>
+  >();
+  for (const benefit of canonical) {
+    const offerSubject = offerSubjectForProposal(benefit);
+    const key = `${offerSubject}:${stableHash(conditionKey(benefit))}`;
+    grouped.set(key, [
+      ...(grouped.get(key) ?? []),
+      { ...benefit, offerSubject },
+    ]);
+  }
+  const projected = [...grouped.values()].map((matches) => {
+    const representative = [...matches].sort((left, right) =>
+      left.sourceUrl.localeCompare(right.sourceUrl)
+    )[0];
+    const sourceUrls = [
+      ...new Set(matches.map((item) =>
+        item.sourceUrl
+      )),
+    ]
+      .sort();
+    const sourceIdentities = [
+      ...new Set(matches.flatMap((item) =>
+        /^[0-9a-f]{64}$/i.test(item.sourceIdentity ?? "")
+          ? [item.sourceIdentity!.toLowerCase()]
+          : []
+      )),
+    ].sort();
+    return {
+      ...representative,
+      sourceUrl: sourceUrls[0],
+      sourceUrls,
+      ...(sourceIdentities.length > 0
+        ? {
+          sourceIdentity: sourceIdentities[0],
+          sourceIdentities,
+        }
+        : {}),
+    };
+  });
+  return await Promise.all(projected.map(async (benefit) => {
+    const subject = benefit.offerSubject;
+    const restrictions = boundedTerms(benefit.restrictions);
+    const exclusions = boundedTerms(benefit.exclusions);
+    const input: CanonicalBenefitInput = {
+      title: benefit.title,
+      description: benefit.description,
+      category: canonicalBenefitCategory(benefit.category),
+      benefitType: benefit.valueType ?? null,
+      semanticKey: subject,
+      value: benefit.value,
+      rate: benefit.rate,
+      cap: benefit.cap,
+      threshold: benefit.threshold,
+      frequency: benefit.frequency,
+      period: benefit.period,
+      valueConfig: benefit.valueConfig,
+      exclusions,
+      restrictions,
+      partners: benefit.partners,
+      validFrom: benefit.effectiveFrom,
+      validUntil: benefit.effectiveTo,
+    };
+    const conditionHash = await canonicalBenefitHash([input]);
+    const dedupeKey = await cardScopedBenefitKey(cardId, input);
+    return {
+      ...benefit,
+      category: canonicalBenefitCategory(benefit.category) ?? benefit.category,
+      offerSubject: subject,
+      benefitId: dedupeKey,
+      dedupeKey,
+      conditionHash,
+      valueConfig: {
+        ...canonicalValueConfig(input),
+        offer_subject: subject,
+        restrictions: canonicalConditionObject(input).restrictions,
+        exclusions: boundedCanonicalExclusions(input.exclusions),
+      },
+      restrictions,
+      exclusions: boundedCanonicalExclusions(input.exclusions),
+    };
+  }));
+}
+
+/**
  * Computes a review-only diff. `possibleRemovals` deliberately contains no action
  * field, so absence from a crawl cannot be approved as a destructive mutation.
  */
 export function diffBenefits(
-  current: BenefitProposal[],
-  proposed: BenefitProposal[],
+  current: BenefitComparisonProposal[],
+  proposed: BenefitComparisonProposal[],
 ): BenefitDiff {
-  const currentByKey = new Map<string, BenefitProposal[]>();
-  const proposedByKey = new Map<string, BenefitProposal[]>();
+  const comparisonConditionKey = canonicalComparisonConditionKey;
+  const currentByKey = new Map<string, BenefitComparisonProposal[]>();
+  const proposedByKey = new Map<string, BenefitComparisonProposal[]>();
   for (const benefit of current) {
     currentByKey.set(benefit.dedupeKey, [
       ...(currentByKey.get(benefit.dedupeKey) ?? []),
@@ -756,8 +1796,8 @@ export function diffBenefits(
     const currentMatches = sorted(currentByKey.get(key) ?? []);
     const proposedMatches = sorted(proposedByKey.get(key) ?? []);
     if (
-      new Set(currentMatches.map(conditionKey)).size < 2 &&
-      new Set(proposedMatches.map(conditionKey)).size < 2
+      new Set(currentMatches.map(comparisonConditionKey)).size < 2 &&
+      new Set(proposedMatches.map(comparisonConditionKey)).size < 2
     ) continue;
     conflicts.push({
       code: "dedupe_key_condition_mismatch",
@@ -767,7 +1807,7 @@ export function diffBenefits(
     currentByKey.delete(key);
     proposedByKey.delete(key);
   }
-  const proposedBySemantic = new Map<string, BenefitProposal[]>();
+  const proposedBySemantic = new Map<string, BenefitComparisonProposal[]>();
   for (const benefit of proposed) {
     const key = semanticKey(benefit);
     proposedBySemantic.set(key, [
@@ -775,10 +1815,50 @@ export function diffBenefits(
       benefit,
     ]);
   }
+  const conflictedDedupeKeys = new Set<string>();
   for (const [key, candidates] of proposedBySemantic) {
-    if (new Set(candidates.map(conditionKey)).size < 2) continue;
+    if (
+      new Set(candidates.map(comparisonConditionKey)).size < 2 ||
+      new Set(candidates.map(sourceIdentity)).size < 2
+    ) continue;
     const currentMatches = current.filter((benefit) =>
       semanticKey(benefit) === key
+    );
+    conflicts.push({
+      code: "conflicting_proposed_terms",
+      ...(currentMatches.length > 0 ? { current: sorted(currentMatches) } : {}),
+      proposed: sorted(candidates),
+    });
+    for (const benefit of candidates) proposedByKey.delete(benefit.dedupeKey);
+    for (const benefit of candidates) {
+      conflictedDedupeKeys.add(benefit.dedupeKey);
+    }
+    for (const benefit of currentMatches) {
+      currentByKey.delete(benefit.dedupeKey);
+    }
+  }
+  const proposedByConflictSubject = new Map<
+    string,
+    BenefitComparisonProposal[]
+  >();
+  for (const benefit of proposed) {
+    if (
+      conflictedDedupeKeys.has(benefit.dedupeKey) ||
+      !isCanonicalV6Proposal(benefit)
+    ) continue;
+    const key = conflictSubjectKey(benefit);
+    proposedByConflictSubject.set(key, [
+      ...(proposedByConflictSubject.get(key) ?? []),
+      benefit,
+    ]);
+  }
+  for (const [key, candidates] of proposedByConflictSubject) {
+    if (
+      new Set(candidates.map(semanticKey)).size < 2 ||
+      new Set(candidates.map(sourceIdentity)).size < 2
+    ) continue;
+    const currentMatches = current.filter((benefit) =>
+      conflictSubjectKey(benefit) === key
     );
     conflicts.push({
       code: "conflicting_proposed_terms",
@@ -796,8 +1876,12 @@ export function diffBenefits(
   for (const key of sharedDedupeKeys) {
     const currentMatches = sorted(currentByKey.get(key)!);
     const proposedMatches = sorted(proposedByKey.get(key)!);
-    const currentConditions = new Set(currentMatches.map(conditionKey));
-    const proposedConditions = new Set(proposedMatches.map(conditionKey));
+    const currentConditions = new Set(
+      currentMatches.map(comparisonConditionKey),
+    );
+    const proposedConditions = new Set(
+      proposedMatches.map(comparisonConditionKey),
+    );
     if (
       currentConditions.size !== 1 ||
       proposedConditions.size !== 1 ||
@@ -820,8 +1904,11 @@ export function diffBenefits(
     proposedByKey.delete(key);
   }
 
-  const currentBySemantic = new Map<string, BenefitProposal[]>();
-  const unmatchedProposedBySemantic = new Map<string, BenefitProposal[]>();
+  const currentBySemantic = new Map<string, BenefitComparisonProposal[]>();
+  const unmatchedProposedBySemantic = new Map<
+    string,
+    BenefitComparisonProposal[]
+  >();
   for (const benefits of currentByKey.values()) {
     for (const benefit of benefits) {
       const key = semanticKey(benefit);
@@ -842,6 +1929,62 @@ export function diffBenefits(
   }
 
   const modifications: BenefitDiff["modifications"] = [];
+  // V5 rollback proposals intentionally retain legacy proposal identifiers.
+  // Identity-only replacement is safe solely for a one-to-one exact canonical
+  // condition. Any same-condition multiplicity remains a review conflict/tail.
+  const legacyCurrent = [...currentByKey.values()].flat().filter((benefit) =>
+    !benefit.dedupeKey.startsWith("card-benefit-v2:")
+  );
+  const publishableProposed = [...proposedByKey.values()].flat().filter((
+    benefit,
+  ) =>
+    isCanonicalV6Proposal(benefit) || benefit.parserVersion === "benefits-v5"
+  );
+  const legacyByCondition = new Map<string, BenefitComparisonProposal[]>();
+  const proposedByCondition = new Map<string, BenefitComparisonProposal[]>();
+  for (const benefit of legacyCurrent) {
+    const key = comparisonConditionKey(benefit);
+    legacyByCondition.set(key, [
+      ...(legacyByCondition.get(key) ?? []),
+      benefit,
+    ]);
+  }
+  for (const benefit of publishableProposed) {
+    const key = comparisonConditionKey(benefit);
+    proposedByCondition.set(key, [
+      ...(proposedByCondition.get(key) ?? []),
+      benefit,
+    ]);
+  }
+  for (const key of [...legacyByCondition.keys()].sort()) {
+    const currentMatches = legacyByCondition.get(key) ?? [];
+    const proposedMatches = proposedByCondition.get(key) ?? [];
+    if (currentMatches.length !== 1 || proposedMatches.length !== 1) continue;
+    const currentBenefit = currentMatches[0];
+    const proposedBenefit = proposedMatches[0];
+    modifications.push({
+      current: currentBenefit,
+      proposed: proposedBenefit,
+      changeType: "identity_migration",
+    });
+    currentByKey.delete(currentBenefit.dedupeKey);
+    proposedByKey.delete(proposedBenefit.dedupeKey);
+    const currentSemantic = semanticKey(currentBenefit);
+    const remainingCurrent = currentBySemantic.get(currentSemantic);
+    remainingCurrent?.splice(remainingCurrent.indexOf(currentBenefit), 1);
+    if (remainingCurrent?.length === 0) {
+      currentBySemantic.delete(currentSemantic);
+    }
+    const proposedSemantic = semanticKey(proposedBenefit);
+    const remainingProposed = unmatchedProposedBySemantic.get(proposedSemantic);
+    remainingProposed?.splice(
+      remainingProposed.indexOf(proposedBenefit),
+      1,
+    );
+    if (remainingProposed?.length === 0) {
+      unmatchedProposedBySemantic.delete(proposedSemantic);
+    }
+  }
   for (
     const key of [...currentBySemantic.keys()].filter((key) =>
       unmatchedProposedBySemantic.has(key)
@@ -850,9 +1993,11 @@ export function diffBenefits(
     const currentMatches = sorted(currentBySemantic.get(key)!);
     const proposedMatches = sorted(unmatchedProposedBySemantic.get(key)!);
     if (currentMatches.length === 1 && proposedMatches.length === 1) {
+      const currentMatch = currentMatches[0];
+      const proposedMatch = proposedMatches[0];
       modifications.push({
-        current: currentMatches[0],
-        proposed: proposedMatches[0],
+        current: currentMatch,
+        proposed: proposedMatch,
       });
       currentByKey.delete(currentMatches[0].dedupeKey);
       proposedByKey.delete(proposedMatches[0].dedupeKey);
@@ -875,7 +2020,10 @@ export function diffBenefits(
     const unmatched = sorted(
       benefits.filter((benefit) => proposedByKey.has(benefit.dedupeKey)),
     );
-    if (unmatched.length > 1) {
+    if (
+      unmatched.length > 1 &&
+      new Set(unmatched.map(sourceIdentity)).size > 1
+    ) {
       conflicts.push({
         code: "conflicting_proposed_terms",
         proposed: unmatched,

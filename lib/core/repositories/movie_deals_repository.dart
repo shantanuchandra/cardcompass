@@ -295,11 +295,10 @@ class SupabaseMovieDealsDataSource implements MovieDealsDataSource {
   Future<List<Map<String, dynamic>>> loadMovieRelatedBenefits() async {
     final rows = _rows(
       await _client
-          .from('benefits')
+          .from('active_card_benefits')
           .select(
             'benefit_id, title, value_config, source_url, partners, exclusions, valid_from, valid_until',
           )
-          .eq('is_active', true)
           .or(_buildWidenedOrExpression()),
     );
     return rows;
@@ -312,7 +311,7 @@ class SupabaseMovieDealsDataSource implements MovieDealsDataSource {
       ? const []
       : _rows(
           await _client
-              .from('card_benefit_mapping')
+              .from('active_card_benefits')
               .select('benefit_id, card_id, display_priority')
               .inFilter('benefit_id', benefitIds),
         );

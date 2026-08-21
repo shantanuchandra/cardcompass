@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.110.2";
 import {
   ActiveProfileError,
   requireActiveProfile,
@@ -100,8 +100,9 @@ serve(async (request) => {
     return Response.json({ success: true, status: "pending" }, {
       headers: corsHeaders,
     });
-  } catch {
-    return Response.json({ error: "request_failed" }, {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Request failed";
+    return Response.json({ error: message }, {
       status: 500,
       headers: corsHeaders,
     });

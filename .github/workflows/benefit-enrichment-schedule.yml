@@ -2,11 +2,11 @@ name: Schedule benefit enrichment
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 concurrency:
-  group: benefit-enrichment-schedule
+  group: cardcompass-issuer-crawl
   cancel-in-progress: false
 
 jobs:

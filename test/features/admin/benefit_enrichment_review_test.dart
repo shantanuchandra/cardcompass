@@ -7,6 +7,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+const _v6JobId = '8d3b4ab7-2cf9-4bf2-b4ee-1fa4791fc23b';
+const _v6CardId = '49b1ed82-91bb-4dbe-a58f-4db4f8b90aed';
+const _otherV6CardId = 'be256660-7ed2-4519-b754-e30b3d6eca43';
+const _v6StagingId = 'a2b42814-7eb6-4e72-a303-46b3a68e70f9';
+const _v6LiveModificationId = 'c198353b-2379-4a67-a892-7c584bb391e5';
+const _v6LiveLegacyId = 'f2803720-eb85-472c-9a28-2603991f147a';
+const _v6LiveOtherId = '0e96f79d-249f-4e07-a084-903c50524037';
+const _v6LiveUnchangedId = '76bf1f2c-9989-4fa7-a56b-323991e7cc90';
+const _v6PublishedAdditionId = 'bd28ed15-c37c-4ae6-9c61-67af888e1b36';
+const _v6PublishedModificationId = 'e6e9a0e3-efef-4495-8196-62f997f8f04d';
+
 const _jobJson = <String, dynamic>{
   'id': 'job-1',
   'card_id': 'card-1',
@@ -70,6 +81,556 @@ const _jobJson = <String, dynamic>{
   },
 };
 
+final _v6JobJson = <String, dynamic>{
+  ..._jobJson,
+  'id': _v6JobId,
+  'card_id': _v6CardId,
+  'staging_id': _v6StagingId,
+  'parser_version': 'benefits-v6',
+  'crawler_discovered_without_statement_signal': false,
+  'card': {
+    'id': _v6CardId,
+    'bank': 'Horizon Bank',
+    'card_name': 'Astra Travel',
+  },
+  'staging': {
+    ...(_jobJson['staging'] as Map<String, dynamic>),
+    'id': _v6StagingId,
+    'card_id': _v6CardId,
+    'parser_version': 'benefits-v6',
+    'source_evidence': [
+      {
+        'dedupe_key': 'card-benefit-v2:$_v6CardId:${'a' * 64}',
+        'offer_subject': 'dining-points',
+        'source_identity': 'd' * 64,
+        'source_identities': ['d' * 64, 'e' * 64],
+        'source_url': 'https://issuer.example/cards/astra',
+        'source_excerpt': 'Earn 10 dining points per ₹100.',
+        'content_hash': 'f' * 64,
+        'evidence': {'rate': '10 dining points'},
+      },
+    ],
+    'benefit_decisions': [
+      {
+        'action': 'approve',
+        'change_type': 'identity_migration',
+        'dedupe_key': 'card-benefit-v2:$_v6CardId:${'a' * 64}',
+        'benefit_id': _v6LiveModificationId,
+        'proposed': {
+          'benefitId': 'card-benefit-v2:$_v6CardId:${'a' * 64}',
+          'dedupeKey': 'card-benefit-v2:$_v6CardId:${'a' * 64}',
+          'conditionHash': 'a' * 64,
+          'title': 'Dining points',
+          'rate': 10,
+        },
+      },
+    ],
+    'extracted_data': {
+      'parser_version': 'benefits-v6',
+      'retrieved_at': '2026-08-20T10:11:12.123456Z',
+      'crawl_observation': {
+        'observed_at': '2026-08-20T10:11:12.123456Z',
+        'crawl_complete': false,
+        'crawl_reason': 'required_source_failed',
+        'source_attempts': [
+          {
+            'url': 'https://issuer.example/cards/astra',
+            'role': 'primary',
+            'status': 'success',
+            'httpStatus': 200,
+            'attemptedAt': '2026-08-20T10:11:12.123456Z',
+          },
+          {
+            'url': 'https://issuer.example/cards/astra/terms',
+            'role': 'required_supporting',
+            'status': 'failed',
+            'httpStatus': 503,
+            'errorCode': 'http_5xx',
+            'attemptedAt': '2026-08-20T10:11:13.123456Z',
+          },
+        ],
+      },
+      'diff': {
+        'modifications': [
+          {
+            'changeType': 'identity_migration',
+            'current': {
+              'liveBenefitId': _v6LiveModificationId,
+              'benefitId': 'card-benefit-v2:$_v6CardId:${'b' * 64}',
+              'dedupeKey': 'card-benefit-v2:$_v6CardId:${'b' * 64}',
+              'conditionHash': 'b' * 64,
+              'title': 'Dining points',
+              'rate': 5,
+            },
+            'proposed': {
+              'benefitId': 'card-benefit-v2:$_v6CardId:${'a' * 64}',
+              'dedupeKey': 'card-benefit-v2:$_v6CardId:${'a' * 64}',
+              'conditionHash': 'a' * 64,
+              'title': 'Dining points',
+              'rate': 10,
+            },
+          },
+        ],
+        'possibleRemovals': [
+          {
+            'benefit': {
+              'liveBenefitId': _v6LiveLegacyId,
+              'benefitId': 'card-benefit-v2:$_v6CardId:${'c' * 64}',
+              'dedupeKey': 'legacy:approved:lounge-visit',
+              'title': 'Legacy lounge visit',
+            },
+            'informational': true,
+            'retirementEligible': true,
+            'retirementReason': 'two_complete_observations',
+            'completeAbsenceObservedAt': [
+              '2026-08-12T00:00:00Z',
+              '2026-08-20T00:00:00Z',
+            ],
+          },
+        ],
+      },
+    },
+  },
+};
+
+Map<String, dynamic> get _stagingOnlyV6Corruption => <String, dynamic>{
+  ..._jobJson,
+  'id': _v6JobId,
+  'card_id': _v6CardId,
+  'staging_id': _v6StagingId,
+  'card': {
+    'id': _v6CardId,
+    'bank': 'Horizon Bank',
+    'card_name': 'Astra Travel',
+  },
+  'staging': {
+    ...(_jobJson['staging'] as Map<String, dynamic>),
+    'id': _v6StagingId,
+    'card_id': _v6CardId,
+    'parser_version': 'benefits-v6',
+  },
+};
+
+Map<String, dynamic> _v6AdditionWithIdentity({
+  required String benefitId,
+  required String conditionHash,
+}) => <String, dynamic>{
+  ..._v6JobJson,
+  'staging': {
+    ...(_v6JobJson['staging'] as Map<String, dynamic>),
+    'benefit_decisions': const [],
+    'extracted_data': {
+      ...((_v6JobJson['staging'] as Map<String, dynamic>)['extracted_data']
+          as Map<String, dynamic>),
+      'diff': {
+        'additions': [
+          {
+            'benefitId': benefitId,
+            'dedupeKey': benefitId,
+            'conditionHash': conditionHash,
+            'title': 'Canonical test proposal',
+          },
+        ],
+      },
+    },
+  },
+};
+
+Map<String, dynamic> _v6CurrentWithIdentity({
+  required String benefitId,
+  required String conditionHash,
+  String liveBenefitId = _v6LiveModificationId,
+}) {
+  final staging = _v6JobJson['staging'] as Map<String, dynamic>;
+  final extractedData = staging['extracted_data'] as Map<String, dynamic>;
+  final diff = extractedData['diff'] as Map<String, dynamic>;
+  final modification =
+      (diff['modifications'] as List).single as Map<String, dynamic>;
+  final current = modification['current'] as Map<String, dynamic>;
+  return <String, dynamic>{
+    ..._v6JobJson,
+    'staging': {
+      ...staging,
+      'extracted_data': {
+        ...extractedData,
+        'diff': {
+          ...diff,
+          'modifications': [
+            {
+              ...modification,
+              'current': {
+                ...current,
+                'liveBenefitId': liveBenefitId,
+                'benefitId': benefitId,
+                'dedupeKey': benefitId,
+                'conditionHash': conditionHash,
+              },
+            },
+          ],
+        },
+      },
+    },
+  };
+}
+
+Map<String, dynamic> _v6AdditionWithReviewIdentity({
+  String jobId = _v6JobId,
+  String cardId = _v6CardId,
+  String stagingId = _v6StagingId,
+}) {
+  final row = _v6AdditionWithIdentity(
+    benefitId: 'card-benefit-v2:$cardId:${'d' * 64}',
+    conditionHash: 'd' * 64,
+  );
+  final card = row['card'] as Map<String, dynamic>;
+  final staging = row['staging'] as Map<String, dynamic>;
+  return <String, dynamic>{
+    ...row,
+    'id': jobId,
+    'card_id': cardId,
+    'staging_id': stagingId,
+    'card': {...card, 'id': cardId},
+    'staging': {...staging, 'id': stagingId, 'card_id': cardId},
+  };
+}
+
+Map<String, dynamic> _v6DecisionWithLiveBenefitId(String liveBenefitId) {
+  final staging = _v6JobJson['staging'] as Map<String, dynamic>;
+  final decision =
+      (staging['benefit_decisions'] as List).single as Map<String, dynamic>;
+  return <String, dynamic>{
+    ..._v6JobJson,
+    'staging': {
+      ...staging,
+      'benefit_decisions': [
+        {...decision, 'benefit_id': liveBenefitId},
+      ],
+    },
+  };
+}
+
+List<Map<String, dynamic>> _malformedV6UuidRows() => [
+  _v6AdditionWithReviewIdentity(jobId: 'job:not-a-uuid'),
+  _v6AdditionWithReviewIdentity(cardId: '$_v6CardId:ambiguous'),
+  _v6AdditionWithReviewIdentity(stagingId: 'not-a-staging-uuid'),
+  _v6AdditionWithReviewIdentity(stagingId: _v6StagingId.toUpperCase()),
+  _v6CurrentWithIdentity(
+    benefitId: 'card-benefit-v2:$_v6CardId:${'b' * 64}',
+    conditionHash: 'b' * 64,
+    liveBenefitId: '$_v6LiveModificationId:ambiguous',
+  ),
+  _v6CurrentWithIdentity(
+    benefitId: 'card-benefit-v2:$_v6CardId:${'b' * 64}',
+    conditionHash: 'b' * 64,
+    liveBenefitId: 'not-a-live-benefit-uuid',
+  ),
+  _v6DecisionWithLiveBenefitId(_v6LiveModificationId.toUpperCase()),
+];
+
+Map<String, dynamic> _v6DecisionLaneFixture() {
+  final staging = _v6JobJson['staging'] as Map<String, dynamic>;
+  final extractedData = staging['extracted_data'] as Map<String, dynamic>;
+  final baseDiff = extractedData['diff'] as Map<String, dynamic>;
+  final modification = Map<String, dynamic>.from(
+    (baseDiff['modifications'] as List).single as Map,
+  );
+  final removal = Map<String, dynamic>.from(
+    (baseDiff['possibleRemovals'] as List).single as Map,
+  );
+  final addition = <String, dynamic>{
+    'benefitId': 'card-benefit-v2:$_v6CardId:${'d' * 64}',
+    'dedupeKey': 'card-benefit-v2:$_v6CardId:${'d' * 64}',
+    'conditionHash': 'd' * 64,
+    'title': 'Added airport transfer benefit',
+  };
+  final unchangedCurrent = <String, dynamic>{
+    'liveBenefitId': _v6LiveUnchangedId,
+    'dedupeKey': 'legacy:approved:unchanged-benefit',
+    'title': 'Unchanged insurance benefit',
+  };
+  final unchangedProposed = <String, dynamic>{
+    'benefitId': 'card-benefit-v2:$_v6CardId:${'e' * 64}',
+    'dedupeKey': 'card-benefit-v2:$_v6CardId:${'e' * 64}',
+    'conditionHash': 'e' * 64,
+    'title': 'Unchanged insurance benefit',
+  };
+  final proposed = Map<String, dynamic>.from(modification['proposed'] as Map);
+  final removalBenefit = Map<String, dynamic>.from(removal['benefit'] as Map);
+
+  return <String, dynamic>{
+    ..._v6JobJson,
+    'staging': {
+      ...staging,
+      'benefit_decisions': [
+        {
+          'action': 'approve',
+          'dedupe_key': addition['dedupeKey'],
+          'benefit': addition,
+        },
+        {
+          'action': 'approve',
+          'change_type': 'identity_migration',
+          'benefit_id': _v6LiveModificationId,
+          'dedupe_key': proposed['dedupeKey'],
+          'proposed': proposed,
+        },
+        {
+          'action': 'retire',
+          'reason': 'Issuer corroborated retirement',
+          'benefit_id': _v6LiveLegacyId,
+          'dedupe_key': removalBenefit['dedupeKey'],
+          'benefit': removalBenefit,
+        },
+        {
+          'action': 'keep_existing',
+          'benefit_id': _v6LiveUnchangedId,
+          'dedupe_key': unchangedCurrent['dedupeKey'],
+          'current': unchangedCurrent,
+        },
+        {'action': 'reject', 'reason': 'Reviewed remaining proposals'},
+      ],
+      'extracted_data': {
+        ...extractedData,
+        'diff': {
+          ...baseDiff,
+          'additions': [addition],
+          'modifications': [modification],
+          'possibleRemovals': [removal],
+          'unchanged': [
+            {'current': unchangedCurrent, 'proposed': unchangedProposed},
+          ],
+        },
+      },
+    },
+  };
+}
+
+Map<String, dynamic> _replaceV6Decision(
+  int index,
+  Map<String, dynamic> replacement,
+) {
+  final row = _v6DecisionLaneFixture();
+  final staging = row['staging'] as Map<String, dynamic>;
+  final decisions = (staging['benefit_decisions'] as List)
+      .map((item) => Map<String, dynamic>.from(item as Map))
+      .toList();
+  decisions[index] = replacement;
+  return <String, dynamic>{
+    ...row,
+    'staging': {...staging, 'benefit_decisions': decisions},
+  };
+}
+
+Map<String, dynamic> _v6WithOnlyDecision(Map<String, dynamic> decision) {
+  final row = _v6DecisionLaneFixture();
+  final staging = row['staging'] as Map<String, dynamic>;
+  return <String, dynamic>{
+    ...row,
+    'staging': {
+      ...staging,
+      'benefit_decisions': [decision],
+    },
+  };
+}
+
+Map<String, dynamic> _v6PublishedDecisionLaneFixture() {
+  final row = _v6DecisionLaneFixture();
+  final staging = row['staging'] as Map<String, dynamic>;
+  final decisions = staging['benefit_decisions'] as List;
+  final addition = decisions[0] as Map<String, dynamic>;
+  final modification = decisions[1] as Map<String, dynamic>;
+  final removal = decisions[2] as Map<String, dynamic>;
+  final unchanged = decisions[3] as Map<String, dynamic>;
+  return <String, dynamic>{
+    ...row,
+    'status': 'completed',
+    'staging': {
+      ...staging,
+      'status': 'approved',
+      'benefit_decisions': [
+        {
+          'action': 'approve',
+          'benefit_id': _v6PublishedAdditionId,
+          'dedupe_key': addition['dedupe_key'],
+        },
+        {
+          'action': 'approve',
+          'benefit_id': _v6PublishedModificationId,
+          'dedupe_key': modification['dedupe_key'],
+          'change_type': 'identity_migration',
+        },
+        {'action': 'retire', 'benefit_id': removal['benefit_id']},
+        {'action': 'keep_existing', 'benefit_id': unchanged['benefit_id']},
+        {'action': 'reject', 'reason': 'Reviewed remaining proposals'},
+      ],
+    },
+  };
+}
+
+Map<String, dynamic> _legacyConflictJobJson(int groupCount) => {
+  ..._jobJson,
+  'staging': {
+    ...(_jobJson['staging'] as Map<String, dynamic>),
+    'benefit_decisions': const [],
+    'extracted_data': {
+      'parser_version': 'benefits-v1',
+      'diff': {
+        'additions': [
+          {'dedupeKey': 'safe-addition', 'title': 'Safe addition'},
+        ],
+        'conflicts': List.generate(
+          groupCount,
+          (group) => {
+            'code': 'conflicting_proposed_terms_$group',
+            'current': [
+              {
+                'liveBenefitId':
+                    '00000000-0000-4000-8000-${(group + 1).toString().padLeft(12, '0')}',
+                'dedupeKey': 'current-$group',
+                'title': 'Current $group',
+                'rate': 5 + group,
+              },
+            ],
+            'proposed': [
+              {
+                'dedupeKey': 'candidate-$group-a',
+                'title': 'Candidate $group A',
+                'description': 'First terms for group $group',
+                'rate': 10 + group,
+              },
+              {
+                'dedupeKey': 'candidate-$group-b',
+                'title': 'Candidate $group B',
+                'description': 'Second terms for group $group',
+                'rate': 20 + group,
+              },
+            ],
+          },
+        ),
+      },
+    },
+  },
+};
+
+List<Map<String, dynamic>> _invalidV6DecisionRows() {
+  final valid = _v6DecisionLaneFixture();
+  final staging = valid['staging'] as Map<String, dynamic>;
+  final decisions = (staging['benefit_decisions'] as List)
+      .map((item) => Map<String, dynamic>.from(item as Map))
+      .toList();
+  final addition = Map<String, dynamic>.from(decisions[0]['benefit'] as Map);
+  final modification = Map<String, dynamic>.from(
+    decisions[1]['proposed'] as Map,
+  );
+  final removal = Map<String, dynamic>.from(decisions[2]['benefit'] as Map);
+
+  Map<String, dynamic> replaceCanonical(Map<String, dynamic> benefit) =>
+      _replaceV6Decision(0, {...decisions[0], 'benefit': benefit});
+
+  final duplicate = _v6DecisionLaneFixture();
+  final duplicateStaging = duplicate['staging'] as Map<String, dynamic>;
+  final duplicateDecisions = List<dynamic>.from(
+    duplicateStaging['benefit_decisions'] as List,
+  );
+  duplicateDecisions.add(Map<String, dynamic>.from(decisions[0]));
+
+  final ambiguous = _v6DecisionLaneFixture();
+  final ambiguousStaging = ambiguous['staging'] as Map<String, dynamic>;
+  final ambiguousExtraction =
+      ambiguousStaging['extracted_data'] as Map<String, dynamic>;
+  final ambiguousDiff = ambiguousExtraction['diff'] as Map<String, dynamic>;
+  final ambiguousAdditions = List<dynamic>.from(
+    ambiguousDiff['additions'] as List,
+  )..add(Map<String, dynamic>.from(addition));
+
+  return [
+    replaceCanonical({
+      ...addition,
+      'benefitId': 'card-benefit-v2:$_otherV6CardId:${'d' * 64}',
+      'dedupeKey': 'card-benefit-v2:$_otherV6CardId:${'d' * 64}',
+    }),
+    replaceCanonical({
+      ...addition,
+      'benefitId': 'card-benefit-v2:$_v6CardId:${'D' * 64}',
+      'dedupeKey': 'card-benefit-v2:$_v6CardId:${'D' * 64}',
+      'conditionHash': 'D' * 64,
+    }),
+    replaceCanonical({
+      ...addition,
+      'benefitId': 'card-benefit-v2:$_v6CardId:${'z' * 64}',
+      'dedupeKey': 'card-benefit-v2:$_v6CardId:${'z' * 64}',
+      'conditionHash': 'z' * 64,
+    }),
+    replaceCanonical({...addition, 'conditionHash': 'e' * 64}),
+    replaceCanonical({...addition, 'liveBenefitId': _v6LiveUnchangedId}),
+    _replaceV6Decision(1, {...decisions[1], 'benefit_id': _v6LiveUnchangedId}),
+    _replaceV6Decision(1, {
+      'action': 'approve',
+      'benefit_id': _v6LiveUnchangedId,
+      'dedupe_key': modification['dedupeKey'],
+    }),
+    <String, dynamic>{
+      ..._replaceV6Decision(1, {
+        'action': 'approve',
+        'benefit_id': _v6LiveUnchangedId,
+        'dedupe_key': modification['dedupeKey'],
+      }),
+      'status': 'completed',
+    },
+    _replaceV6Decision(1, {
+      ...decisions[1],
+      'dedupe_key': addition['dedupeKey'],
+    }),
+    _replaceV6Decision(2, {
+      ...decisions[2],
+      'benefit': {
+        ...removal,
+        'benefitId': 'card-benefit-v2:$_v6CardId:${'f' * 64}',
+      },
+    }),
+    <String, dynamic>{
+      ...duplicate,
+      'staging': {...duplicateStaging, 'benefit_decisions': duplicateDecisions},
+    },
+    <String, dynamic>{
+      ...ambiguous,
+      'staging': {
+        ...ambiguousStaging,
+        'extracted_data': {
+          ...ambiguousExtraction,
+          'diff': {...ambiguousDiff, 'additions': ambiguousAdditions},
+        },
+      },
+    },
+    replaceCanonical({
+      ...addition,
+      'benefitId': 'card-benefit-v2:$_v6CardId:${'f' * 64}',
+      'dedupeKey': 'card-benefit-v2:$_v6CardId:${'f' * 64}',
+      'conditionHash': 'f' * 64,
+    }),
+    _replaceV6Decision(0, {
+      ...decisions[0],
+      'action': 'retire',
+      'benefit_id': _v6LiveLegacyId,
+    }),
+    _replaceV6Decision(3, {
+      ...decisions[3],
+      'current': {
+        ...Map<String, dynamic>.from(decisions[3]['current'] as Map),
+        'dedupeKey': 'legacy:approved:wrong-current',
+      },
+    }),
+    _replaceV6Decision(1, {
+      ...decisions[1],
+      'proposed': modification,
+      'benefit': addition,
+    }),
+  ];
+}
+
+void _noop() {}
+void _noopValue(String _) {}
+
 BenefitEnrichmentReviewPage _page() =>
     BenefitEnrichmentReviewPage.fromJson(const {
       'counts': {
@@ -108,6 +669,9 @@ class _FakeRepository implements BenefitEnrichmentRepository {
   final BenefitEnrichmentReviewPage page;
   final Object? error;
   final actions = <String>[];
+  List<BenefitReviewDecision>? submittedDecisions;
+  String? retirementReason;
+  String? retiredBenefitId;
 
   @override
   Future<BenefitEnrichmentReviewPage> loadReviewPage({
@@ -127,7 +691,10 @@ class _FakeRepository implements BenefitEnrichmentRepository {
   Future<void> editApprove(
     BenefitEnrichmentReview item,
     List<BenefitReviewDecision> decisions,
-  ) async => actions.add('edit-approve');
+  ) async {
+    submittedDecisions = decisions;
+    actions.add('edit-approve');
+  }
 
   @override
   Future<void> reject(BenefitEnrichmentReview item, String reason) async =>
@@ -144,6 +711,17 @@ class _FakeRepository implements BenefitEnrichmentRepository {
   @override
   Future<void> unquarantine(BenefitEnrichmentReview item) async =>
       actions.add('unquarantine');
+
+  @override
+  Future<void> retire(
+    BenefitEnrichmentReview item,
+    BenefitPossibleRemoval removal,
+    String reason,
+  ) async {
+    actions.add('retire');
+    retirementReason = reason;
+    retiredBenefitId = removal.benefit.liveBenefitId;
+  }
 }
 
 Future<void> _pumpPanel(
@@ -167,6 +745,699 @@ Future<void> _pumpPanel(
 }
 
 void main() {
+  test('legacy and v6 review DTOs preserve server identity and evidence', () {
+    expect(BenefitEnrichmentReview.fromJson(_jobJson).canReview, isTrue);
+
+    final review = BenefitEnrichmentReview.fromJson(_v6JobJson);
+    final modification = review.staging.extractedData.diff.modifications.single;
+    final decision = review.staging.decisions.single;
+    final edited = decision.withEditedBenefit(
+      decision.proposed!.copyWith(description: 'Reviewed wording'),
+    );
+
+    expect(
+      review.staging.extractedData.retrievedAt,
+      '2026-08-20T10:11:12.123456Z',
+    );
+    expect(review.staging.extractedData.crawl.complete, isFalse);
+    expect(review.staging.extractedData.crawl.reason, 'required_source_failed');
+    expect(review.id, _v6JobId);
+    expect(review.cardId, _v6CardId);
+    expect(review.stagingId, _v6StagingId);
+    expect(review.staging.id, _v6StagingId);
+    expect(review.staging.cardId, _v6CardId);
+    expect(review.staging.parserVersion, 'benefits-v6');
+    expect(review.staging.extractedData.crawl.sourceAttempts, hasLength(2));
+    expect(review.staging.sourceEvidence.single.offerSubject, 'dining-points');
+    expect(review.staging.sourceEvidence.single.sourceIdentities, hasLength(2));
+    expect(review.staging.sourceEvidence.single.contentHash, 'f' * 64);
+    expect(modification.changeType, 'identity_migration');
+    expect(modification.current.liveBenefitId, _v6LiveModificationId);
+    expect(decision.liveBenefitId, _v6LiveModificationId);
+    expect(
+      review
+          .staging
+          .extractedData
+          .diff
+          .possibleRemovals
+          .single
+          .benefit
+          .liveBenefitId,
+      _v6LiveLegacyId,
+    );
+    expect(
+      modification.proposed.benefitId,
+      'card-benefit-v2:$_v6CardId:${'a' * 64}',
+    );
+    expect(modification.proposed.conditionHash, 'a' * 64);
+    expect(edited.changeType, decision.changeType);
+    expect(edited.liveBenefitId, decision.liveBenefitId);
+    expect(edited.dedupeKey, decision.dedupeKey);
+    expect(edited.toJson()['benefit_id'], decision.liveBenefitId);
+    expect(
+      (edited.toJson()['edited_benefit'] as Map)['benefitId'],
+      'card-benefit-v2:$_v6CardId:${'a' * 64}',
+    );
+  });
+
+  test(
+    'v6 accepts production current and legacy live rows while validating proposed identity',
+    () {
+      final productionShape = <String, dynamic>{
+        ..._v6JobJson,
+        'staging': {
+          ...(_v6JobJson['staging'] as Map<String, dynamic>),
+          'benefit_decisions': const [],
+          'extracted_data': {
+            ...((_v6JobJson['staging']
+                    as Map<String, dynamic>)['extracted_data']
+                as Map<String, dynamic>),
+            'diff': {
+              'modifications': [
+                {
+                  'current': {
+                    'liveBenefitId': _v6LiveModificationId,
+                    'benefitId': 'card-benefit-v2:$_v6CardId:${'4' * 64}',
+                    'dedupeKey': 'card-benefit-v2:$_v6CardId:${'4' * 64}',
+                    'title': 'Approved dining benefit',
+                    'parserVersion': 'current-approved-benefit',
+                  },
+                  'proposed': {
+                    'benefitId': 'card-benefit-v2:$_v6CardId:${'1' * 64}',
+                    'dedupeKey': 'card-benefit-v2:$_v6CardId:${'1' * 64}',
+                    'conditionHash': '1' * 64,
+                    'title': 'Updated dining benefit',
+                  },
+                },
+              ],
+              'unchanged': [
+                {
+                  'current': {
+                    'liveBenefitId': _v6LiveLegacyId,
+                    'dedupeKey': 'legacy-lounge-benefit',
+                    'title': 'Legacy lounge benefit',
+                    'parserVersion': 'current-approved-benefit',
+                  },
+                  'proposed': {
+                    'benefitId': 'card-benefit-v2:$_v6CardId:${'2' * 64}',
+                    'dedupeKey': 'card-benefit-v2:$_v6CardId:${'2' * 64}',
+                    'conditionHash': '2' * 64,
+                    'title': 'Legacy lounge benefit',
+                  },
+                },
+              ],
+              'possibleRemovals': [
+                {
+                  'benefit': {
+                    'liveBenefitId': _v6LiveOtherId,
+                    'benefitId': 'card-benefit-v2:$_v6CardId:${'3' * 64}',
+                    'dedupeKey': 'legacy-movie-benefit',
+                    'title': 'Legacy movie benefit',
+                    'parserVersion': 'current-approved-benefit',
+                  },
+                  'informational': true,
+                  'retirementEligible': false,
+                },
+              ],
+            },
+          },
+        },
+      };
+
+      final review = BenefitEnrichmentReview.fromJson(productionShape);
+      final diff = review.staging.extractedData.diff;
+
+      expect(diff.modifications.single.current.conditionHash, isNull);
+      expect(
+        diff.modifications.single.current.liveBenefitId,
+        _v6LiveModificationId,
+      );
+      expect(diff.unchanged.single.current.benefitId, isNull);
+      expect(diff.unchanged.single.current.dedupeKey, 'legacy-lounge-benefit');
+      expect(
+        diff.possibleRemovals.single.benefit.dedupeKey,
+        'legacy-movie-benefit',
+      );
+      expect(
+        diff.possibleRemovals.single.benefit.benefitId,
+        'card-benefit-v2:$_v6CardId:${'3' * 64}',
+      );
+    },
+  );
+
+  test(
+    'malformed required v6 identity fails closed while legacy remains readable',
+    () {
+      final malformed = <String, dynamic>{
+        ..._v6JobJson,
+        'staging': {
+          ...(_v6JobJson['staging'] as Map<String, dynamic>),
+          'extracted_data': {
+            ...((_v6JobJson['staging']
+                    as Map<String, dynamic>)['extracted_data']
+                as Map<String, dynamic>),
+            'diff': {
+              'additions': [
+                {'title': 'Missing identity'},
+              ],
+            },
+          },
+        },
+      };
+
+      expect(
+        () => BenefitEnrichmentReview.fromJson(malformed),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => BenefitEnrichmentReview.fromJson({
+          ..._v6JobJson,
+          'staging': {
+            ...(_v6JobJson['staging'] as Map<String, dynamic>),
+            'extracted_data': {
+              ...((_v6JobJson['staging']
+                      as Map<String, dynamic>)['extracted_data']
+                  as Map<String, dynamic>),
+              'diff': {
+                'possibleRemovals': [
+                  {
+                    'benefit': {
+                      'dedupeKey': 'legacy-without-live-id',
+                      'title': 'Structurally incomplete current benefit',
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        }),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => BenefitEnrichmentReview.fromJson({
+          ..._v6JobJson,
+          'staging': {
+            ...(_v6JobJson['staging'] as Map<String, dynamic>),
+            'extracted_data': {
+              ...((_v6JobJson['staging']
+                      as Map<String, dynamic>)['extracted_data']
+                  as Map<String, dynamic>),
+              'diff': {
+                'possibleRemovals': [
+                  {
+                    'benefit': {
+                      'liveBenefitId': _v6LiveOtherId,
+                      'benefitId': 'card-benefit-v2:different-card:${'3' * 64}',
+                      'dedupeKey': 'legacy-movie-benefit',
+                      'title': 'Malformed decorated legacy removal',
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        }),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => BenefitEnrichmentReview.fromJson({
+          ..._v6JobJson,
+          'staging': {
+            ...(_v6JobJson['staging'] as Map<String, dynamic>),
+            'card_id': 'different-card',
+          },
+        }),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => BenefitEnrichmentReview.fromJson(_stagingOnlyV6Corruption),
+        throwsA(isA<FormatException>()),
+      );
+      expect(() => BenefitEnrichmentReview.fromJson(_jobJson), returnsNormally);
+    },
+  );
+
+  test('v6 proposed identity is the exact review-card condition key', () {
+    expect(
+      () => BenefitEnrichmentReview.fromJson(
+        _v6AdditionWithIdentity(
+          benefitId: 'card-benefit-v2:$_v6CardId:${'d' * 64}',
+          conditionHash: 'd' * 64,
+        ),
+      ),
+      returnsNormally,
+    );
+
+    final malformed = [
+      _v6AdditionWithIdentity(
+        benefitId: 'card-benefit-v2:other-card:${'d' * 64}',
+        conditionHash: 'd' * 64,
+      ),
+      _v6AdditionWithIdentity(
+        benefitId: 'card-benefit-v2:$_v6CardId:${'e' * 64}',
+        conditionHash: 'd' * 64,
+      ),
+      _v6AdditionWithIdentity(
+        benefitId: 'benefit-v2:$_v6CardId:${'d' * 64}',
+        conditionHash: 'd' * 64,
+      ),
+    ];
+    for (final row in malformed) {
+      expect(
+        () => BenefitEnrichmentReview.fromJson(row),
+        throwsA(isA<FormatException>()),
+      );
+    }
+  });
+
+  test('v6 canonical proposal and current digests are lowercase only', () {
+    expect(
+      () => BenefitEnrichmentReview.fromJson(
+        _v6AdditionWithIdentity(
+          benefitId: 'card-benefit-v2:$_v6CardId:${'d' * 64}',
+          conditionHash: 'd' * 64,
+        ),
+      ),
+      returnsNormally,
+    );
+    expect(
+      () => BenefitEnrichmentReview.fromJson(
+        _v6CurrentWithIdentity(
+          benefitId: 'card-benefit-v2:$_v6CardId:${'b' * 64}',
+          conditionHash: 'b' * 64,
+        ),
+      ),
+      returnsNormally,
+    );
+
+    for (final digest in ['D' * 64, 'dD' * 32]) {
+      expect(
+        () => BenefitEnrichmentReview.fromJson(
+          _v6AdditionWithIdentity(
+            benefitId: 'card-benefit-v2:$_v6CardId:$digest',
+            conditionHash: digest,
+          ),
+        ),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => BenefitEnrichmentReview.fromJson(
+          _v6CurrentWithIdentity(
+            benefitId: 'card-benefit-v2:$_v6CardId:$digest',
+            conditionHash: digest,
+          ),
+        ),
+        throwsA(isA<FormatException>()),
+      );
+    }
+  });
+
+  test('v6 schema UUID identities use canonical PostgreSQL text', () {
+    expect(() => BenefitEnrichmentReview.fromJson(_jobJson), returnsNormally);
+    expect(() => BenefitEnrichmentReview.fromJson(_v6JobJson), returnsNormally);
+
+    for (final row in _malformedV6UuidRows()) {
+      expect(
+        () => BenefitEnrichmentReview.fromJson(row),
+        throwsA(isA<FormatException>()),
+      );
+    }
+  });
+
+  test(
+    'v6 staged and published decision lanes bind to locked diff identities',
+    () {
+      final staged = BenefitEnrichmentReview.fromJson(_v6DecisionLaneFixture());
+      expect(staged.staging.decisions, hasLength(5));
+      expect(staged.staging.decisions[0].action, 'approve');
+      expect(staged.staging.decisions[1].changeType, 'identity_migration');
+      expect(staged.staging.decisions[1].liveBenefitId, _v6LiveModificationId);
+      expect(staged.staging.decisions[2].action, 'retire');
+      expect(staged.staging.decisions[2].liveBenefitId, _v6LiveLegacyId);
+      expect(staged.staging.decisions[3].action, 'keep_existing');
+      expect(staged.staging.decisions[3].liveBenefitId, _v6LiveUnchangedId);
+      expect(staged.staging.decisions[4].action, 'reject');
+
+      expect(
+        () =>
+            BenefitEnrichmentReview.fromJson(_v6PublishedDecisionLaneFixture()),
+        returnsNormally,
+      );
+
+      final stagedJson = _v6DecisionLaneFixture();
+      final stagedMap = stagedJson['staging'] as Map<String, dynamic>;
+      final stagedDecisions = stagedMap['benefit_decisions'] as List;
+      final modification = Map<String, dynamic>.from(stagedDecisions[1] as Map);
+      final proposed = Map<String, dynamic>.from(
+        modification['proposed'] as Map,
+      );
+      expect(
+        () => BenefitEnrichmentReview.fromJson(
+          _v6WithOnlyDecision({
+            ...modification,
+            'action': 'edit',
+            'edited_benefit': {
+              ...proposed,
+              'title': 'Operator-reviewed dining points',
+            },
+          }),
+        ),
+        returnsNormally,
+      );
+      expect(
+        () => BenefitEnrichmentReview.fromJson(
+          _v6WithOnlyDecision({...modification, 'action': 'reject'}),
+        ),
+        returnsNormally,
+      );
+
+      final normalModification = _v6DecisionLaneFixture();
+      final normalStaging =
+          normalModification['staging'] as Map<String, dynamic>;
+      final normalExtraction =
+          normalStaging['extracted_data'] as Map<String, dynamic>;
+      final normalDiff = normalExtraction['diff'] as Map<String, dynamic>;
+      final normalModifications = (normalDiff['modifications'] as List)
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList();
+      normalModifications.single.remove('changeType');
+      final normalDecisions = (normalStaging['benefit_decisions'] as List)
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList();
+      normalDecisions[1].remove('change_type');
+      expect(
+        () => BenefitEnrichmentReview.fromJson({
+          ...normalModification,
+          'staging': {
+            ...normalStaging,
+            'benefit_decisions': normalDecisions,
+            'extracted_data': {
+              ...normalExtraction,
+              'diff': {...normalDiff, 'modifications': normalModifications},
+            },
+          },
+        }),
+        returnsNormally,
+      );
+    },
+  );
+
+  test(
+    'v6 staged decisions reject malformed unmatched and ambiguous lanes',
+    () {
+      for (final row in _invalidV6DecisionRows()) {
+        expect(
+          () => BenefitEnrichmentReview.fromJson(row),
+          throwsA(isA<FormatException>()),
+        );
+      }
+    },
+  );
+
+  test('v6 staged decisions bind immutable partner and region scope', () {
+    final row = _v6DecisionLaneFixture();
+    final staging = row['staging'] as Map<String, dynamic>;
+    final decisions = (staging['benefit_decisions'] as List)
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+    final proposed = Map<String, dynamic>.from(decisions[1]['proposed'] as Map);
+
+    for (final mutation in [
+      {
+        ...proposed,
+        'partners': ['tampered partner'],
+      },
+      {
+        ...proposed,
+        'regions': ['tampered region'],
+      },
+    ]) {
+      final mutated = [...decisions];
+      mutated[1] = {...decisions[1], 'proposed': mutation};
+      expect(
+        () => BenefitEnrichmentReview.fromJson({
+          ...row,
+          'staging': {...staging, 'benefit_decisions': mutated},
+        }),
+        throwsA(isA<FormatException>()),
+      );
+    }
+  });
+
+  test(
+    'v6 rejects duplicate canonical and live diff targets before empty decision repair',
+    () {
+      final canonical = _v6DecisionLaneFixture();
+      final canonicalStaging = canonical['staging'] as Map<String, dynamic>;
+      final canonicalExtraction =
+          canonicalStaging['extracted_data'] as Map<String, dynamic>;
+      final canonicalDiff = canonicalExtraction['diff'] as Map<String, dynamic>;
+      final duplicateCanonical = Map<String, dynamic>.from(
+        (canonicalDiff['additions'] as List).single as Map,
+      );
+
+      final live = _v6DecisionLaneFixture();
+      final liveStaging = live['staging'] as Map<String, dynamic>;
+      final liveExtraction =
+          liveStaging['extracted_data'] as Map<String, dynamic>;
+      final liveDiff = liveExtraction['diff'] as Map<String, dynamic>;
+      final duplicateCurrent = Map<String, dynamic>.from(
+        ((liveDiff['modifications'] as List).single as Map)['current'] as Map,
+      );
+
+      for (final row in [
+        <String, dynamic>{
+          ...canonical,
+          'staging': {
+            ...canonicalStaging,
+            'benefit_decisions': const [],
+            'extracted_data': {
+              ...canonicalExtraction,
+              'diff': {
+                ...canonicalDiff,
+                'conflicts': [
+                  {
+                    'code': 'conflicting_proposed_terms',
+                    'current': const [],
+                    'proposed': [duplicateCanonical],
+                  },
+                ],
+              },
+            },
+          },
+        },
+        <String, dynamic>{
+          ...live,
+          'staging': {
+            ...liveStaging,
+            'benefit_decisions': const [],
+            'extracted_data': {
+              ...liveExtraction,
+              'diff': {
+                ...liveDiff,
+                'conflicts': [
+                  {
+                    'code': 'conflicting_current_terms',
+                    'current': [duplicateCurrent],
+                    'proposed': const [],
+                  },
+                ],
+              },
+            },
+          },
+        },
+      ]) {
+        expect(
+          () => BenefitEnrichmentReview.fromJson(row),
+          throwsA(isA<FormatException>()),
+        );
+      }
+    },
+  );
+
+  test(
+    'published approve and edit audit decisions require live UUID and key',
+    () {
+      final valid = _v6PublishedDecisionLaneFixture();
+      expect(() => BenefitEnrichmentReview.fromJson(valid), returnsNormally);
+
+      for (final action in ['approve', 'edit']) {
+        final row = _v6PublishedDecisionLaneFixture();
+        final staging = row['staging'] as Map<String, dynamic>;
+        final decisions = (staging['benefit_decisions'] as List)
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .toList();
+        decisions[0] = {...decisions[0], 'action': action}
+          ..remove('benefit_id');
+
+        expect(
+          () => BenefitEnrichmentReview.fromJson({
+            ...row,
+            'staging': {...staging, 'benefit_decisions': decisions},
+          }),
+          throwsA(isA<FormatException>()),
+        );
+      }
+
+      final sqlEdit = _v6PublishedDecisionLaneFixture();
+      final sqlEditStaging = sqlEdit['staging'] as Map<String, dynamic>;
+      final sqlEditDecisions = (sqlEditStaging['benefit_decisions'] as List)
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList();
+      sqlEditDecisions[0] = {...sqlEditDecisions[0], 'action': 'edit'};
+      expect(
+        () => BenefitEnrichmentReview.fromJson({
+          ...sqlEdit,
+          'staging': {...sqlEditStaging, 'benefit_decisions': sqlEditDecisions},
+        }),
+        returnsNormally,
+      );
+    },
+  );
+
+  test(
+    'terminal SQL-shaped canonical current and global reject audits remain readable',
+    () {
+      final row = _v6DecisionLaneFixture();
+      final staging = row['staging'] as Map<String, dynamic>;
+      final extraction = staging['extracted_data'] as Map<String, dynamic>;
+      final diff = extraction['diff'] as Map<String, dynamic>;
+      final proposal = Map<String, dynamic>.from(
+        (diff['additions'] as List).first as Map,
+      );
+
+      final review = BenefitEnrichmentReview.fromJson({
+        ...row,
+        'status': 'completed',
+        'staging': {
+          ...staging,
+          'status': 'rejected',
+          'extracted_data': {
+            ...extraction,
+            'proposals': [proposal],
+          },
+          'benefit_decisions': [
+            {
+              'action': 'reject',
+              'proposal_index': 0,
+              'dedupe_key': proposal['dedupeKey'],
+              'condition_hash': proposal['conditionHash'],
+              'reason': 'Canonical alternative rejected',
+            },
+            {
+              'action': 'reject',
+              'benefit_id': _v6LiveModificationId,
+              'reason': 'Current conflict row rejected',
+            },
+            {'action': 'reject', 'reason': 'Whole review rejected'},
+          ],
+        },
+      });
+
+      expect(review.staging.decisions, hasLength(3));
+      expect(review.staging.decisions[0].proposalIndex, 0);
+      expect(
+        review.staging.decisions[0].conditionHash,
+        proposal['conditionHash'],
+      );
+      expect(review.staging.decisions[0].dedupeKey, proposal['dedupeKey']);
+      expect(review.staging.decisions[1].liveBenefitId, _v6LiveModificationId);
+      expect(review.staging.decisions[2].dedupeKey, isNull);
+    },
+  );
+
+  test(
+    'reject decisions serialize canonical current and global targets distinctly',
+    () {
+      final canonical = BenefitProposal(
+        benefitId: 'card-benefit-v2:$_v6CardId:${'d' * 64}',
+        dedupeKey: 'card-benefit-v2:$_v6CardId:${'d' * 64}',
+        conditionHash: 'd' * 64,
+        title: 'Canonical target',
+      );
+      final current = const BenefitProposal(
+        liveBenefitId: _v6LiveModificationId,
+        dedupeKey: 'legacy:current-target',
+        title: 'Current target',
+      );
+      final canonicalWire = BenefitReviewDecision(
+        action: 'reject',
+        reason: 'Reject proposal',
+        dedupeKey: canonical.dedupeKey,
+        benefit: canonical,
+      ).toJson();
+      final currentWire = BenefitReviewDecision(
+        action: 'reject',
+        reason: 'Reject current',
+        liveBenefitId: _v6LiveModificationId,
+        current: current,
+      ).toJson();
+      final globalWire = const BenefitReviewDecision(
+        action: 'reject',
+        reason: 'Reject review',
+      ).toJson();
+
+      expect(canonicalWire, contains('benefit'));
+      expect(canonicalWire, isNot(contains('current')));
+      expect(canonicalWire, isNot(contains('proposed')));
+      expect(currentWire['benefit_id'], _v6LiveModificationId);
+      expect(currentWire, contains('current'));
+      expect(currentWire, isNot(contains('benefit')));
+      expect(globalWire.keys, unorderedEquals(['action', 'reason']));
+      expect(
+        () => BenefitReviewDecision(
+          action: 'reject',
+          proposed: canonical,
+        ).toJson(),
+        throwsStateError,
+      );
+      expect(
+        () => const BenefitReviewDecision(
+          action: 'reject',
+          proposalIndex: 0,
+        ).toJson(),
+        throwsStateError,
+      );
+      expect(
+        () => BenefitReviewDecision(
+          action: 'reject',
+          conditionHash: 'd' * 64,
+        ).toJson(),
+        throwsStateError,
+      );
+    },
+  );
+
+  test('repository preserves exact bound v6 decision identities', () async {
+    final api = _FakeApi(
+      AdminCatalogEntryResponse(200, const {'success': true}),
+    );
+    final repository = AdminCatalogRepository(api);
+    final item = BenefitEnrichmentReview.fromJson(_v6DecisionLaneFixture());
+
+    await repository.approve(item);
+
+    final decisions = api.bodies.single['decisions'] as List;
+    expect(decisions, hasLength(5));
+    expect(
+      (decisions[0] as Map)['dedupe_key'],
+      'card-benefit-v2:$_v6CardId:${'d' * 64}',
+    );
+    expect((decisions[1] as Map)['benefit_id'], _v6LiveModificationId);
+    expect((decisions[1] as Map), isNot(contains('change_type')));
+    expect((decisions[2] as Map)['benefit_id'], _v6LiveLegacyId);
+    expect(
+      ((decisions[2] as Map)['benefit'] as Map)['benefitId'],
+      'card-benefit-v2:$_v6CardId:${'c' * 64}',
+    );
+    expect((decisions[3] as Map)['benefit_id'], _v6LiveUnchangedId);
+    expect(
+      ((decisions[3] as Map)['current'] as Map)['dedupeKey'],
+      'legacy:approved:unchanged-benefit',
+    );
+    expect((decisions[4] as Map)['action'], 'reject');
+  });
+
   test('admin reauthorization clears the stale session before login', () async {
     final events = <String>[];
 
@@ -208,6 +1479,516 @@ void main() {
       expect(find.text('Reject proposal'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'issuer discovery quarantine exposes only retry or keep actions',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CatalogIdentityReviewCard(
+              item: const {
+                'status': 'pending',
+                'proposed_fields': {
+                  'issuer': 'Axis Bank',
+                  'cardName': 'Issuer discovery quarantine',
+                  'source_observation': {
+                    'kind': 'issuer_discovery_quarantine',
+                    'classification': 'issuer_discovery_quarantine',
+                    'anchor_job_id': 'anchor-123',
+                    'issuer': 'Axis Bank',
+                    'reason': 'resume_attempts_exhausted',
+                    'retryable': true,
+                    'retryability_reason': 'attempt_budget_reset_allowed',
+                    'public_evidence':
+                        'Issuer directory retry budget exhausted.',
+                  },
+                },
+                'validation_warnings': ['issuer_discovery_quarantine'],
+                'existing_candidates': [],
+                'card_discovery_jobs': {
+                  'issuer': 'Axis Bank',
+                  'evidence': {
+                    'source_observation': {
+                      'kind': 'issuer_discovery_quarantine',
+                    },
+                  },
+                },
+              },
+              onApprove: _noop,
+              onEditApprove: _noop,
+              onMerge: _noopValue,
+              onRetry: _noop,
+              onReject: _noop,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Issuer discovery quarantine'), findsOneWidget);
+      expect(
+        find.textContaining('Issuer directory retry budget exhausted'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('anchor-123'), findsNothing);
+      expect(find.text('Retry issuer discovery'), findsOneWidget);
+      expect(find.text('Keep quarantined'), findsOneWidget);
+      expect(find.text('Approve as new card'), findsNothing);
+      expect(find.text('Edit and approve'), findsNothing);
+      expect(find.textContaining('lease_token'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'catalog review never renders statement identifiers or customer prose',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CatalogIdentityReviewCard(
+              item: const {
+                'status': 'pending',
+                'proposed_fields': {
+                  'issuer': 'Horizon Bank',
+                  'cardName': 'Astra Reserve',
+                },
+                'card_discovery_jobs': {
+                  'issuer': 'Horizon Bank',
+                  'proposed_product': 'Astra Reserve',
+                  'evidence': {
+                    'subject_product': 'Astra Reserve',
+                    'last_four': '4242',
+                    'pdf_header_excerpt':
+                        'PRIYA SHARMA · card ending 4242 · private statement',
+                    'customer_name': 'PRIYA SHARMA',
+                  },
+                },
+              },
+              onApprove: _noop,
+              onEditApprove: _noop,
+              onMerge: _noopValue,
+              onRetry: _noop,
+              onReject: _noop,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.textContaining('4242'), findsNothing);
+      expect(find.textContaining('PRIYA SHARMA'), findsNothing);
+      expect(find.textContaining('private statement'), findsNothing);
+      expect(find.textContaining('Astra Reserve'), findsWidgets);
+    },
+  );
+
+  testWidgets(
+    'catalog lifecycle review shows before-after evidence and explicit action only for strong evidence',
+    (tester) async {
+      var discontinued = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CatalogIdentityReviewCard(
+              item: const {
+                'id': 'review-lifecycle',
+                'status': 'pending',
+                'proposed_fields': {
+                  'cardName': 'Astra Reserve',
+                  'network': 'Visa Infinite',
+                  'joining_fee': 5000,
+                  'apr': 42,
+                  'official_url': 'https://issuer.example/astra-reserve',
+                  'suggested_action': 'mark_discontinued',
+                  'catalog_baseline': {
+                    'card_name': 'Astra',
+                    'network': 'Visa Signature',
+                    'joining_fee': 3000,
+                    'annual_fee': 3000,
+                    'apr': 40,
+                    'card_url': 'https://issuer.example/astra',
+                    'is_discontinued': false,
+                  },
+                  'source_observation': {
+                    'kind': 'strong_explicit_discontinuation',
+                    'source_status': 200,
+                    'identity_validated': true,
+                    'explicit_discontinuation': true,
+                    'retrieved_at': '2026-08-20T12:00:00.123456Z',
+                    'matched_excerpt':
+                        'Astra Reserve credit card has been discontinued.',
+                  },
+                },
+                'source_evidence': {
+                  'target_excerpt':
+                      'Astra Reserve credit card has been discontinued.',
+                },
+                'card_discovery_jobs': {
+                  'issuer': 'Horizon Bank',
+                  'proposed_product': 'Astra Reserve',
+                  'evidence': {},
+                },
+              },
+              onApprove: _noop,
+              onEditApprove: _noop,
+              onMerge: _noopValue,
+              onRetry: _noop,
+              onReject: _noop,
+              onMarkDiscontinued: () => discontinued = true,
+              onReactivate: _noop,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.textContaining('Astra → Astra Reserve'), findsOneWidget);
+      expect(
+        find.textContaining('Visa Signature → Visa Infinite'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('3000 → 5000'), findsOneWidget);
+      expect(
+        find.textContaining('Annual fee: 3000 → No proposal'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('40 → 42'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'issuer.example/astra → https://issuer.example/astra-reserve',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Astra Reserve credit card has been discontinued'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('2026-08-20T12:00:00.123456Z'),
+        findsOneWidget,
+      );
+      expect(find.text('Mark discontinued'), findsOneWidget);
+      expect(find.text('Reactivate'), findsNothing);
+
+      await tester.tap(find.text('Mark discontinued'));
+      expect(discontinued, isTrue);
+    },
+  );
+
+  testWidgets('raw status alone never exposes a card lifecycle mutation', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CatalogIdentityReviewCard(
+            item: const {
+              'status': 'pending',
+              'proposed_fields': {
+                'suggested_action': 'mark_discontinued',
+                'catalog_baseline': {
+                  'card_name': 'Astra',
+                  'is_discontinued': false,
+                },
+                'source_observation': {
+                  'kind': 'raw_fetch_error',
+                  'source_status': 410,
+                  'identity_validated': false,
+                },
+              },
+            },
+            onApprove: _noop,
+            onEditApprove: _noop,
+            onMerge: _noopValue,
+            onRetry: _noop,
+            onReject: _noop,
+            onMarkDiscontinued: _noop,
+            onReactivate: _noop,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Mark discontinued'), findsNothing);
+    expect(find.text('Reactivate'), findsNothing);
+  });
+
+  testWidgets('reviewed exact reappearance exposes Reactivate, not Retire', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CatalogIdentityReviewCard(
+            item: const {
+              'status': 'pending',
+              'proposed_fields': {
+                'suggested_action': 'reactivate',
+                'catalog_baseline': {
+                  'card_name': 'Astra',
+                  'is_discontinued': true,
+                },
+                'source_observation': {
+                  'kind': 'exact_card_reappearance',
+                  'source_status': 200,
+                  'identity_validated': true,
+                  'explicit_discontinuation': false,
+                  'matched_excerpt': 'Apply for the Astra card.',
+                },
+              },
+            },
+            onApprove: _noop,
+            onEditApprove: _noop,
+            onMerge: _noopValue,
+            onRetry: _noop,
+            onReject: _noop,
+            onMarkDiscontinued: _noop,
+            onReactivate: _noop,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Reactivate'), findsOneWidget);
+    expect(find.text('Mark discontinued'), findsNothing);
+  });
+
+  testWidgets(
+    'nonretryable issuer quarantine explains manual repair and hides Retry',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CatalogIdentityReviewCard(
+              item: const {
+                'status': 'pending',
+                'proposed_fields': {
+                  'source_observation': {
+                    'kind': 'issuer_discovery_quarantine',
+                    'classification': 'issuer_discovery_quarantine',
+                    'anchor_job_id': 'anchor-corrupt',
+                    'issuer': 'Axis Bank',
+                    'reason': 'anchor_identity_conflict',
+                    'retryable': false,
+                    'retryability_reason': 'manual_repair_required',
+                  },
+                },
+              },
+              onApprove: _noop,
+              onEditApprove: _noop,
+              onMerge: _noopValue,
+              onRetry: _noop,
+              onReject: _noop,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Retry issuer discovery'), findsNothing);
+      expect(find.text('Keep quarantined'), findsOneWidget);
+      expect(find.textContaining('Manual repair required'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'identity loader explicitly merges newest quarantine beyond one hundred older reviews',
+    (tester) async {
+      final calls = <Map<String, dynamic>>[];
+      final older = List.generate(
+        100,
+        (index) => <String, dynamic>{
+          'id': 'older-$index',
+          'status': 'pending',
+          'proposed_fields': const {'cardName': 'Older review'},
+        },
+      );
+      final newest = <String, dynamic>{
+        'id': 'newest-quarantine',
+        'status': 'pending',
+        'proposed_fields': const {
+          'source_observation': {
+            'kind': 'issuer_discovery_quarantine',
+            'classification': 'issuer_discovery_quarantine',
+            'anchor_job_id': 'anchor-newest',
+            'issuer': 'Axis Bank',
+            'reason': 'resume_attempts_exhausted',
+            'retryable': true,
+            'retryability_reason': 'attempt_budget_reset_allowed',
+          },
+        },
+      };
+      final items = await loadCatalogIdentityReviewItems(
+        status: 'pending',
+        invoke: (body) async {
+          calls.add(Map<String, dynamic>.from(body));
+          return body['action'] == 'issuer-quarantine-list'
+              ? {
+                  'items': [newest],
+                  'next_cursor': null,
+                }
+              : {'items': older};
+        },
+      );
+
+      expect(calls.map((call) => call['action']), [
+        'list',
+        'issuer-quarantine-list',
+      ]);
+      expect(items.length, 101);
+      expect(items.first['id'], 'newest-quarantine');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CatalogIdentityReviewCard(
+              item: items.first,
+              onApprove: _noop,
+              onEditApprove: _noop,
+              onMerge: _noopValue,
+              onRetry: _noop,
+              onReject: _noop,
+            ),
+          ),
+        ),
+      );
+      expect(find.text('Issuer discovery quarantine'), findsOneWidget);
+      expect(find.text('Retry issuer discovery'), findsOneWidget);
+      expect(find.text('Keep quarantined'), findsOneWidget);
+    },
+  );
+
+  test(
+    'identity loader consumes every quarantine page and dedupes boundaries',
+    () async {
+      final calls = <Map<String, dynamic>>[];
+      final items = await loadCatalogIdentityReviewItems(
+        status: 'pending',
+        invoke: (body) async {
+          calls.add(Map<String, dynamic>.from(body));
+          if (body['action'] == 'list') {
+            return {
+              'items': [
+                {'id': 'general-1'},
+                {'id': 'q-2'},
+              ],
+            };
+          }
+          if (body['cursor'] == null) {
+            return {
+              'items': [
+                {'id': 'q-1'},
+                {'id': 'q-2'},
+              ],
+              'has_more': true,
+              'next_cursor': 'cursor-2',
+            };
+          }
+          return {
+            'items': [
+              {'id': 'q-2'},
+              {'id': 'q-3'},
+            ],
+            'has_more': false,
+            'next_cursor': null,
+          };
+        },
+      );
+
+      expect(
+        calls.where((call) => call['action'] == 'issuer-quarantine-list'),
+        hasLength(2),
+      );
+      expect(items.map((item) => item['id']), [
+        'q-1',
+        'q-2',
+        'q-3',
+        'general-1',
+      ]);
+    },
+  );
+
+  test(
+    'identity loader reports bounded truncation instead of returning partial work',
+    () async {
+      expect(
+        () => loadCatalogIdentityReviewItems(
+          status: 'pending',
+          maxQuarantinePages: 2,
+          invoke: (body) async => body['action'] == 'list'
+              ? {'items': const []}
+              : {
+                  'items': [
+                    {'id': 'q-${body['cursor'] ?? 'first'}'},
+                  ],
+                  'has_more': true,
+                  'next_cursor': '${body['cursor'] ?? ''}x',
+                },
+        ),
+        throwsA(
+          isA<AdminCatalogRequestFailed>().having(
+            (error) => error.message,
+            'message',
+            contains('truncated'),
+          ),
+        ),
+      );
+    },
+  );
+
+  test('issuer quarantine action requests require a nonempty reason', () {
+    expect(
+      () => catalogIdentityReviewActionBody(
+        action: 'retry',
+        reviewItemId: 'review-1',
+        reason: ' ',
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => catalogIdentityReviewActionBody(
+        action: 'mark_discontinued',
+        reviewItemId: 'review-1',
+        reason: ' ',
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => catalogIdentityReviewActionBody(
+        action: 'reject',
+        reviewItemId: 'review-1',
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      catalogIdentityReviewActionBody(
+        action: 'retry',
+        reviewItemId: 'review-1',
+        reason: 'Verified temporary upstream outage',
+      ),
+      {
+        'action': 'retry',
+        'review_item_id': 'review-1',
+        'reason': 'Verified temporary upstream outage',
+      },
+    );
+  });
+
+  test('catalog edit request contains only explicit editable proposals', () {
+    final fields = catalogIdentityEditableFields(
+      const {
+        'cardName': 'Astra Reserve',
+        'official_url': 'https://issuer.example/astra',
+        'content_hash': 'immutable-hash',
+        'source_observation': {'kind': 'strong_existing_official_card'},
+      },
+      cardName: 'Astra Reserve Plus',
+      network: '',
+    );
+
+    expect(fields, {'cardName': 'Astra Reserve Plus'});
+    expect(fields, isNot(contains('annual_fee')));
+    expect(fields, isNot(contains('network')));
+    expect(fields, isNot(contains('official_url')));
+    expect(fields, isNot(contains('source_observation')));
+  });
 
   test(
     'repository maps a paginated benefit response and sends its API action',
@@ -251,6 +2032,291 @@ void main() {
         'status': 'staged',
       });
       expect(api.bodies.last['action'], 'benefit-status');
+    },
+  );
+
+  test(
+    'repository rejects contradictory nested proposal aliases while mapping',
+    () async {
+      final staging = _jobJson['staging'] as Map<String, dynamic>;
+      final extraction = staging['extracted_data'] as Map<String, dynamic>;
+      final diff = extraction['diff'] as Map<String, dynamic>;
+      final addition =
+          (diff['additions'] as List).single as Map<String, dynamic>;
+
+      for (final carrier in [
+        {...addition, 'dedupe_key': 'contradictory-dedupe'},
+        {...addition, 'dedupe_key': ''},
+        {
+          ...addition,
+          'valueConfig': {'cap': 500},
+          'value_config': {'cap': 900},
+        },
+        {
+          ...addition,
+          'valueConfig': {'cap': 500},
+          'value_config': null,
+        },
+      ]) {
+        final malformed = {
+          ..._jobJson,
+          'staging': {
+            ...staging,
+            'extracted_data': {
+              ...extraction,
+              'diff': {
+                ...diff,
+                'additions': [carrier],
+              },
+            },
+          },
+        };
+        final repository = AdminCatalogRepository(
+          _FakeApi(
+            AdminCatalogEntryResponse(200, {
+              'items': [malformed],
+              'counts': const {
+                'total': 1,
+                'by_status': <String, int>{},
+                'by_run_mode': <String, int>{},
+              },
+              'page': 1,
+              'limit': 25,
+              'has_more': false,
+            }),
+          ),
+        );
+
+        await expectLater(
+          repository.loadReviewPage(),
+          throwsA(isA<FormatException>()),
+        );
+      }
+
+      final exactCarrier = {
+        ...addition,
+        'dedupe_key': addition['dedupeKey'],
+        'valueConfig': {'cap': 500},
+        'value_config': {'cap': 500},
+      };
+      final exact = await AdminCatalogRepository(
+        _FakeApi(
+          AdminCatalogEntryResponse(200, {
+            'items': [
+              {
+                ..._jobJson,
+                'staging': {
+                  ...staging,
+                  'extracted_data': {
+                    ...extraction,
+                    'diff': {
+                      ...diff,
+                      'additions': [exactCarrier],
+                    },
+                  },
+                },
+              },
+            ],
+            'counts': const {
+              'total': 1,
+              'by_status': <String, int>{},
+              'by_run_mode': <String, int>{},
+            },
+            'page': 1,
+            'limit': 25,
+            'has_more': false,
+          }),
+        ),
+      ).loadReviewPage();
+      expect(
+        exact.items.single.staging.extractedData.diff.additions.single,
+        isA<BenefitProposal>()
+            .having((proposal) => proposal.dedupeKey, 'dedupe', 'dining-credit')
+            .having((proposal) => proposal.valueConfig['cap'], 'cap', 500),
+      );
+    },
+  );
+
+  test('repository rejects contradictory top-level decision aliases', () async {
+    final staging = _jobJson['staging'] as Map<String, dynamic>;
+    for (final decision in [
+      {
+        'action': 'approve',
+        'benefit_id': '11111111-1111-4111-8111-111111111111',
+        'current_benefit_id': '22222222-2222-4222-8222-222222222222',
+        'benefit': {'title': 'Dining credit'},
+      },
+      {
+        'action': 'approve',
+        'dedupe_key': 'dining-credit',
+        'dedupeKey': 'contradictory-dedupe',
+        'benefit': {'title': 'Dining credit'},
+      },
+      {
+        'action': 'edit',
+        'edited_benefit': {'title': 'Edited dining credit', 'rate': 12},
+        'editedBenefit': {'title': 'Contradictory edit', 'rate': 20},
+      },
+    ]) {
+      final repository = AdminCatalogRepository(
+        _FakeApi(
+          AdminCatalogEntryResponse(200, {
+            'items': [
+              {
+                ..._jobJson,
+                'staging': {
+                  ...staging,
+                  'benefit_decisions': [decision],
+                },
+              },
+            ],
+            'counts': const {
+              'total': 1,
+              'by_status': <String, int>{},
+              'by_run_mode': <String, int>{},
+            },
+            'page': 1,
+            'limit': 25,
+            'has_more': false,
+          }),
+        ),
+      );
+      await expectLater(
+        repository.loadReviewPage(),
+        throwsA(isA<FormatException>()),
+      );
+    }
+
+    final exact = BenefitReviewDecision.fromJson({
+      'action': 'edit',
+      'benefit_id': '11111111-1111-4111-8111-111111111111',
+      'current_benefit_id': '11111111-1111-4111-8111-111111111111',
+      'dedupe_key': 'dining-credit',
+      'dedupeKey': 'dining-credit',
+      'edited_benefit': {'title': 'Edited dining credit', 'rate': 12},
+      'editedBenefit': {'title': 'Edited dining credit', 'rate': 12},
+    });
+    expect(exact.liveBenefitId, '11111111-1111-4111-8111-111111111111');
+    expect(exact.dedupeKey, 'dining-credit');
+    expect(exact.editedBenefit?.rate, 12);
+  });
+
+  test(
+    'Flutter reads null-padded decision shapes emitted by the Edge presenter',
+    () {
+      final emptyPresentedBenefit = <String, dynamic>{
+        'valueConfig': {
+          'restrictions': <String>[],
+          'exclusions': {
+            'additional': {'source_terms': <String>[]},
+            'categories': <String>[],
+            'days': <String>[],
+            'mcc_codes': <String>[],
+            'merchants': <String>[],
+            'transaction_types': <String>[],
+          },
+        },
+        'partners': <String>[],
+        'regions': <String>[],
+        'exclusions': {
+          'additional': {'source_terms': <String>[]},
+          'categories': <String>[],
+          'days': <String>[],
+          'mcc_codes': <String>[],
+          'merchants': <String>[],
+          'transaction_types': <String>[],
+        },
+        'sourceUrl': null,
+        'sourceUrls': <String>[],
+        'sourceIdentities': <String>[],
+        'sourceExcerpt': null,
+        'contentHash': null,
+        'parserVersion': null,
+        'confidence': <String, dynamic>{},
+        'evidence': <String, dynamic>{},
+        'warnings': <String>[],
+      };
+
+      Map<String, dynamic> presenterDecision({
+        required String action,
+        String? benefitId,
+        String? dedupeKey,
+        Map<String, dynamic>? benefit,
+        Map<String, dynamic>? current,
+      }) => <String, dynamic>{
+        'action': action,
+        'reason': null,
+        'change_type': null,
+        'dedupe_key': dedupeKey,
+        'condition_hash': null,
+        'proposal_index': null,
+        'benefit_id': benefitId,
+        'existing_benefit_id': null,
+        'display_priority': null,
+        'is_primary': null,
+        'benefit': benefit ?? emptyPresentedBenefit,
+        'proposed': emptyPresentedBenefit,
+        'edited_benefit': emptyPresentedBenefit,
+        'current': current ?? emptyPresentedBenefit,
+      };
+
+      final canonical = BenefitReviewDecision.fromJson(
+        presenterDecision(
+          action: 'approve',
+          dedupeKey: 'canonical:airport-credit',
+          benefit: {
+            ...emptyPresentedBenefit,
+            'dedupeKey': 'canonical:airport-credit',
+            'title': 'Airport credit',
+          },
+        ),
+      );
+      final current = BenefitReviewDecision.fromJson(
+        presenterDecision(
+          action: 'reject',
+          benefitId: _v6LiveModificationId,
+          current: {
+            ...emptyPresentedBenefit,
+            'liveBenefitId': _v6LiveModificationId,
+            'title': 'Current airport credit',
+          },
+        ),
+      );
+      final global = BenefitReviewDecision.fromJson(
+        presenterDecision(action: 'reject'),
+      );
+
+      expect(canonical.liveBenefitId, isNull);
+      expect(canonical.dedupeKey, 'canonical:airport-credit');
+      expect(canonical.editedBenefit, isNull);
+      expect(current.liveBenefitId, _v6LiveModificationId);
+      expect(current.dedupeKey, isNull);
+      expect(current.editedBenefit, isNull);
+      expect(global.liveBenefitId, isNull);
+      expect(global.dedupeKey, isNull);
+      expect(global.editedBenefit, isNull);
+    },
+  );
+
+  test(
+    'decision presenter aliases reject mixed absent and meaningful values',
+    () {
+      expect(
+        () => BenefitReviewDecision.fromJson({
+          'action': 'reject',
+          'benefit_id': null,
+          'current_benefit_id': _v6LiveModificationId,
+        }),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => BenefitReviewDecision.fromJson({
+          'action': 'edit',
+          'edited_benefit': <String, dynamic>{},
+          'editedBenefit': {'title': 'Edited airport credit', 'rate': 12},
+        }),
+        throwsA(isA<FormatException>()),
+      );
     },
   );
 
@@ -343,16 +2409,242 @@ void main() {
         },
       });
 
-      await AdminCatalogRepository(api).approve(item);
-
-      final decisions = api.bodies.single['decisions'] as List;
-      expect(decisions, hasLength(5));
-      expect(decisions.first, containsPair('change_type', 'addition'));
-      expect(decisions[1], containsPair('change_type', 'modification'));
-      expect(decisions[2], containsPair('action', 'keep_existing'));
-      expect(decisions.last, containsPair('dedupe_key', 'candidate'));
+      await expectLater(
+        AdminCatalogRepository(api).approve(item),
+        throwsA(isA<AdminCatalogRequestFailed>()),
+      );
+      expect(api.bodies, isEmpty);
     },
   );
+
+  test(
+    'repository emits one global reject with no accidental target',
+    () async {
+      final api = _FakeApi(
+        AdminCatalogEntryResponse(200, const {'success': true}),
+      );
+
+      await AdminCatalogRepository(
+        api,
+      ).reject(BenefitEnrichmentReview.fromJson(_jobJson), 'Conflicting terms');
+
+      final body = api.bodies.single;
+      final decisions = body['decisions'] as List;
+      expect(decisions, hasLength(1));
+      expect(
+        decisions.single,
+        equals({'action': 'reject', 'reason': 'Conflicting terms'}),
+      );
+    },
+  );
+
+  test(
+    'repository requires one exact resolution per conflict and preserves safe lanes',
+    () async {
+      final item = BenefitEnrichmentReview.fromJson(_legacyConflictJobJson(2));
+      final conflicts = item.staging.extractedData.diff.conflicts;
+
+      Future<void> expectRejected(List<BenefitReviewDecision> decisions) async {
+        final api = _FakeApi(
+          AdminCatalogEntryResponse(200, const {'success': true}),
+        );
+        await expectLater(
+          AdminCatalogRepository(api).editApprove(item, decisions),
+          throwsA(isA<AdminCatalogRequestFailed>()),
+        );
+        expect(api.bodies, isEmpty);
+      }
+
+      await expectRejected([
+        BenefitReviewDecision(
+          action: 'approve',
+          benefit: conflicts[0].proposed[0],
+        ),
+      ]);
+      await expectRejected([
+        BenefitReviewDecision(
+          action: 'approve',
+          benefit: conflicts[0].proposed[0],
+        ),
+        BenefitReviewDecision(
+          action: 'approve',
+          benefit: conflicts[0].proposed[1],
+        ),
+        BenefitReviewDecision(
+          action: 'reject',
+          benefit: conflicts[1].proposed[0],
+        ),
+      ]);
+      await expectRejected([
+        BenefitReviewDecision(
+          action: 'approve',
+          benefit: conflicts[0].proposed[0],
+          proposed: conflicts[0].proposed[1],
+        ),
+        BenefitReviewDecision(
+          action: 'reject',
+          benefit: conflicts[1].proposed[0],
+        ),
+      ]);
+
+      final api = _FakeApi(
+        AdminCatalogEntryResponse(200, const {'success': true}),
+      );
+      await AdminCatalogRepository(api).editApprove(item, [
+        BenefitReviewDecision(
+          action: 'edit',
+          benefit: conflicts[0].proposed[1],
+          proposed: conflicts[0].proposed[1],
+          editedBenefit: conflicts[0].proposed[1].copyWith(rate: 21),
+        ),
+        BenefitReviewDecision(
+          action: 'reject',
+          reason: 'Issuer terms do not support this alternative',
+          benefit: conflicts[1].proposed[0],
+        ),
+        BenefitReviewDecision(
+          action: 'reject',
+          reason: 'Current conflict row is superseded',
+          liveBenefitId: conflicts[1].current.single.liveBenefitId,
+          current: conflicts[1].current.single,
+        ),
+      ]);
+
+      final body = api.bodies.single;
+      expect(body['action'], 'benefit-edit-approve');
+      final decisions = body['decisions'] as List;
+      expect(decisions, hasLength(4));
+      expect(decisions[0], containsPair('dedupe_key', 'safe-addition'));
+      expect(decisions[1], containsPair('action', 'edit'));
+      expect(decisions[1], containsPair('benefit', isA<Map>()));
+      expect(
+        decisions[1],
+        containsPair('edited_benefit', containsPair('rate', 21)),
+      );
+      expect(decisions[2], containsPair('action', 'reject'));
+      expect(decisions[2], containsPair('benefit', isA<Map>()));
+      expect(decisions[3], containsPair('action', 'reject'));
+      expect(
+        decisions[3],
+        containsPair('benefit_id', conflicts[1].current.single.liveBenefitId),
+      );
+      expect(decisions[3], containsPair('current', isA<Map>()));
+
+      final currentOnlyJson = _legacyConflictJobJson(1);
+      final currentOnlyStaging =
+          currentOnlyJson['staging'] as Map<String, dynamic>;
+      final currentOnlyExtraction =
+          currentOnlyStaging['extracted_data'] as Map<String, dynamic>;
+      final currentOnlyDiff =
+          currentOnlyExtraction['diff'] as Map<String, dynamic>;
+      final currentOnlyConflict =
+          (currentOnlyDiff['conflicts'] as List).single as Map<String, dynamic>;
+      currentOnlyConflict['proposed'] = <dynamic>[];
+      final currentOnlyItem = BenefitEnrichmentReview.fromJson(currentOnlyJson);
+      final currentOnly = currentOnlyItem
+          .staging
+          .extractedData
+          .diff
+          .conflicts
+          .single
+          .current
+          .single;
+      final currentOnlyApi = _FakeApi(
+        AdminCatalogEntryResponse(200, const {'success': true}),
+      );
+      await AdminCatalogRepository(
+        currentOnlyApi,
+      ).editApprove(currentOnlyItem, [
+        BenefitReviewDecision(
+          action: 'reject',
+          reason: 'Current terms conflict with issuer evidence',
+          liveBenefitId: currentOnly.liveBenefitId,
+          current: currentOnly,
+        ),
+      ]);
+      final currentOnlyDecisions =
+          currentOnlyApi.bodies.single['decisions'] as List;
+      expect(currentOnlyDecisions, hasLength(2));
+      expect(
+        currentOnlyDecisions.first,
+        containsPair('dedupe_key', 'safe-addition'),
+      );
+      expect(
+        currentOnlyDecisions.last,
+        containsPair('benefit_id', currentOnly.liveBenefitId),
+      );
+    },
+  );
+
+  test(
+    'repository rejects contradictory carriers before a normal edit',
+    () async {
+      final item = BenefitEnrichmentReview.fromJson(_jobJson);
+      final proposal = item.staging.extractedData.diff.additions.single;
+      final api = _FakeApi(
+        AdminCatalogEntryResponse(200, const {'success': true}),
+      );
+
+      await expectLater(
+        AdminCatalogRepository(api).editApprove(item, [
+          BenefitReviewDecision(
+            action: 'edit',
+            benefit: proposal,
+            proposed: proposal.copyWith(title: 'Contradictory original'),
+            editedBenefit: proposal.copyWith(title: 'Reviewed title', rate: 11),
+          ),
+        ]),
+        throwsA(isA<AdminCatalogRequestFailed>()),
+      );
+      expect(api.bodies, isEmpty);
+    },
+  );
+
+  test('repository submits exact v6 retirement and edit identifiers', () async {
+    final api = _FakeApi(
+      AdminCatalogEntryResponse(200, const {'success': true}),
+    );
+    final repository = AdminCatalogRepository(api);
+    final item = BenefitEnrichmentReview.fromJson(_v6JobJson);
+    final removal = item.staging.extractedData.diff.possibleRemovals.single;
+
+    await repository.retire(item, removal, 'Issuer corroborated retirement');
+    final retirement = api.bodies.single;
+    final retirementDecision = (retirement['decisions'] as List).single as Map;
+    expect(retirement['action'], 'benefit-approve');
+    expect(retirementDecision['benefit_id'], _v6LiveLegacyId);
+    expect(retirementDecision['dedupe_key'], 'legacy:approved:lounge-visit');
+    expect(
+      (retirementDecision['benefit'] as Map)['benefitId'],
+      'card-benefit-v2:$_v6CardId:${'c' * 64}',
+    );
+    expect(
+      (retirementDecision['benefit'] as Map)['dedupeKey'],
+      'legacy:approved:lounge-visit',
+    );
+    expect(
+      (retirementDecision['benefit'] as Map)['liveBenefitId'],
+      _v6LiveLegacyId,
+    );
+    expect(retirementDecision['reason'], 'Issuer corroborated retirement');
+
+    api.bodies.clear();
+    final decision = item.staging.decisions.single;
+    await repository.editApprove(item, [
+      decision.withEditedBenefit(
+        decision.proposed!.copyWith(description: 'Reviewed wording', rate: 12),
+      ),
+    ]);
+    final editDecision = (api.bodies.single['decisions'] as List).single as Map;
+    expect(editDecision['benefit_id'], decision.liveBenefitId);
+    expect(editDecision['dedupe_key'], decision.dedupeKey);
+    expect(
+      (editDecision['edited_benefit'] as Map)['benefitId'],
+      'card-benefit-v2:$_v6CardId:${'a' * 64}',
+    );
+    expect((editDecision['edited_benefit'] as Map)['rate'], 12);
+    expect(editDecision, isNot(contains('change_type')));
+  });
 
   testWidgets(
     'benefit panel renders progress, diffs, evidence, and individual controls',
@@ -410,6 +2702,367 @@ void main() {
   );
 
   testWidgets(
+    'normal editor requires and submits a typed material rate change',
+    (tester) async {
+      tester.view.physicalSize = const Size(1000, 2000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final item = BenefitEnrichmentReview.fromJson(_v6JobJson);
+      final repository = _FakeRepository(
+        BenefitEnrichmentReviewPage.fromJson(const {
+          'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+          'page': 1,
+          'limit': 25,
+          'has_more': false,
+        }).copyWith(items: [item]),
+      );
+      await _pumpPanel(tester, repository);
+
+      final edit = find.text('Edit proposed changes');
+      await tester.ensureVisible(edit);
+      await tester.tap(edit);
+      await tester.pumpAndSettle();
+      final submit = find.widgetWithText(FilledButton, 'Approve edit');
+      expect(find.byKey(const ValueKey('normal-edit-rate')), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('normal-edit-title')),
+        'Reviewed dining points',
+      );
+      await tester.pump();
+      expect(tester.widget<FilledButton>(submit).onPressed, isNull);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('normal-edit-rate')),
+        'not-a-number',
+      );
+      await tester.pump();
+      expect(find.text('Enter a finite number.'), findsOneWidget);
+      expect(tester.widget<FilledButton>(submit).onPressed, isNull);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('normal-edit-rate')),
+        '12',
+      );
+      await tester.pump();
+      expect(tester.widget<FilledButton>(submit).onPressed, isNotNull);
+      await tester.tap(submit);
+      await tester.pumpAndSettle();
+
+      final decision = repository.submittedDecisions!.single;
+      expect(decision.action, 'edit');
+      expect(decision.editedBenefit?.rate, 12);
+      expect(decision.editedBenefit?.title, 'Reviewed dining points');
+      expect(
+        decision.editedBenefit?.conditionHash,
+        decision.proposed?.conditionHash,
+      );
+      expect(
+        decision.editedBenefit?.sourceIdentity,
+        decision.proposed?.sourceIdentity,
+      );
+    },
+  );
+
+  testWidgets('conflicts disable generic bulk apply and require resolution', (
+    tester,
+  ) async {
+    final item = BenefitEnrichmentReview.fromJson({
+      ..._jobJson,
+      'staging': {
+        ...(_jobJson['staging'] as Map<String, dynamic>),
+        'benefit_decisions': const [],
+        'extracted_data': {
+          'parser_version': 'benefits-v1',
+          'diff': {
+            'conflicts': [
+              {
+                'code': 'conflicting_proposed_terms',
+                'current': [
+                  {'dedupeKey': 'current', 'title': 'Current terms'},
+                ],
+                'proposed': [
+                  {'dedupeKey': 'candidate-a', 'title': 'Candidate A'},
+                  {'dedupeKey': 'candidate-b', 'title': 'Candidate B'},
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+    final repository = _FakeRepository(
+      BenefitEnrichmentReviewPage.fromJson(const {
+        'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+        'page': 1,
+        'limit': 25,
+        'has_more': false,
+      }).copyWith(items: [item]),
+    );
+
+    await _pumpPanel(tester, repository);
+
+    final approve = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Approve benefit changes'),
+    );
+    expect(approve.onPressed, isNull);
+    expect(find.textContaining('Resolve each conflict'), findsOneWidget);
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.widgetWithText(OutlinedButton, 'Resolve conflicts'),
+          )
+          .onPressed,
+      isNotNull,
+    );
+    expect(repository.actions, isEmpty);
+  });
+
+  testWidgets(
+    'conflict resolver submits unchanged edit and targeted reject across every group',
+    (tester) async {
+      tester.view.physicalSize = const Size(1000, 1800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final item = BenefitEnrichmentReview.fromJson(_legacyConflictJobJson(3));
+      final repository = _FakeRepository(
+        BenefitEnrichmentReviewPage.fromJson(const {
+          'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+          'page': 1,
+          'limit': 25,
+          'has_more': false,
+        }).copyWith(items: [item]),
+      );
+      await _pumpPanel(tester, repository);
+
+      final resolveFinder = find.text('Resolve conflicts');
+      await tester.tap(resolveFinder);
+      await tester.pumpAndSettle();
+
+      final submitFinder = find.widgetWithText(
+        FilledButton,
+        'Submit conflict resolutions',
+      );
+      expect(tester.widget<FilledButton>(submitFinder).onPressed, isNull);
+
+      Future<void> select(int group, String label) async {
+        final dropdown = find.byKey(ValueKey('conflict-resolution-$group'));
+        await tester.ensureVisible(dropdown);
+        await tester.tap(dropdown);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(label).last);
+        await tester.pumpAndSettle();
+      }
+
+      await select(0, 'Approve unchanged — Candidate 0 B');
+      await select(1, 'Edit — Candidate 1 A');
+      await tester.enterText(
+        find.byKey(const ValueKey('conflict-title-1')),
+        'Reviewed candidate 1',
+      );
+      expect(find.byKey(const ValueKey('conflict-rate-1')), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const ValueKey('conflict-rate-1')),
+        '12.5',
+      );
+      await select(2, 'Reject alternative — Candidate 2 B');
+      await tester.enterText(
+        find.byKey(const ValueKey('conflict-reason-2')),
+        'Contradicted by issuer terms',
+      );
+      final currentReject = find.byKey(
+        const ValueKey('conflict-current-reject-1-0'),
+      );
+      await tester.ensureVisible(currentReject);
+      await tester.tap(currentReject);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('conflict-current-reason-1-0')),
+        'Current conflict row is superseded',
+      );
+      await tester.pump();
+
+      await tester.ensureVisible(submitFinder);
+      expect(tester.widget<FilledButton>(submitFinder).onPressed, isNotNull);
+      await tester.tap(submitFinder);
+      await tester.pumpAndSettle();
+
+      expect(repository.actions, ['edit-approve']);
+      final decisions = repository.submittedDecisions!;
+      expect(decisions, hasLength(4));
+      expect(decisions[0].action, 'approve');
+      expect(decisions[0].benefit?.dedupeKey, 'candidate-0-b');
+      expect(decisions[0].editedBenefit, isNull);
+      expect(decisions[1].action, 'edit');
+      expect(decisions[1].benefit?.dedupeKey, 'candidate-1-a');
+      expect(decisions[1].editedBenefit?.title, 'Reviewed candidate 1');
+      expect(decisions[1].editedBenefit?.rate, 12.5);
+      expect(decisions[2].action, 'reject');
+      expect(decisions[2].benefit?.dedupeKey, 'candidate-2-b');
+      expect(decisions[2].reason, 'Contradicted by issuer terms');
+      expect(decisions[3].action, 'reject');
+      expect(decisions[3].current?.dedupeKey, 'current-1');
+      expect(
+        decisions[3].liveBenefitId,
+        '00000000-0000-4000-8000-000000000002',
+      );
+    },
+  );
+
+  testWidgets(
+    'current-only conflict requires and submits one exact current rejection',
+    (tester) async {
+      tester.view.physicalSize = const Size(1000, 1200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final json = _legacyConflictJobJson(1);
+      final staging = json['staging'] as Map<String, dynamic>;
+      final extraction = staging['extracted_data'] as Map<String, dynamic>;
+      final diff = extraction['diff'] as Map<String, dynamic>;
+      final conflict =
+          (diff['conflicts'] as List).single as Map<String, dynamic>;
+      conflict['proposed'] = <dynamic>[];
+      final item = BenefitEnrichmentReview.fromJson(json);
+      final repository = _FakeRepository(
+        BenefitEnrichmentReviewPage.fromJson(const {
+          'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+          'page': 1,
+          'limit': 25,
+          'has_more': false,
+        }).copyWith(items: [item]),
+      );
+      await _pumpPanel(tester, repository);
+
+      await tester.tap(find.text('Resolve conflicts'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('conflict-resolution-0')), findsNothing);
+
+      await tester.tap(
+        find.byKey(const ValueKey('conflict-current-reject-0-0')),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('conflict-current-reason-0-0')),
+        'Current terms are contradicted',
+      );
+      await tester.pump();
+      final submit = find.widgetWithText(
+        FilledButton,
+        'Submit conflict resolutions',
+      );
+      expect(tester.widget<FilledButton>(submit).onPressed, isNotNull);
+      await tester.tap(submit);
+      await tester.pumpAndSettle();
+
+      expect(repository.submittedDecisions, hasLength(1));
+      expect(repository.submittedDecisions!.single.action, 'reject');
+      expect(
+        repository.submittedDecisions!.single.current?.dedupeKey,
+        'current-0',
+      );
+    },
+  );
+
+  testWidgets(
+    'v6 panel shows completeness attempts identity migration and eligible retirement',
+    (tester) async {
+      final repository = _FakeRepository(
+        BenefitEnrichmentReviewPage.fromJson(const {
+          'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+          'page': 1,
+          'limit': 25,
+          'has_more': false,
+        }).copyWith(items: [BenefitEnrichmentReview.fromJson(_v6JobJson)]),
+      );
+      await _pumpPanel(tester, repository);
+
+      expect(find.textContaining('Incomplete crawl'), findsOneWidget);
+      expect(find.textContaining('required source failed'), findsOneWidget);
+      expect(find.textContaining('required supporting'), findsOneWidget);
+      expect(find.textContaining('503'), findsOneWidget);
+      expect(find.textContaining('2026-08-20T10:11:12.123456Z'), findsWidgets);
+      expect(find.textContaining('Identity migration'), findsOneWidget);
+      expect(
+        find.textContaining('rate 5 → Dining points · rate 10'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('card-benefit-v2:$_v6CardId:${'a' * 64}'),
+        findsWidgets,
+      );
+      expect(find.textContaining('Condition hash: ${'a' * 64}'), findsWidgets);
+      expect(find.text('Retirement eligible: Yes'), findsOneWidget);
+      expect(find.text('Retire benefit'), findsOneWidget);
+
+      final retireButton = tester.widget<TextButton>(
+        find.widgetWithText(TextButton, 'Retire benefit'),
+      );
+      retireButton.onPressed!();
+      await tester.pumpAndSettle();
+      expect(find.text('Retire Legacy lounge visit?'), findsOneWidget);
+      await tester.enterText(
+        find.byType(TextField).last,
+        'Issuer corroborated retirement',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Retire'));
+      await tester.pumpAndSettle();
+
+      expect(repository.actions, ['retire']);
+      expect(repository.retirementReason, 'Issuer corroborated retirement');
+      expect(repository.retiredBenefitId, _v6LiveLegacyId);
+    },
+  );
+
+  testWidgets('ineligible retirement stays informational and has no action', (
+    tester,
+  ) async {
+    final ineligible = <String, dynamic>{
+      ..._v6JobJson,
+      'staging': {
+        ...(_v6JobJson['staging'] as Map<String, dynamic>),
+        'benefit_decisions': const [],
+        'extracted_data': {
+          ...((_v6JobJson['staging'] as Map<String, dynamic>)['extracted_data']
+              as Map<String, dynamic>),
+          'diff': {
+            'possibleRemovals': [
+              {
+                'benefit': {
+                  'liveBenefitId': _v6LiveLegacyId,
+                  'benefitId': 'card-benefit-v2:$_v6CardId:${'c' * 64}',
+                  'dedupeKey': 'legacy:approved:lounge-visit',
+                  'title': 'Legacy lounge visit',
+                },
+                'informational': true,
+                'retirementEligible': false,
+                'retirementReason': 'needs_second_complete_observation',
+              },
+            ],
+          },
+        },
+      },
+    };
+    final repository = _FakeRepository(
+      BenefitEnrichmentReviewPage.fromJson(const {
+        'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+        'page': 1,
+        'limit': 25,
+        'has_more': false,
+      }).copyWith(items: [BenefitEnrichmentReview.fromJson(ineligible)]),
+    );
+    await _pumpPanel(tester, repository);
+
+    expect(
+      find.textContaining('Needs second complete observation'),
+      findsOneWidget,
+    );
+    expect(find.text('Retire benefit'), findsNothing);
+  });
+
+  testWidgets(
     'benefit panel keeps a 401 actionable instead of spinning forever',
     (tester) async {
       var requestedAuthorization = false;
@@ -425,6 +3078,163 @@ void main() {
 
       await tester.tap(find.text('Sign in again'));
       expect(requestedAuthorization, isTrue);
+    },
+  );
+
+  testWidgets('malformed v6 review data fails closed with a visible error', (
+    tester,
+  ) async {
+    await _pumpPanel(
+      tester,
+      _FakeRepository(
+        _page(),
+        error: const FormatException('Malformed required v6 benefit identity.'),
+      ),
+    );
+
+    expect(find.textContaining('Malformed v6 review data'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('staging-only v6 corruption reaches the visible repair state', (
+    tester,
+  ) async {
+    final response = AdminCatalogEntryResponse(200, {
+      'items': [_stagingOnlyV6Corruption],
+      'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+      'page': 1,
+      'limit': 25,
+      'has_more': false,
+    });
+
+    await _pumpPanel(tester, AdminCatalogRepository(_FakeApi(response)));
+
+    expect(find.textContaining('Malformed v6 review data'), findsOneWidget);
+    expect(find.textContaining('repaired'), findsOneWidget);
+    expect(find.text('Approved dining benefit'), findsNothing);
+  });
+
+  testWidgets(
+    'malformed proposed v6 identities reach the visible repair state',
+    (tester) async {
+      final malformed = [
+        _v6AdditionWithIdentity(
+          benefitId: 'card-benefit-v2:other-card:${'d' * 64}',
+          conditionHash: 'd' * 64,
+        ),
+        _v6AdditionWithIdentity(
+          benefitId: 'card-benefit-v2:$_v6CardId:${'e' * 64}',
+          conditionHash: 'd' * 64,
+        ),
+        _v6AdditionWithIdentity(
+          benefitId: 'benefit-v2:$_v6CardId:${'d' * 64}',
+          conditionHash: 'd' * 64,
+        ),
+      ];
+
+      for (final row in malformed) {
+        final response = AdminCatalogEntryResponse(200, {
+          'items': [row],
+          'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+          'page': 1,
+          'limit': 25,
+          'has_more': false,
+        });
+
+        await _pumpPanel(tester, AdminCatalogRepository(_FakeApi(response)));
+
+        expect(find.textContaining('Malformed v6 review data'), findsOneWidget);
+        expect(find.textContaining('repaired'), findsOneWidget);
+        expect(find.text('Added dining benefit'), findsNothing);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpAndSettle();
+      }
+    },
+  );
+
+  testWidgets(
+    'non-lowercase canonical v6 digests reach the visible repair state',
+    (tester) async {
+      final malformed = <Map<String, dynamic>>[];
+      for (final digest in ['D' * 64, 'dD' * 32]) {
+        malformed.addAll([
+          _v6AdditionWithIdentity(
+            benefitId: 'card-benefit-v2:$_v6CardId:$digest',
+            conditionHash: digest,
+          ),
+          _v6CurrentWithIdentity(
+            benefitId: 'card-benefit-v2:$_v6CardId:$digest',
+            conditionHash: digest,
+          ),
+        ]);
+      }
+
+      for (final row in malformed) {
+        final response = AdminCatalogEntryResponse(200, {
+          'items': [row],
+          'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+          'page': 1,
+          'limit': 25,
+          'has_more': false,
+        });
+
+        await _pumpPanel(tester, AdminCatalogRepository(_FakeApi(response)));
+
+        expect(find.textContaining('Malformed v6 review data'), findsOneWidget);
+        expect(find.textContaining('repaired'), findsOneWidget);
+        expect(find.text('Canonical test proposal'), findsNothing);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpAndSettle();
+      }
+    },
+  );
+
+  testWidgets('malformed v6 schema UUIDs reach the visible repair state', (
+    tester,
+  ) async {
+    for (final row in _malformedV6UuidRows()) {
+      final response = AdminCatalogEntryResponse(200, {
+        'items': [row],
+        'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+        'page': 1,
+        'limit': 25,
+        'has_more': false,
+      });
+
+      await _pumpPanel(tester, AdminCatalogRepository(_FakeApi(response)));
+
+      expect(find.textContaining('Malformed v6 review data'), findsOneWidget);
+      expect(find.textContaining('repaired'), findsOneWidget);
+      expect(find.text('Canonical test proposal'), findsNothing);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    }
+  });
+
+  testWidgets(
+    'invalid staged v6 decision identities reach the visible repair state',
+    (tester) async {
+      for (final row in _invalidV6DecisionRows()) {
+        final response = AdminCatalogEntryResponse(200, {
+          'items': [row],
+          'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+          'page': 1,
+          'limit': 25,
+          'has_more': false,
+        });
+
+        await _pumpPanel(tester, AdminCatalogRepository(_FakeApi(response)));
+
+        expect(find.textContaining('Malformed v6 review data'), findsOneWidget);
+        expect(find.textContaining('repaired'), findsOneWidget);
+        expect(find.text('Added airport transfer benefit'), findsNothing);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpAndSettle();
+      }
     },
   );
 

@@ -1,12 +1,92 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
   diffBenefits,
   extractGroundedBenefits,
+  extractGroundedBenefitsV6,
 } from '../../supabase/functions/_shared/benefit_enrichment.ts';
+import {
+  redactSensitiveUrlsInText,
+  redactSensitiveUrlsInValue,
+} from '../../supabase/functions/_shared/benefit_source_privacy.ts';
 
 const SOURCE = 'https://issuer.example/cards/aurora';
+
+test('keeps benefits-v5 synchronous legacy proposals and array exclusions unchanged', () => {
+  // Catches an accidental v6 projection leaking into the rollback lane.
+  const proposals = extractGroundedBenefits([{
+    sourceUrl: SOURCE,
+    text: 'Get 5% cashback on online spends, excluding fuel and wallet reloads.',
+  }], 'benefits-v5');
+
+  assert.equal(Array.isArray(proposals), true);
+  assert.deepEqual(proposals.map((proposal) => ({
+    parserVersion: proposal.parserVersion,
+    dedupeKey: proposal.dedupeKey,
+    valueConfig: proposal.valueConfig,
+    exclusions: proposal.exclusions,
+    benefitId: proposal.benefitId ?? null,
+    conditionHash: proposal.conditionHash ?? null,
+  })), [{
+    parserVersion: 'benefits-v5',
+    dedupeKey: 'benefit-58e9c49040ba5a39',
+    valueConfig: undefined,
+    exclusions: ['fuel', 'wallet reloads'],
+    benefitId: null,
+    conditionHash: null,
+  }]);
+});
+
+test('projects v6 proposals through the card-scoped canonical contract and golden corpus', async () => {
+  // Catches the v6 path silently keeping flat terms, legacy array exclusions,
+  // or globally-scoped keys while the rollback v5 output remains unchanged.
+  const golden = JSON.parse(readFileSync(
+    new URL('./fixtures/benefit-enrichment/v6-golden.json', import.meta.url),
+    'utf8',
+  ));
+  const cardId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  for (const fixture of golden) {
+    const proposals = await extractGroundedBenefitsV6([{
+      sourceUrl: SOURCE,
+      text: fixture.text,
+    }], 'benefits-v6', cardId);
+    assert.deepEqual(proposals.map((proposal) => ({
+      benefitId: proposal.benefitId,
+      dedupeKey: proposal.dedupeKey,
+      conditionHash: proposal.conditionHash,
+      parserVersion: proposal.parserVersion,
+      title: proposal.title,
+      description: proposal.description,
+      category: proposal.category,
+      valueType: proposal.valueType,
+      value: proposal.value ?? null,
+      rate: proposal.rate ?? null,
+      cap: proposal.cap ?? null,
+      threshold: proposal.threshold ?? null,
+      valueConfig: proposal.valueConfig,
+      partners: proposal.partners ?? [],
+      frequency: proposal.frequency ?? null,
+      period: proposal.period ?? null,
+      restrictions: proposal.restrictions,
+      exclusions: proposal.exclusions,
+      effectiveFrom: proposal.effectiveFrom ?? null,
+      effectiveTo: proposal.effectiveTo ?? null,
+      warnings: proposal.warnings,
+    })), fixture.expected, fixture.name);
+  }
+
+  const [first] = await extractGroundedBenefitsV6([{
+    sourceUrl: SOURCE,
+    text: 'Get 10% cashback on dining spends, capped at ₹500 per statement month.',
+  }], 'benefits-v6', cardId);
+  const [sameTermsOtherCard] = await extractGroundedBenefitsV6([{
+    sourceUrl: SOURCE,
+    text: 'Get 10% cashback on dining spends, capped at ₹500 per statement month.',
+  }], 'benefits-v6', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+  assert.notEqual(first.dedupeKey, sameTermsOtherCard.dedupeKey);
+});
 
 test('extracts movie discounts, BOGO tickets, and annual allowances into the approved value-config contract', () => {
   // Catches the production failure where issuer pages were crawled but every
@@ -431,4 +511,54 @@ test('stops exclusions before a stated expiry or other benefit clause', () => {
 
   assert.deepEqual(benefit.exclusions, ['fuel', 'wallet reloads']);
   assert.equal(benefit.effectiveTo, '2026-12-31');
+});
+
+test('source privacy fails closed for repeated and mixed encoded URL credentials', () => {
+  const secrets = [
+    'https%253A%252F%252Fuser%253Apass%2540issuer.example%252Fcard%253Ftoken%253Dsecret%2523private',
+    'https&amp;colon;&amp;sol;&amp;sol;user&amp;commat;issuer.example&amp;sol;card&amp;quest;token=secret',
+    '%25252525252568%25252525252574%25252525252574%25252525252570%25252525252573%2525252525253A%2525252525252F%2525252525252Fissuer.example%2525252525253Ftoken=secret',
+    '//user:pass@issuer.example/card?token=secret#private',
+    '/card?token=secret#private',
+    'issuer.example/card?token=secret#private',
+  ];
+  for (const secret of secrets) {
+    const safe = redactSensitiveUrlsInText(`Evidence ${secret} tail`);
+    assert.doesNotMatch(safe, /token|secret|pass|private/i, secret);
+    assert.ok(safe.length <= 16_384);
+  }
+});
+
+test('source privacy recursively sanitizes keys and values while preserving ordinary prose', () => {
+  const ordinary = 'Save 20%25 on A:B; email offers@example.com; use 3%3A rewards math.';
+  assert.equal(redactSensitiveUrlsInText(ordinary), ordinary);
+  const secretKey = 'https%253A%252F%252Fuser%253Apass%2540issuer.example%252Fkey%253Ftoken%253Dsecret';
+  const redacted = redactSensitiveUrlsInValue({
+    [secretKey]: {
+      href: '//user:pass@issuer.example/card?token=secret#private',
+      list: ['issuer.example/card?token=secret', ordinary],
+    },
+  });
+  const serialized = JSON.stringify(redacted);
+  assert.doesNotMatch(serialized, /token|secret|pass|private/i);
+  assert.match(serialized, /Save 20%25/);
+});
+
+test('source privacy scans beyond admin-sized excerpts without truncating ordinary benefit text', () => {
+  const prefix = `Get 10% cashback on dining. ${'ordinary issuer terms '.repeat(900)}`;
+  const safe = redactSensitiveUrlsInText(
+    `${prefix} https://issuer.example/card?session=tail-secret#private`,
+  );
+  assert.equal(safe.startsWith(prefix), true);
+  assert.doesNotMatch(safe, /tail-secret|private/);
+  assert.equal(safe.endsWith('https://issuer.example/card'), true);
+});
+
+test('source privacy decodes only the credential candidate and preserves adjacent prose byte-for-byte', () => {
+  const ordinary = 'Save 20%25; use 3%3A reward math; email offers@example.com.';
+  const input = `${ordinary} Link https%253A%252F%252Fuser%253Apass%2540issuer.example%252Fcard%253Ftoken%253Dsecret then keep 5%25.`;
+  const safe = redactSensitiveUrlsInText(input);
+  assert.equal(safe.startsWith(`${ordinary} Link `), true);
+  assert.equal(safe.endsWith(' then keep 5%25.'), true);
+  assert.doesNotMatch(safe, /user|pass|token|secret/i);
 });
