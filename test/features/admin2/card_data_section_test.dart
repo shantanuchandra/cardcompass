@@ -39,6 +39,7 @@ CardReviewItem _item({
   String id = '11111111-1111-4111-8111-111111111111',
   CardReviewLane lane = CardReviewLane.identity,
   String status = 'pending',
+  Map<String, dynamic>? proposedFields,
 }) => CardReviewItem(
   id: id,
   lane: lane,
@@ -52,11 +53,13 @@ CardReviewItem _item({
     ),
   ],
   warningCodes: const ['issuer_name_mismatch'],
-  proposedFields: const {
-    'bank': 'Example Bank',
-    'card_name': 'Compass Rewards',
-    'annual_fee': 999,
-  },
+  proposedFields:
+      proposedFields ??
+      const {
+        'bank': 'Example Bank',
+        'card_name': 'Compass Rewards',
+        'annual_fee': 999,
+      },
   confidence: .86,
   stagingId: lane == CardReviewLane.benefit
       ? '22222222-2222-4222-8222-222222222222'
@@ -262,10 +265,25 @@ void main() {
     expect(find.text('Submit benefit decisions'), findsNothing);
   });
 
-  testWidgets('identity edit approval submits all visible edited fields', (
+  testWidgets('identity edit approval submits only mutable catalog fields', (
     tester,
   ) async {
-    final source = _FakeSource([_page(), _page()]);
+    final pageMove = _item(
+      proposedFields: const {
+        'issuer': 'Axis Bank',
+        'card_id': '11111111-1111-4111-8111-111111111111',
+        'card_name': 'IndianOil',
+        'joining_fee': 500,
+        'annual_fee': 500,
+        'official_url':
+            'https://www.axis.bank.in/cards/credit-card/indianoil-axis-bank-credit-card',
+        'catalog_baseline': {'annual_fee': null, 'joining_fee': null},
+      },
+    );
+    final source = _FakeSource([
+      _page(items: [pageMove]),
+      _page(items: [pageMove]),
+    ]);
     await _pump(tester, source);
     await tester.pumpAndSettle();
     final cardName = find.byWidgetPredicate(
@@ -281,10 +299,11 @@ void main() {
     await tester.tap(find.text('Confirm edits'));
     await tester.pumpAndSettle();
     expect(source.actions.single.operation, CardReviewOperation.editApprove);
-    expect(
-      (source.actions.single.payload['proposed_fields'] as Map)['card_name'],
-      'Compass Rewards Plus',
-    );
+    expect(source.actions.single.payload['proposed_fields'], {
+      'card_name': 'Compass Rewards Plus',
+      'joining_fee': 500,
+      'annual_fee': 500,
+    });
   });
 
   testWidgets('benefit decisions submit one complete decision per proposal', (

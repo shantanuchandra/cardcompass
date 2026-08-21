@@ -369,7 +369,15 @@ function bodyAtRequestBytes(targetBytes: number) {
 Deno.test("identity mutations enforce exact operation payloads", async () => {
   const valid = [
     { operation: "approve" },
-    { operation: "edit_approve", proposed_fields: { card_name: "Premier" } },
+    {
+      operation: "edit_approve",
+      proposed_fields: {
+        card_name: "Premier",
+        joining_fee: 500,
+        annual_fee: 500,
+        apr: 42,
+      },
+    },
     { operation: "merge", merge_card_id: MERGE_ID },
     { operation: "reject", reason: "not a product page" },
     { operation: "retry" },
@@ -393,7 +401,7 @@ Deno.test("identity mutations enforce exact operation payloads", async () => {
     },
     {
       operation: "edit_approve",
-      proposed_fields: { official_url: "file:///etc/passwd" },
+      proposed_fields: { official_url: "https://issuer.example/card" },
     },
     { operation: "merge", merge_card_id: "not-a-uuid" },
     { operation: "reject", reason: " " },

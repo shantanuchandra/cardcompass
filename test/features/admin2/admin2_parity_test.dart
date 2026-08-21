@@ -286,7 +286,6 @@ void main() {
             reason: null,
             payload: const {
               'proposed_fields': {
-                'bank': 'Example Bank',
                 'card_name': 'Regalia Gold',
                 'network': 'Visa',
               },

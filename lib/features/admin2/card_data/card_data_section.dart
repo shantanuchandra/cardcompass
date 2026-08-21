@@ -557,6 +557,15 @@ class _ReviewDetail extends StatefulWidget {
 }
 
 class _ReviewDetailState extends State<_ReviewDetail> {
+  static const _editableIdentityFields = {
+    'cardName',
+    'card_name',
+    'network',
+    'joining_fee',
+    'annual_fee',
+    'apr',
+  };
+
   final _identityControllers = <String, TextEditingController>{};
   final _decisions = <String, String>{};
   final _benefitControllers = <String, Map<String, TextEditingController>>{};
@@ -592,7 +601,9 @@ class _ReviewDetailState extends State<_ReviewDetail> {
     _benefitReasonControllers.clear();
     _decisions.clear();
     if (item == null) return;
-    for (final entry in item.proposedFields.entries) {
+    for (final entry in item.proposedFields.entries.where(
+      (entry) => _editableIdentityFields.contains(entry.key),
+    )) {
       _identityControllers[entry.key] = TextEditingController(
         text: entry.value.toString(),
       );
@@ -813,17 +824,27 @@ class _ReviewDetailState extends State<_ReviewDetail> {
             'Current: ${candidate.bank ?? candidate.issuer ?? 'Unknown issuer'} · ${candidate.cardName ?? candidate.id}',
           ),
       const SizedBox(height: BrandSpacing.md),
-      for (final entry in _identityControllers.entries)
-        Padding(
-          padding: const EdgeInsets.only(bottom: BrandSpacing.sm),
-          child: TextField(
-            controller: entry.value,
-            enabled: !widget.submitting && item.status == 'pending',
-            decoration: InputDecoration(
-              labelText: 'Proposed ${entry.key.replaceAll('_', ' ')}',
+      for (final entry in item.proposedFields.entries)
+        if (_identityControllers[entry.key] case final controller?)
+          Padding(
+            padding: const EdgeInsets.only(bottom: BrandSpacing.sm),
+            child: TextField(
+              controller: controller,
+              enabled: !widget.submitting && item.status == 'pending',
+              decoration: InputDecoration(
+                labelText: 'Proposed ${entry.key.replaceAll('_', ' ')}',
+              ),
+            ),
+          )
+        else if (entry.value is String ||
+            entry.value is num ||
+            entry.value is bool)
+          Padding(
+            padding: const EdgeInsets.only(bottom: BrandSpacing.sm),
+            child: SelectableText(
+              'Proposed ${entry.key.replaceAll('_', ' ')}: ${entry.value}',
             ),
           ),
-        ),
     ],
   );
 

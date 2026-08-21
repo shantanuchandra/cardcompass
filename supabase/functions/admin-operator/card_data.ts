@@ -69,10 +69,20 @@ const proposedFieldNames = [
   "name",
   "network",
   "card_type",
+  "joining_fee",
   "annual_fee",
+  "apr",
   "currency",
   "official_url",
   "image_url",
+] as const;
+const editableProposedFieldNames = [
+  "cardName",
+  "card_name",
+  "network",
+  "joining_fee",
+  "annual_fee",
+  "apr",
 ] as const;
 
 function invalidRequest(): never {
@@ -151,10 +161,13 @@ function statusFilter(value: unknown): string | null {
 
 function safeProposedFields(value: unknown, strict = false): JsonRecord {
   const row = asRecord(value) ?? {};
+  const accepted = strict ? editableProposedFieldNames : proposedFieldNames;
   if (
     strict &&
     Object.keys(row).some((key) =>
-      !proposedFieldNames.includes(key as typeof proposedFieldNames[number])
+      !editableProposedFieldNames.includes(
+        key as typeof editableProposedFieldNames[number],
+      )
     )
   ) {
     invalidRequest();
@@ -163,7 +176,7 @@ function safeProposedFields(value: unknown, strict = false): JsonRecord {
   if (!strict && typeof row.cardName === "string") {
     output.card_name = row.cardName.slice(0, 500);
   }
-  for (const field of proposedFieldNames) {
+  for (const field of accepted) {
     const item = row[field];
     if (field.endsWith("_url")) {
       const url = safeUrl(item);
