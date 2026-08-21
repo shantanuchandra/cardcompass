@@ -491,6 +491,52 @@ Deno.test("pilot replay rejects retained input overflow instead of silently trun
   );
 });
 
+Deno.test("pilot replay rejects required-source overflow before scanning or extracting documents", async () => {
+  const sourceUrl = "https://issuer.example/card";
+  const sourceKey = sourceIdentityDigest(sourceUrl);
+  const attempts = [{
+    url: sourceUrl,
+    role: "primary",
+    status: "success",
+    httpStatus: 200,
+    contentHash: "a".repeat(64),
+    finalResourceIdentityHash: sourceKey,
+    attemptedAt: "2026-08-20T00:00:00.000Z",
+    logicalSourceKey: sourceKey,
+  }];
+  let extracts = 0;
+  let error: unknown;
+  try {
+    await task10BatchModule.computePilotReplayEvidence({
+      jobId: "11111111-1111-4111-8111-111111111111",
+      cardId: "22222222-2222-4222-8222-222222222222",
+      parserVersion: "benefits-v6",
+      runMode: "pilot",
+      sourceManifestHash: await computeSourceManifestHash(attempts as never),
+      expectedRequiredSourceKeys: [],
+      requiredSourceSelectionOverflow: true,
+      attempts,
+      documents: [{
+        sourceUrl,
+        text: "Get 10% cashback on dining spends.",
+        contentHash: "a".repeat(64),
+      }],
+      extract: () => {
+        extracts += 1;
+        return Promise.resolve([]);
+      },
+    });
+  } catch (caught) {
+    error = caught;
+  }
+  assert(
+    error instanceof Error &&
+      error.message === "pilot_required_source_selection_overflow",
+    "required-source overflow was not rejected at the replay boundary",
+  );
+  assert(extracts === 0, "overflowing evidence reached the extractor");
+});
+
 Deno.test("pilot replay scans every relevant source fact and never qualifies a sliced tail", async () => {
   const compute = task10BatchModule.computePilotReplayEvidence;
   assert(typeof compute === "function", "computed pilot replay is missing");

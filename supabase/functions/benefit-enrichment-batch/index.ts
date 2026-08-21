@@ -2083,6 +2083,9 @@ export async function computePilotReplayEvidence(input: {
     typeof input.requiredSourceSelectionOverflow !== "boolean" ||
     input.attempts.length < 1 || input.attempts.length > 9
   ) throw new Error("invalid_pilot_replay_binding");
+  if (input.requiredSourceSelectionOverflow) {
+    throw new Error("pilot_required_source_selection_overflow");
+  }
   if (input.documents.length > 9) throw new Error("pilot_evidence_unbounded");
   const sourceAttempts = pilotVerificationSourceAttempts(input.attempts);
   const sourceManifestHash = await computeSourceManifestHash(sourceAttempts);

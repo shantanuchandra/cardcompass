@@ -47,6 +47,9 @@ const requiredAnchorPattern =
   /\b(?:most\s+important\s+terms(?:\s+and\s+conditions)?|terms?(?:\s+and\s+conditions)?|conditions?|mitc|fees?|charges?)\b/i;
 const relevantAnchorPattern =
   /\b(?:benefits?|rewards?|supporting\s+(?:material|document))\b/i;
+const centralCardRequiredPath =
+  /(?:^|[/_.-])(?:credit[-_ ]?cards?|cards?[-_ ]?credit|card[-_ ]?(?:terms?|conditions?|fees?|charges?|mitc)|(?:terms?|conditions?|fees?|charges?|mitc)[-_ ]?card)(?:$|[/_.-])/i;
+const centralSupportPath = /(?:^|\/)(?:support|help)(?:\/|$)/i;
 
 const exactSupportingSources: Record<string, Record<string, string[]>> = {
   "SBI Card": {
@@ -241,55 +244,40 @@ function replayLinksFromClassifierInput(
   issuer: string,
   baseUrl: string,
   html: string,
+  labels: string[],
+  primaryUrl: string,
   curatedUrls: readonly string[] = [],
 ) {
   let overflow = false;
   const links: NonNullable<BenefitDocument["replayLinks"]> = [];
-  const candidates: Array<{ url: string; anchorText: string }> = curatedUrls
-    .map((url) => ({ url, anchorText: "curated exact source" }));
-  for (const match of html.matchAll(anchorPattern)) {
-    const anchorText = (match[4] ?? "").replace(/<[^>]*>/g, " ")
-      .replace(/&(?:amp|nbsp);/gi, " ").replace(/\s+/g, " ").trim();
-    const encodedHref = match[1] ?? match[2] ?? match[3] ?? "";
-    const hrefValue = encodedHref
-      .replace(/&amp;|&#0*38;|&#x0*26;/gi, "&")
-      .replace(/&quot;|&#0*34;|&#x0*22;/gi, '"')
-      .replace(/&apos;|&#0*39;|&#x0*27;/gi, "'");
-    if (!requiredSourceHint(hrefValue, anchorText)) continue;
-    try {
-      const raw = new URL(hrefValue, baseUrl).toString();
-      let url = raw;
-      try {
-        url = canonicalOfficialRequestUrl(
-          issuer,
-          raw,
-          approvedStoredQueryParameters(raw),
-        );
-      } catch {
-        // The live classifier retains the raw identity for a rejected required
-        // query/path. Replay must still be able to prove it was not omitted.
-        overflow = true;
-        continue;
-      }
-      try {
-        url = canonicalPilotReplayResourceUrl(url);
-      } catch {
-        overflow = true;
-        continue;
-      }
-      candidates.push({ url, anchorText });
-    } catch {
-      // Invalid hrefs remain decisive failed attempts in the live crawl. They
-      // have no safe display URL or canonical identity to persist.
-    }
-  }
+  const candidates: SourceCandidate[] = [
+    ...curatedUrls.map((url) => ({
+      url,
+      anchorText: "curated exact source",
+      requiredHint: true,
+    })),
+    ...linkedUrls(issuer, baseUrl, html, labels, primaryUrl).filter((
+      candidate,
+    ) => sourceRole(candidate, false) === "required_supporting"),
+  ];
   candidates.sort((left, right) => left.url.localeCompare(right.url));
   for (const candidate of candidates) {
-    const href = safeHttpsDisplayUrl(candidate.url);
+    if (candidate.rejectionCode) {
+      overflow = true;
+      continue;
+    }
+    let resourceUrl: string;
+    try {
+      resourceUrl = canonicalPilotReplayResourceUrl(candidate.url);
+    } catch {
+      overflow = true;
+      continue;
+    }
+    const href = safeHttpsDisplayUrl(resourceUrl);
     if (!href) continue;
     let resourceIdentityHash: string;
     try {
-      resourceIdentityHash = sourceIdentityDigest(candidate.url);
+      resourceIdentityHash = sourceIdentityDigest(resourceUrl);
     } catch {
       continue;
     }
@@ -302,7 +290,7 @@ function replayLinksFromClassifierInput(
     }
     links.push({
       href,
-      resourceUrl: candidate.url,
+      resourceUrl,
       anchorText: canonicalRequiredReplayAnchorText(candidate.anchorText),
       resourceIdentityHash,
       queryPolicy: "functional_only",
@@ -377,11 +365,18 @@ function linkedUrls(
       continue;
     }
     const candidatePath = new URL(raw).pathname.toLowerCase();
+    const crossHost = new URL(raw).hostname.toLowerCase() !==
+      new URL(baseUrl).hostname.toLowerCase();
     const sameProductPath = candidatePath === primaryPath.toLowerCase() ||
       candidatePath.startsWith(`${primaryPath.toLowerCase()}/`);
     const namesTargetProduct = tokens.length > 0 &&
       tokens.every((token) => candidatePath.includes(token));
-    if (decisiveRequired && unsafePath.test(raw)) {
+    const contextualRequired = decisiveRequired &&
+      (sameProductPath || namesTargetProduct ||
+        centralCardRequiredPath.test(candidatePath) ||
+        centralSupportPath.test(candidatePath) || crossHost);
+    if (decisiveRequired && !contextualRequired) continue;
+    if (contextualRequired && unsafePath.test(raw)) {
       candidates.set(`rejected:${raw}`, {
         url: raw,
         anchorText,
@@ -394,7 +389,7 @@ function linkedUrls(
       !((relevantPath.test(raw) || decisiveRequired ||
         relevantAnchorPattern.test(anchorText)) &&
         !unsafePath.test(raw) &&
-        (decisiveRequired || sameProductPath || namesTargetProduct))
+        (contextualRequired || sameProductPath || namesTargetProduct))
     ) continue;
     try {
       const url = canonicalOfficialRequestUrl(
@@ -579,6 +574,8 @@ export async function collectSupportingBenefitDocuments(
     input.issuer,
     input.primary.canonicalUrl,
     input.primary.text ?? "",
+    input.identityLabels,
+    input.primary.canonicalUrl,
     [...exactSet],
   );
   primaryDocument.replayLinks = primaryReplayLinks.links;
@@ -829,6 +826,8 @@ export async function collectSupportingBenefitDocuments(
       input.issuer,
       resource.canonicalUrl,
       resource.text ?? "",
+      input.identityLabels,
+      input.primary.canonicalUrl,
     );
     document.replayLinks = documentReplayLinks.links;
     document.replayLinkOverflow = documentReplayLinks.overflow;

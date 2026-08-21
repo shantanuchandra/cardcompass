@@ -196,6 +196,63 @@ Deno.test("required central support links are fetched or retained as decisive fa
   );
 });
 
+Deno.test("global navigation terms do not crowd out product-scoped required sources", async () => {
+  const product =
+    "https://www.hdfc.bank.in/credit-cards/swiggy-hdfc-bank-credit-card";
+  const productTerms = `${product}/terms-and-conditions`;
+  const centralTerms =
+    "https://www.hdfc.bank.in/support/card-terms-and-conditions.pdf";
+  const globalLinks = [
+    "/education-fees",
+    "/fees-and-charges",
+    "/life-insurance/terms",
+    "/loans/term-loans",
+    "/savings-account/fees",
+    "/payzapp/fees-and-charges",
+    "/merchant-services/charges",
+    "/investments/terms",
+  ];
+  const fetched: string[] = [];
+  const html = [
+    "<h1>Swiggy HDFC Bank Credit Card</h1>",
+    `<a href="${productTerms}">Terms and Conditions</a>`,
+    `<a href="${centralTerms}">Download card terms</a>`,
+    ...globalLinks.map((href) => `<a href="${href}">Fees and terms</a>`),
+  ].join("");
+
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "HDFC Bank",
+    primary: resource(product, html),
+    identityLabels: ["Swiggy HDFC Bank Credit Card"],
+    fetchOfficialIssuerResource: async (input) => {
+      fetched.push(input.url);
+      return resource(
+        input.url,
+        "Swiggy HDFC Bank Credit Card terms and fees",
+        input.url.endsWith(".pdf") ? "application/pdf" : "text/html",
+      );
+    },
+  });
+
+  assert(
+    JSON.stringify(fetched.sort()) ===
+      JSON.stringify([centralTerms, productTerms].sort()),
+    `unrelated global terms were treated as required: ${fetched.join(",")}`,
+  );
+  assert(
+    collected.requiredSourceSelectionOverflow === false,
+    "unrelated global terms manufactured required-source overflow",
+  );
+  assert(
+    collected.expectedRequiredSourceKeys.length === 2,
+    "product and central card terms were not the exact required manifest",
+  );
+  assert(
+    classifyRequiredReplaySourceKeys(collected.documents).overflow === false,
+    "replay classifier disagreed with the scoped live source selection",
+  );
+});
+
 Deno.test("a late required anchor hint is classified without prefix slicing", async () => {
   const product = "https://www.axis.bank.in/cards/credit-card/privilege";
   const required = "https://www.axis.bank.in/support/document.pdf";
