@@ -8,6 +8,7 @@ import {
   sourceIdentityDigest,
 } from "./crawl_policy.ts";
 import { extractGroundedBenefitsV6 } from "../_shared/benefit_enrichment.ts";
+import { safeHttpsDisplayUrl } from "../_shared/benefit_source_privacy.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -79,6 +80,10 @@ Deno.test("root functional resource has one Edge and SQL byte identity", () => {
     sourceIdentityDigest(root) ===
       "2b11cd567b1ddbc93697a59fe4a74f972bf7988553f3d43ca34d039e33aa28a5",
     "root functional resource bytes changed before hashing",
+  );
+  assert(
+    safeHttpsDisplayUrl(root) === "https://issuer.example",
+    "root functional resource did not canonicalize to one queryless display",
   );
 });
 

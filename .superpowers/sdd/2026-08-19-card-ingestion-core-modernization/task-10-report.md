@@ -440,6 +440,26 @@ finalizer fact/resource safety                0 passed, 2 failed
   joined facts / multi-query URL               produced cross-field privacy false positives
 ```
 
+The final frozen review round added three exact regressions before production
+changes:
+
+```text
+Edge contextual-person/privacy behavior       0 passed, 1 failed
+  lowercase contextual name                   crossed replay and write boundaries
+Edge exact identity association               0 passed, 2 failed
+  prefix order / missing word boundaries      split or over-allowed full card names
+Task 6 display/privacy parity                  0 passed, 2 failed
+  root display helper / contextual probes     were absent from SQL authority
+Task 6 Unicode/vocabulary/mark parity         0 passed, 3 failed
+  script/vocabulary/numeric/combining marks   diverged from the Edge detector
+```
+
+The fix masks normalized identity phrases longest-first, rejects unknown
+two-or-more-token `for`/`to` names regardless of case or supported Unicode
+script, and uses one SQL queryless-display helper for primary, document, and
+link validation. The root functional resource retains `/` plus its exact query
+for hashing while its persisted display is `https://host`.
+
 Final prescribed command (the auth fixture now binds only the prescribed
 loopback capability):
 
@@ -448,7 +468,7 @@ deno test --node-modules-dir=auto --allow-env \
   --allow-net=0.0.0.0:8000 --frozen \
   supabase/functions/benefit-enrichment-batch/index_test.ts \
   supabase/functions/admin-catalog-entry/benefit_admin_test.ts
-# 213 passed, 0 failed (164 ingestion + 49 admin)
+# 214 passed, 0 failed (165 ingestion + 49 admin)
 ```
 
 Affected shared/policy suites:
@@ -533,15 +553,18 @@ Relevant migration SHA-256 values are:
 
 ```text
 976e6839340d9dede1d4e98599b2e586aafae5aa702fa5dd3d49758d58531bc3  supabase/migrations/20260819163046_review_card_benefit_enrichment_v2.sql
-9c01c05ad9df4e618c14b4f2146b531ca99e95d464983cd809cd36df9ae60dac  supabase/migrations/20260819205037_recur_card_enrichment_jobs.sql
+fa5753431dd66e9d2fe3d2b1eecef4c87d08376a805bdee9bcd07268e113698b  supabase/migrations/20260819205037_recur_card_enrichment_jobs.sql
 8e0dd3ac01346d5ec7531be906bc974480e0e93c8f8d9f482b6010323e06a3a7  supabase/migrations/20260819231435_publish_reviewed_card_identity.sql
 82df4f501eb24f5e88be6080b66c5c296f95bb4d68a7cd4b5f3c1a44a015980e  supabase/migrations/20260819063836_add_admin_flag_to_public_users.sql
 ```
 
-No Docker, local/linked/live Supabase/Postgres, external issuer/network,
-production data/write, secret change, workflow dispatch, or live action was
-used. The only network capability used by tests was the isolated
-`0.0.0.0:8000` loopback server owned by the admin auth test.
+No Docker, linked/live Supabase/Postgres, external issuer/network, production
+data/write, secret change, workflow dispatch, or live action was used. The
+implementation agent ran no database command. During final independent review,
+the reviewer executed 13 helper-only probes inside a local PostgreSQL 14
+transaction and rolled it back; no schema or data change persisted. The only
+network capability used by repository tests was the isolated `0.0.0.0:8000`
+loopback server owned by the admin auth test.
 
 ## Atomic promotion boundary
 

@@ -589,26 +589,46 @@ export function normalizedBenefitPrivacyProbe(value: string): {
 function normalizedIdentityPhrases(
   context: { issuer?: string; identityLabels?: readonly string[] },
 ): string[] {
-  return [context.issuer ?? "", ...(context.identityLabels ?? [])]
-    .map((item) =>
-      normalizedBenefitPrivacyProbe(item).text.replace(/\s+/g, " ").trim()
-        .toLowerCase()
-    )
-    .filter((item) => item.length >= 3);
+  return [
+    ...new Set(
+      [context.issuer ?? "", ...(context.identityLabels ?? [])]
+        .map((item) =>
+          normalizedBenefitPrivacyProbe(item).text.replace(/\s+/g, " ").trim()
+            .toLowerCase()
+        )
+        .filter((item) => item.length >= 3),
+    ),
+  ]
+    .sort((left, right) =>
+      right.length - left.length || left.localeCompare(right)
+    );
+}
+
+function maskKnownIdentityPhrases(
+  value: string,
+  identityPhrases: readonly string[],
+): string {
+  let probe = value;
+  for (const [index, phrase] of identityPhrases.entries()) {
+    if (!phrase) continue;
+    probe = probe.replaceAll(
+      new RegExp(
+        `(?<![\\p{L}\\p{M}\\p{N}])${
+          phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        }(?![\\p{L}\\p{M}\\p{N}])`,
+        "giu",
+      ),
+      ` knownidentity${index} `,
+    );
+  }
+  return probe;
 }
 
 function hasUnknownPersonLikeSpan(
   value: string,
   identityPhrases: readonly string[],
 ): boolean {
-  let probe = value;
-  for (const [index, phrase] of identityPhrases.entries()) {
-    if (!phrase) continue;
-    probe = probe.replaceAll(
-      new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"),
-      ` knownidentity${index} `,
-    );
-  }
+  const probe = maskKnownIdentityPhrases(value, identityPhrases);
   return [...probe.matchAll(/\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){1,3}\b/g)]
     .some((match) => {
       // Unknown product names are deliberately retained for the real card
@@ -619,6 +639,7 @@ function hasUnknownPersonLikeSpan(
         !commercialTitleWords.has(word.toLowerCase())
       );
     }) ||
+    /\b(?:for|to)\s+\p{Lu}[\p{L}\p{M}'-]{2,}\b/u.test(probe) ||
     [...probe.matchAll(
       /(?<![\p{L}\p{M}])([\p{L}][\p{L}\p{M}'-]{2,}(?:\s+[\p{L}][\p{L}\p{M}'-]{2,}){0,3})\s+(?:(?:gets?|receives?)\b|will\s+(?:call|contact)\b|is\s+the\s+(?:customer|cardholder|member)\b)/giu,
     )]
@@ -630,7 +651,15 @@ function hasUnknownPersonLikeSpan(
           !/^knownidentity\d+$/.test(word)
         );
       }) ||
-    /\b(?:for|to)\s+\p{Lu}[\p{L}\p{M}'-]{2,}\b/u.test(probe) ||
+    [...probe.matchAll(
+      /(?<![\p{L}\p{M}])(?:for|to)\s+([\p{L}][\p{L}\p{M}'-]{1,}(?:\s+[\p{L}][\p{L}\p{M}'-]{1,}){1,3}?)(?=\s+(?:is|gets?|receives?|will)\b|\s*[.,;:!?]|\s*$)/giu,
+    )].some((match) =>
+      match[1].toLowerCase().split(/\s+/).some((word) =>
+        !publicBenefitSubjectWords.has(word) &&
+        !commercialTitleWords.has(word) &&
+        !/^knownidentity\d+$/.test(word)
+      )
+    ) ||
     (replayBenefitSignal.test(probe) &&
       [...probe].some((character) =>
         character.codePointAt(0)! > 0x7f && /\p{L}/u.test(character)
@@ -644,13 +673,7 @@ export function containsPrivateBenefitData(
   const normalized = normalizedBenefitPrivacyProbe(value);
   if (normalized.overflow) return true;
   const identityPhrases = normalizedIdentityPhrases(context);
-  let probe = normalized.text;
-  for (const [index, phrase] of identityPhrases.entries()) {
-    probe = probe.replaceAll(
-      new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"),
-      ` knownidentity${index} `,
-    );
-  }
+  const probe = maskKnownIdentityPhrases(normalized.text, identityPhrases);
   const numericProbe = probe
     .replace(
       /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi,
@@ -669,7 +692,7 @@ export function containsPrivateBenefitData(
       .test(probe) ||
     /\b(?:contact|call|ask)\s+[a-z]{2,}(?:\s+[a-z]{2,}){1,3}\b/i
       .test(probe) ||
-    hasUnknownPersonLikeSpan(probe, identityPhrases);
+    hasUnknownPersonLikeSpan(normalized.text, identityPhrases);
 }
 
 export type BenefitReplayFactEnvelope = {

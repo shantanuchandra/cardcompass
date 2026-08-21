@@ -1104,6 +1104,94 @@ Deno.test("privacy allowlists only exact issuer and product phrases", () => {
   }
 });
 
+Deno.test("contextual person spans are case-insensitive while exact catalog identities remain public", () => {
+  const issuerExample = {
+    issuer: "Issuer Example",
+    identityLabels: ["Issuer Example Card"],
+  };
+  const americanExpress = {
+    issuer: "American Express",
+    identityLabels: ["American Express Platinum Card"],
+  };
+  for (
+    const [safe, context] of [
+      ["Issuer Example Card gets 10% cashback", issuerExample],
+      [
+        "American Express Platinum Card gets 10% cashback",
+        americanExpress,
+      ],
+    ] as const
+  ) {
+    assert(
+      !containsPrivateBenefitData(safe, context),
+      `an exact catalog identity was split into a private person span: ${safe}`,
+    );
+    assert(
+      !canonicalBenefitReplayFactEnvelope(safe, context).factOverflow,
+      `an exact catalog identity overflowed replay: ${safe}`,
+    );
+  }
+  assert(
+    containsPrivateBenefitData(
+      "NotAmerican Express Platinum Card gets 10% cashback",
+      americanExpress,
+    ),
+    "a known identity substring was masked without exact word boundaries",
+  );
+
+  const assertSafe = task10BatchModule.assertSafePersistedEvidence as (
+    value: unknown,
+    context?: { issuer?: string; identityLabels?: readonly string[] },
+  ) => void;
+  for (
+    const unsafe of [
+      "Cashback for alice smith is 10%",
+      "Reward points to rAhUl shArMa",
+      "10% cashback for ALICE SMITH",
+      "Miles to राहुल शर्मा",
+      "Cashback for অর্ণব সেন is 10%",
+    ]
+  ) {
+    assert(
+      containsPrivateBenefitData(unsafe, issuerExample),
+      `a lower, mixed, all-caps, or Unicode contextual name survived: ${unsafe}`,
+    );
+    assert(
+      canonicalBenefitReplayFactEnvelope(unsafe, issuerExample).factOverflow,
+      `a contextual person span entered replay: ${unsafe}`,
+    );
+    let persistedError: unknown;
+    try {
+      assertSafe({ proposal: { description: unsafe } }, issuerExample);
+    } catch (error) {
+      persistedError = error;
+    }
+    assert(
+      persistedError instanceof Error &&
+        persistedError.message === "unsafe_persisted_evidence",
+      `generic persistence accepted a contextual person span: ${unsafe}`,
+    );
+  }
+  assert(
+    !containsPrivateBenefitData(
+      "Cashback for airport access is 10%",
+      issuerExample,
+    ),
+    "commercial contextual words were misclassified as a person",
+  );
+  for (
+    const safe of [
+      "Offer valid for 12 months.",
+      "Earn 5 points for ₹150 spent.",
+    ]
+  ) {
+    assert(
+      !containsPrivateBenefitData(safe, issuerExample),
+      `a numeric commercial span was misclassified as a person: ${safe}`,
+    );
+  }
+});
+
 Deno.test("pilot source binding preserves exact requested and redirected resource identities", async () => {
   const compute = task10BatchModule.computePilotReplayEvidence;
   assert(typeof compute === "function", "computed pilot replay is missing");
@@ -5366,6 +5454,9 @@ Deno.test("direct official-source customer and payment probes never reach stagin
       "Email ａｌｉｃｅ＠example.com.",
       "Phone ＋９１ ９８７６５ ４３２１０.",
       "Account ID १२३४५६७८९०१२३४५६.",
+      "Cashback for alice smith is 10%.",
+      "Reward points to rAhUl shArMa.",
+      "10% cashback for ALICE SMITH.",
     ]
   ) {
     const fixture = await stableCanonicalProcessFixture(
@@ -5380,7 +5471,8 @@ Deno.test("direct official-source customer and payment probes never reach stagin
       fixture.finalization,
     ]);
     assert(
-      !persisted.includes(unsafe) &&
+      fixture.stageCalls.length === 0 &&
+        !persisted.includes(unsafe) &&
         !persisted.includes("john.doe@example.com") &&
         !persisted.includes("4111-1111-1111-1111") &&
         !persisted.includes("98765 43210") &&
@@ -5392,7 +5484,7 @@ Deno.test("direct official-source customer and payment probes never reach stagin
         !persisted.includes("123.456.7890") &&
         !persisted.includes("ABCDE1234F") &&
         !persisted.includes("12345678901234567890"),
-      `direct official-source private data crossed a write boundary: ${unsafe}`,
+      `direct official-source private data crossed staging or finalization: ${unsafe}`,
     );
   }
 });

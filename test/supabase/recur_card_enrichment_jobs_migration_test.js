@@ -956,6 +956,21 @@ test('pilot SQL recomputes v3 functional resource hashes and rejects every overf
     sql,
     'card_enrichment_pilot_source_identity_hash',
   );
+  assert.match(
+    sql,
+    /CREATE OR REPLACE FUNCTION public\.card_enrichment_pilot_queryless_display_url\s*\(/i,
+    'SQL has no canonical queryless display helper',
+  );
+  assert.match(
+    validator,
+    /card_enrichment_pilot_queryless_display_url\(\s*document\.value->>'requested_resource_url'\s*\)[\s\S]*requested_source_url/i,
+    'document display validation bypasses the canonical queryless helper',
+  );
+  assert.match(
+    validator,
+    /card_enrichment_pilot_queryless_display_url\(\s*link\.value->>'resource_url'\s*\)[\s\S]*link\.value->>'href'/i,
+    'link display validation bypasses the canonical queryless helper',
+  );
   assert.match(validator, /replay_input->'version' IS DISTINCT FROM '3'::jsonb/i);
   for (const field of [
     'requested_resource_url',
@@ -1073,8 +1088,42 @@ test('pilot SQL mirrors normalized privacy and exact catalog-context allowlistin
   );
   assert.match(
     sql,
-    /pilot_privacy_assertions[\s\S]*American Express[\s\S]*State Bank of India[\s\S]*India gets[\s\S]*ALICE[\s\S]*Rahul/i,
-    'migration lacks apply-time exact-product, partial-label, and unknown-person privacy probes',
+    /pilot_privacy_assertions[\s\S]*American Express Platinum Card gets[\s\S]*Issuer Example Card gets[\s\S]*for alice smith[\s\S]*to rAhUl shArMa[\s\S]*for ALICE SMITH[\s\S]*অর্ণব সেন[\s\S]*airport access[\s\S]*valid for 12 months[\s\S]*for ₹150 spent/i,
+    'migration lacks apply-time longest-identity, Unicode contextual-person, and commercial-word probes',
+  );
+  const contextualPerson = functionBody(
+    sql,
+    'card_enrichment_pilot_has_contextual_person',
+  );
+  for (const word of [
+    'access',
+    'accelerated',
+    'annual',
+    'airport',
+    'bank',
+    'benefit',
+    'benefits',
+  ]) {
+    assert.match(
+      contextualPerson,
+      new RegExp(`'${word}'`, 'i'),
+      `SQL contextual-person vocabulary omits Edge-safe word: ${word}`,
+    );
+  }
+  assert.match(
+    contextualPerson,
+    /\[:alpha:\]/,
+    'SQL contextual-person detector does not require Unicode alphabetic tokens',
+  );
+  assert.match(
+    contextualPerson,
+    /combining[_ -]?mark|768[\s\S]*879[\s\S]*2304[\s\S]*2558/i,
+    'SQL contextual-person detector does not admit bounded Unicode marks after a letter',
+  );
+  assert.doesNotMatch(
+    contextualPerson,
+    /\[\^\[:space:\]\]\{2,/,
+    'SQL contextual-person detector still accepts arbitrary non-space tokens',
   );
 });
 

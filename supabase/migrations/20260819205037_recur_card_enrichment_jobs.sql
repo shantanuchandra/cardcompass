@@ -1502,6 +1502,120 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.card_enrichment_pilot_queryless_display_url(
+  _url text
+) RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE
+  parts text[];
+  authority text;
+  resource_path text;
+BEGIN
+  IF public.card_enrichment_pilot_source_identity_hash(_url) IS NULL THEN
+    RETURN NULL;
+  END IF;
+  parts := regexp_match(
+    trim(_url), '^https://([^/?#]+)([^?#]*)(\?[^#]*)?$', 'i'
+  );
+  IF parts IS NULL THEN RETURN NULL; END IF;
+  authority := lower(regexp_replace(parts[1], ':443$', '', 'i'));
+  resource_path := regexp_replace(coalesce(parts[2], ''), '/{2,}', '/', 'g');
+  IF resource_path IN ('', '/') THEN
+    resource_path := '';
+  ELSE
+    resource_path := regexp_replace(resource_path, '/$', '');
+  END IF;
+  RETURN 'https://' || authority || resource_path;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.card_enrichment_pilot_has_contextual_person(
+  _text text,
+  _known_identity_phrases jsonb
+) RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+  SELECT CASE
+    WHEN _text IS NULL OR octet_length(convert_to(_text, 'UTF8')) > 65536
+      OR jsonb_typeof(_known_identity_phrases) <> 'array'
+      OR jsonb_array_length(_known_identity_phrases) > 9
+    THEN true
+    ELSE EXISTS (
+      SELECT 1
+      FROM regexp_matches(
+        lower(_text),
+        '\m(for|to)[[:space:]]+(([[:alpha:]][^[:space:]]{1,})([[:space:]]+[[:alpha:]][^[:space:]]{1,}){1,3}?)([[:space:]]+(is|gets?|receives?|will)\M|[[:space:]]*[.,;:!?]|$)',
+        'g'
+      ) AS contextual_person(match)
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements_text(_known_identity_phrases)
+          AS exact_identity_phrase(value)
+        WHERE trim(lower(exact_identity_phrase.value)) =
+          trim(lower(contextual_person.match[2]))
+      )
+        AND NOT EXISTS (
+          -- POSIX alpha excludes combining vowel signs/viramas. Admit a
+          -- bounded Unicode Mark set only after an alphabetic first
+          -- character; digits, currency, and arbitrary punctuation remain
+          -- outside the name-token grammar.
+          SELECT 1
+          FROM regexp_split_to_table(
+            contextual_person.match[2], ''
+          ) AS contextual_character(value)
+          WHERE contextual_character.value <> ' '
+            AND contextual_character.value !~ '^[[:alpha:]]$'
+            AND contextual_character.value NOT IN ('''', '-')
+            AND NOT (
+              ascii(contextual_character.value) BETWEEN 768 AND 879
+              OR ascii(contextual_character.value) BETWEEN 6832 AND 6911
+              OR ascii(contextual_character.value) BETWEEN 7616 AND 7679
+              OR ascii(contextual_character.value) BETWEEN 8400 AND 8447
+              OR ascii(contextual_character.value) BETWEEN 65056 AND 65071
+              OR ascii(contextual_character.value) BETWEEN 2304 AND 2307
+              OR ascii(contextual_character.value) BETWEEN 2362 AND 2383
+              OR ascii(contextual_character.value) BETWEEN 2385 AND 2391
+              OR ascii(contextual_character.value) BETWEEN 2402 AND 2403
+              OR ascii(contextual_character.value) BETWEEN 2433 AND 2435
+              OR ascii(contextual_character.value) BETWEEN 2492 AND 2500
+              OR ascii(contextual_character.value) BETWEEN 2503 AND 2504
+              OR ascii(contextual_character.value) BETWEEN 2507 AND 2509
+              OR ascii(contextual_character.value) = 2519
+              OR ascii(contextual_character.value) BETWEEN 2530 AND 2531
+              OR ascii(contextual_character.value) = 2558
+            )
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM regexp_split_to_table(
+            trim(lower(contextual_person.match[2])), '[[:space:]]+'
+          ) AS contextual_word(value)
+          WHERE contextual_word.value NOT IN (
+            'applicant','applicants','cardholder','cardholders',
+            'customer','customers','member','members','user','users',
+            'access','accelerated','annual','airport','bank','benefit','benefits',
+            'bonus','cap','cashback','card','conditions','complimentary',
+            'credit','cover','dining','discount','domestic','earn','enjoy',
+            'exclusive','fee','fees','forex','fuel','get','international',
+            'insurance','interest','lounge','mastercard','markup','maximum',
+            'milestone','miles','minimum','mitc','most','movie','offer',
+            'offers','important','points','program','reward','rewards',
+            'rupay','spend','surcharge','terms','threshold','ticket',
+            'tickets','travel','unlimited','visa','waiver','welcome','zero',
+            'apr','renewal'
+          )
+        )
+    )
+  END;
+$$;
+
 DO $pilot_resource_identity_assertions$
 DECLARE
   ordered text := 'https://issuer.example/terms.pdf?document=mitc.pdf&locale=en&version=2&locale=hi';
@@ -1553,6 +1667,12 @@ BEGIN
           'https://issuer.example/?locale=en'
         ) IS DISTINCT FROM
           '2b11cd567b1ddbc93697a59fe4a74f972bf7988553f3d43ca34d039e33aa28a5'
+     OR public.card_enrichment_pilot_queryless_display_url(
+          'https://issuer.example/?locale=en'
+        ) IS DISTINCT FROM 'https://issuer.example'
+     OR public.card_enrichment_pilot_queryless_display_url(
+          'https://issuer.example/card/?document=mitc.pdf'
+        ) IS DISTINCT FROM 'https://issuer.example/card'
      THEN
     RAISE EXCEPTION 'pilot resource identity assertion failed';
   END IF;
@@ -1781,7 +1901,7 @@ BEGIN
      OR replay_input->'context'->>'primary_source_url' !~
        '^https://[^/@?#]+(?:/[^?#]*)?$'
      OR replay_input->'context'->>'primary_source_url' IS DISTINCT FROM
-       regexp_replace(_job.canonical_url, '[?#].*$', '')
+       public.card_enrichment_pilot_queryless_display_url(_job.canonical_url)
      OR jsonb_typeof(replay_input->'context'->'identity_labels') <> 'array'
      OR jsonb_array_length(replay_input->'context'->'identity_labels')
        NOT BETWEEN 1 AND 8
@@ -1842,11 +1962,11 @@ BEGIN
           OR public.card_enrichment_pilot_source_identity_hash(
                document.value->>'final_resource_url'
              ) IS NULL
-          OR regexp_replace(
-               document.value->>'requested_resource_url', '\?.*$', ''
+          OR public.card_enrichment_pilot_queryless_display_url(
+               document.value->>'requested_resource_url'
              ) IS DISTINCT FROM document.value->>'requested_source_url'
-          OR regexp_replace(
-               document.value->>'final_resource_url', '\?.*$', ''
+          OR public.card_enrichment_pilot_queryless_display_url(
+               document.value->>'final_resource_url'
              ) IS DISTINCT FROM document.value->>'final_source_url'
           OR coalesce(document.value->>'requested_resource_identity_hash','')
             !~ '^[0-9a-f]{64}$'
@@ -1949,25 +2069,10 @@ BEGIN
                   trim(lower(personal.match[1]))
               )
           )
-          OR EXISTS (
-            SELECT 1
-            FROM regexp_matches(
-              lower(document.value->>'public_text'),
-              '\m(for|to)[[:space:]]+([a-zऀ-ॿ][a-zऀ-ॿ'' -]{2,127})[[:space:]]+(is|gets?|receives?)\M',
-              'g'
-            ) AS contextual_person(match)
-            WHERE NOT EXISTS (
-              SELECT 1 FROM (
-                SELECT replay_input->'context'->>'issuer' AS value
-                UNION ALL
-                SELECT label.value
-                FROM jsonb_array_elements_text(
-                  replay_input->'context'->'identity_labels'
-                ) AS label(value)
-              ) AS exact_identity_phrase
-              WHERE trim(lower(exact_identity_phrase.value)) =
-                trim(lower(contextual_person.match[2]))
-            )
+          OR public.card_enrichment_pilot_has_contextual_person(
+            document.value->>'public_text',
+            jsonb_build_array(replay_input->'context'->>'issuer') ||
+              replay_input->'context'->'identity_labels'
           )
           OR jsonb_typeof(document.value->'hyperlinks') <> 'array'
           OR jsonb_array_length(document.value->'hyperlinks') > 8
@@ -1981,8 +2086,9 @@ BEGIN
                OR public.card_enrichment_pilot_source_identity_hash(
                     link.value->>'resource_url'
                   ) IS NULL
-               OR regexp_replace(link.value->>'resource_url', '\?.*$', '')
-                    IS DISTINCT FROM link.value->>'href'
+               OR public.card_enrichment_pilot_queryless_display_url(
+                    link.value->>'resource_url'
+                  ) IS DISTINCT FROM link.value->>'href'
                OR length(coalesce(link.value->>'anchor_text','')) > 96
                OR link.value->>'anchor_text' !~
                  '^(|curated exact source|most important terms( and conditions)?|terms?( and conditions)?|conditions?|mitc|fees?|charges?|benefits?|rewards?|supporting (material|document))$'
@@ -3643,17 +3749,53 @@ $pilot_atomic_evidence_assertions$;
 
 DO $pilot_privacy_assertions$
 DECLARE
-  known_context text := lower('American Express Platinum Card');
-  known_fact text := lower('American Express Platinum Card gets 10% cashback');
+  known_phrases jsonb := jsonb_build_array(
+    'American Express', 'American Express Platinum Card',
+    'Issuer Example', 'Issuer Example Card'
+  );
+  known_fact text := 'American Express Platinum Card gets 10% cashback';
+  second_known_fact text := 'Issuer Example Card gets 10% cashback';
   partial_context text := lower('State Bank of India');
   partial_fact text := lower('India gets 10% cashback');
   alice_fact text := lower('ALICE gets 10% cashback');
   rahul_fact text := lower('Rahul Sarma gets 10% cashback');
 BEGIN
-  IF position(known_context || ' gets' IN known_fact) = 0
+  IF position(lower('American Express Platinum Card') || ' gets'
+       IN lower(known_fact)) = 0
+     OR position(lower('Issuer Example Card') || ' gets'
+       IN lower(second_known_fact)) = 0
      OR position(partial_context || ' gets' IN partial_fact) > 0
-     OR position(known_context || ' gets' IN alice_fact) > 0
-     OR position(known_context || ' gets' IN rahul_fact) > 0 THEN
+     OR position(lower('American Express Platinum Card') || ' gets'
+       IN alice_fact) > 0
+     OR position(lower('American Express Platinum Card') || ' gets'
+       IN rahul_fact) > 0
+     OR public.card_enrichment_pilot_has_contextual_person(
+       'Cashback for American Express Platinum Card is 10%', known_phrases
+     )
+     OR public.card_enrichment_pilot_has_contextual_person(
+       'Reward points to Issuer Example Card', known_phrases
+     )
+     OR NOT public.card_enrichment_pilot_has_contextual_person(
+       'Cashback for alice smith is 10%', known_phrases
+     )
+     OR NOT public.card_enrichment_pilot_has_contextual_person(
+       'Reward points to rAhUl shArMa', known_phrases
+     )
+     OR NOT public.card_enrichment_pilot_has_contextual_person(
+       '10% cashback for ALICE SMITH', known_phrases
+     )
+     OR NOT public.card_enrichment_pilot_has_contextual_person(
+       'Cashback for অর্ণব সেন is 10%', known_phrases
+     )
+     OR public.card_enrichment_pilot_has_contextual_person(
+       'Cashback for airport access is 10%', known_phrases
+     )
+     OR public.card_enrichment_pilot_has_contextual_person(
+       'Offer valid for 12 months.', known_phrases
+     )
+     OR public.card_enrichment_pilot_has_contextual_person(
+       'Earn 5 points for ₹150 spent.', known_phrases
+     ) THEN
     RAISE EXCEPTION 'pilot privacy assertion failed';
   END IF;
 END;
