@@ -120,16 +120,17 @@ test("PDF extraction reports explicit overflow instead of slicing a late fact", 
     `%PDF-1.4\nBT (${filler}) Tj (${lateFact}) Tj ET\n%%EOF`,
   );
   await assert.rejects(
-    () => officialResourceText({
-      submittedUrl: officialUrl,
-      finalUrl: officialUrl,
-      canonicalUrl: officialUrl,
-      contentType: "application/pdf",
-      bytes: pdf,
-      text: "",
-      contentHash: "pdf-hash",
-      retrievedAt: "2026-08-17T00:00:00.000Z",
-    }),
+    () =>
+      officialResourceText({
+        submittedUrl: officialUrl,
+        finalUrl: officialUrl,
+        canonicalUrl: officialUrl,
+        contentType: "application/pdf",
+        bytes: pdf,
+        text: "",
+        contentHash: "pdf-hash",
+        retrievedAt: "2026-08-17T00:00:00.000Z",
+      }),
     (error) => error instanceof Error && error.message === "oversized",
   );
 });
@@ -147,16 +148,17 @@ test("PDF extraction bounds aggregate decompressed bytes across every stream", a
   ]);
 
   await assert.rejects(
-    () => officialResourceText({
-      submittedUrl: officialUrl,
-      finalUrl: officialUrl,
-      canonicalUrl: officialUrl,
-      contentType: "application/pdf",
-      bytes: pdf,
-      text: "",
-      contentHash: "pdf-hash",
-      retrievedAt: "2026-08-17T00:00:00.000Z",
-    }),
+    () =>
+      officialResourceText({
+        submittedUrl: officialUrl,
+        finalUrl: officialUrl,
+        canonicalUrl: officialUrl,
+        contentType: "application/pdf",
+        bytes: pdf,
+        text: "",
+        contentHash: "pdf-hash",
+        retrievedAt: "2026-08-17T00:00:00.000Z",
+      }),
     (error) => error instanceof Error && error.message === "oversized",
   );
 });
@@ -1234,6 +1236,41 @@ test("production robots fetch is cached per host and explicit disallow prevents 
   assert.equal(retried.disposition, "success");
   assert.equal(robotsRequests, 1);
   assert.equal(targetRequests, 2);
+});
+
+test("production robots accepts bounded ASCII rules under common issuer media declarations", async () => {
+  for (
+    const contentType of [
+      "text/x-robots",
+      "text/plain;charset=iso-8859-1",
+    ]
+  ) {
+    const requested = [];
+    const observation = await fetchOfficialIssuerObservation({
+      issuer,
+      url: officialUrl,
+      parserVersion: "benefits-v6",
+      enforceRobots: true,
+      maxAttempts: 1,
+      fetchImpl: async (url) => {
+        requested.push(String(url));
+        if (String(url).endsWith("/robots.txt")) {
+          return response(
+            "User-agent: CardCompassCatalogBot\nAllow: /rd/",
+            { headers: { "content-type": contentType } },
+          );
+        }
+        return response("<h1>White Reserve Credit Card</h1>");
+      },
+      resolveHost: publicDns,
+    });
+
+    assert.equal(observation.disposition, "success", contentType);
+    assert.deepEqual(requested, [
+      "https://www.kotak.com/robots.txt",
+      officialUrl,
+    ]);
+  }
 });
 
 test("page-level checkpoint detectors do not reject legitimate benefit prose", async () => {

@@ -142,6 +142,7 @@ const issuerAliases: Record<string, string[]> = {
   "Punjab National Bank": ["pnb", "punjab", "national"],
   "SBI Card": ["sbi"],
   "AU Small Finance Bank": ["au"],
+  "IDFC FIRST Bank": ["idfc", "first"],
 };
 
 const genericTokens = new Set([
@@ -348,6 +349,7 @@ function stripTitleMarketing(value: string, issuer: string): string {
       /\s*[-–—:]\s*(?:best\s+entertainment(?:\s+credit\s+card)?|[0-9]+%\s+fuel\s+cashback|exclusive\s+rewards?\s*(?:&|and)\s*benefits?|benefits?\s*(?:&|and)\s*features?(?:\s*[-–—]\s*apply\s+now)?)\s*$/i,
       "",
     )
+    .replace(/\s*[-–—:]\s*apply\s+for\b[\s\S]*$/i, "")
     .replace(/\s+with\s+unlimited\s+benefits\s*$/i, "")
     .trim();
 }
@@ -517,34 +519,70 @@ function identityFromLabel(
   };
 }
 
-function strongIdentityLabels(content: string, issuer: string): string[] {
+function strongIdentityLabels(
+  content: string,
+  issuer: string,
+  contextUrl?: string,
+): string[] {
   const labels: string[] = [];
-  const add = (value: string, metadata = false) => {
+  const primaryHeadings: string[] = [];
+  let contextKey = "";
+  if (contextUrl) {
+    try {
+      const segments = new URL(contextUrl).pathname.split("/").filter(Boolean);
+      contextKey = normalizedProduct(segments.at(-1) ?? "", issuer);
+    } catch {
+      contextKey = "";
+    }
+  }
+  const matchingContext = (values: string[]) =>
+    contextKey
+      ? values.filter((value) => {
+        const key = normalizedProduct(value, issuer);
+        return key.includes(contextKey) || contextKey.includes(key);
+      })
+      : [];
+  const add = (target: string[], value: string, metadata = false) => {
     const label = decodeHtmlText(value);
     if (metadata && !hasMeaningfulMetadataProductToken(label, issuer)) return;
-    if (identityFromLabel(label, issuer)) labels.push(label);
+    if (identityFromLabel(label, issuer)) target.push(label);
   };
+  for (const match of content.matchAll(/<h1[^>]*>([\s\S]*?)<\/h1>/gi)) {
+    add(primaryHeadings, match[1] ?? "");
+  }
+  const contextualPrimary = matchingContext(primaryHeadings);
+  if (contextualPrimary.length > 0) return contextualPrimary.slice(0, 32);
+
   for (const match of content.matchAll(/<title\b[^>]*>([\s\S]*?)<\/title>/gi)) {
-    add(match[1] ?? "", true);
+    add(labels, match[1] ?? "", true);
   }
   for (
     const match of content.matchAll(
       /<meta[^>]+(?:property|name)=["'](?:og:title|twitter:title)["'][^>]+content=["']([^"']+)["'][^>]*>/gi,
     )
-  ) add(match[1] ?? "", true);
+  ) add(labels, match[1] ?? "", true);
   for (
     const match of content.matchAll(
       /<script[^>]+type=["']application\/ld\+json["'][^>]*>[\s\S]*?["']name["']\s*:\s*["']([^"']+)["'][\s\S]*?<\/script>/gi,
     )
-  ) add(match[1] ?? "", true);
-  for (const match of content.matchAll(/<h[1-2][^>]*>([\s\S]*?)<\/h[1-2]>/gi)) {
-    add(match[1] ?? "");
+  ) add(labels, match[1] ?? "", true);
+  const contextualMetadata = matchingContext(labels);
+  if (contextualMetadata.length > 0) return contextualMetadata.slice(0, 32);
+  if (contextKey) {
+    if (primaryHeadings.length > 0) return primaryHeadings.slice(0, 32);
+    if (labels.length > 0) return labels.slice(0, 32);
+  } else {
+    labels.unshift(...primaryHeadings);
+  }
+
+  for (const match of content.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)) {
+    add(labels, match[1] ?? "");
   }
   for (
     const match of content.matchAll(
       /<[^>]+class=["'][^"']*\btitle\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/gi,
     )
-  ) add(match[1] ?? "");
+  ) add(labels, match[1] ?? "");
 
   return labels.slice(0, 32);
 }
@@ -619,8 +657,9 @@ export function assessOfficialCardIdentity(
   content: string,
   issuer: string,
   expectedProducts: string[] = [],
+  contextUrl?: string,
 ): OfficialCardIdentityAssessment {
-  const labels = strongIdentityLabels(content, issuer);
+  const labels = strongIdentityLabels(content, issuer, contextUrl);
   if (expectedProducts.length > 0) {
     labels.push(...targetBodyIdentityLabels(content, issuer));
   }
@@ -700,8 +739,9 @@ export function assessOfficialCardIdentity(
 export function officialCardIdentityFromHtml(
   html: string,
   issuer: string,
+  contextUrl?: string,
 ): CanonicalCardIdentity | null {
-  return assessOfficialCardIdentity(html, issuer).identity;
+  return assessOfficialCardIdentity(html, issuer, [], contextUrl).identity;
 }
 
 export function exactOfficialPageIdentity(

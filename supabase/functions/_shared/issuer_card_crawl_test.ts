@@ -123,6 +123,43 @@ Deno.test("classification retains approved functional source URL identity artifa
   assert(page.sourceStatus === 200, "source status was dropped");
 });
 
+Deno.test("classification binds the primary product heading before related-card chrome", () => {
+  for (
+    const fixture of [
+      {
+        issuer: "Axis Bank",
+        url:
+          "https://www.axis.bank.in/cards/credit-card/indianoil-axis-bank-credit-card",
+        html:
+          '<title>Fuel Credit Card - Apply for Indian Oil Credit Card | Axis Bank</title><h1>IndianOil Axis Bank Credit Card</h1><section><div class="section-title">Explore Neo Credit Card and My Zone Credit Card</div></section>',
+        expected: "Indian Oil",
+      },
+      {
+        issuer: "HDFC Bank",
+        url:
+          "https://www.hdfc.bank.in/credit-cards/swiggy-hdfc-bank-credit-card",
+        html:
+          '<title>Swiggy Credit Card - Get Cashbacks on Swiggy App | HDFC Bank</title><h1>Swiggy HDFC Bank Credit Card</h1><h2 class="section-title">Other Credit Card Services</h2>',
+        expected: "Swiggy",
+      },
+      {
+        issuer: "IDFC FIRST Bank",
+        url: "https://www.idfcfirst.bank.in/credit-card/wealth",
+        html:
+          "<title>Wealth Credit Card - Apply for Low Forex Markup Credit Card | IDFC FIRST Bank</title><h1>Lifetime-free card with premium benefits</h1>",
+        expected: "Wealth",
+      },
+    ]
+  ) {
+    const page = classifyIssuerPage(fixture);
+    assert(page.kind === "card_product", `${fixture.issuer} stayed ambiguous`);
+    assert(
+      page.proposedName === fixture.expected,
+      `${fixture.issuer} primary product identity changed`,
+    );
+  }
+});
+
 Deno.test("issuer traversal carries exact functional fetch resources into publication evidence", async () => {
   const sitemap = "https://www.axis.bank.in/sitemap.xml";
   const exact =

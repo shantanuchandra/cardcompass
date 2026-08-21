@@ -1114,15 +1114,19 @@ export async function fetchOfficialIssuerResource(
             response.headers.get("content-type"),
           );
           if (
-            metadata.mime !== "text/plain" ||
-            (metadata.charset && metadata.charset !== "utf-8" &&
-              metadata.charset !== "utf8")
+            metadata.mime !== "text/plain" &&
+            metadata.mime !== "text/x-robots"
           ) throw fetchError("robots_invalid");
           bytes = await readResponseBytes(
             response,
             MAX_ROBOTS_BYTES,
             controller,
           );
+          if (
+            metadata.charset && metadata.charset !== "utf-8" &&
+            metadata.charset !== "utf8" &&
+            bytes.some((byte) => byte >= 0x80)
+          ) throw fetchError("robots_invalid");
         } catch {
           throw fetchError("robots_invalid");
         }

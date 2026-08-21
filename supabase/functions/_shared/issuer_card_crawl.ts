@@ -360,7 +360,11 @@ function hasSharedProductIdentityContext(
     issuer,
   );
   const contextTokens = urlPathTokens(url, issuer);
-  return [...identityTokens].some((token) => contextTokens.has(token));
+  if ([...identityTokens].some((token) => contextTokens.has(token))) {
+    return true;
+  }
+  const identityCompound = [...identityTokens].join("");
+  return identityCompound.length >= 4 && contextTokens.has(identityCompound);
 }
 
 function candidateUrlScore(url: string): number {
@@ -1072,7 +1076,11 @@ export function classifyIssuerPage(
   const html = input.html ?? input.text ?? "";
   const evidence = pageEvidence(canonicalUrl, html);
   const sanitizedEvidence = evidenceFromHtml(html);
-  const identity = officialCardIdentityFromHtml(html, input.issuer);
+  const identity = officialCardIdentityFromHtml(
+    html,
+    input.issuer,
+    canonicalUrl,
+  );
   const hasIdentityContext = hasSharedProductIdentityContext(
     identity,
     canonicalUrl,
