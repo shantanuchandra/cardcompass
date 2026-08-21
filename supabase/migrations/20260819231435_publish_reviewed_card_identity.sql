@@ -2479,28 +2479,38 @@ BEGIN
         PERFORM pg_advisory_xact_lock(hashtextextended(
           greatest(edit_old_identity_lock, edit_new_identity_lock), 0
         ));
-        SELECT conflict.id INTO new_family_conflict
-        FROM public.card_catalog AS conflict
-        WHERE conflict.id <> edit_target_card_id
-          AND lower(trim(conflict.bank)) = lower(trim(issuer))
-          AND lower(trim(coalesce(conflict.card_type, ''))) = 'credit'
-          AND coalesce(
-            nullif(public.normalize_card_catalog_family(conflict.card_name), ''),
-            public.normalize_card_catalog_product(conflict.card_name)
-          ) = coalesce(
-            nullif(public.normalize_card_catalog_family(reviewed_name), ''),
-            public.normalize_card_catalog_product(reviewed_name)
-          )
-          AND public.card_catalog_effective_network(
-            conflict.network, conflict.card_name, conflict.bank
-          ) IS NOT DISTINCT FROM reviewed_network
-          AND public.normalize_card_catalog_tier(conflict.card_name)
-            IS NOT DISTINCT FROM reviewed_tier
-        ORDER BY conflict.id
-        LIMIT 1
-        FOR UPDATE;
-        IF new_family_conflict IS NOT NULL THEN
-          RAISE EXCEPTION 'edit_target_conflict';
+        IF edit_old_identity_lock IS DISTINCT FROM edit_new_identity_lock
+           OR (
+                reviewed_network IS NOT NULL
+                AND public.card_catalog_effective_network(
+                  edit_target_network, edit_target_name, edit_target_bank
+                ) IS DISTINCT FROM reviewed_network
+              )
+           OR public.normalize_card_catalog_tier(edit_target_name)
+                IS DISTINCT FROM reviewed_tier THEN
+          SELECT conflict.id INTO new_family_conflict
+          FROM public.card_catalog AS conflict
+          WHERE conflict.id <> edit_target_card_id
+            AND lower(trim(conflict.bank)) = lower(trim(issuer))
+            AND lower(trim(coalesce(conflict.card_type, ''))) = 'credit'
+            AND coalesce(
+              nullif(public.normalize_card_catalog_family(conflict.card_name), ''),
+              public.normalize_card_catalog_product(conflict.card_name)
+            ) = coalesce(
+              nullif(public.normalize_card_catalog_family(reviewed_name), ''),
+              public.normalize_card_catalog_product(reviewed_name)
+            )
+            AND public.card_catalog_effective_network(
+              conflict.network, conflict.card_name, conflict.bank
+            ) IS NOT DISTINCT FROM reviewed_network
+            AND public.normalize_card_catalog_tier(conflict.card_name)
+              IS NOT DISTINCT FROM reviewed_tier
+          ORDER BY conflict.id
+          LIMIT 1
+          FOR UPDATE;
+          IF new_family_conflict IS NOT NULL THEN
+            RAISE EXCEPTION 'edit_target_conflict';
+          END IF;
         END IF;
         -- Validate stored column/name network agreement even if the review did
         -- not explicitly change the network field.
@@ -2509,12 +2519,43 @@ BEGIN
         );
         -- Bind a reviewed rename/network/page move to the existing strong card
         -- before changing its mutable identity. Conflicting URL keys still fail.
-        resolved_card_id := public.resolve_card_catalog_identity(
-          edit_target_bank, edit_target_name, edit_target_network,
-          final_url, submitted_hash, final_hash
-        );
-        IF resolved_card_id <> edit_target_card_id THEN
-          RAISE EXCEPTION 'edit_target_conflict';
+        -- page_only_edit_url_binding: an unchanged explicit identity is already
+        -- bound by its locked target and baseline. Reconcile both URL histories
+        -- directly so malformed unrelated siblings cannot block a fee/page edit.
+        IF edit_old_identity_lock IS NOT DISTINCT FROM edit_new_identity_lock
+           AND (
+             reviewed_network IS NULL
+             OR public.card_catalog_effective_network(
+                  edit_target_network, edit_target_name, edit_target_bank
+                ) IS NOT DISTINCT FROM reviewed_network
+           )
+           AND public.normalize_card_catalog_tier(edit_target_name)
+                IS NOT DISTINCT FROM reviewed_tier THEN
+          IF EXISTS (
+            SELECT 1
+            FROM (
+              SELECT key.card_id
+              FROM public.card_catalog_url_keys AS key
+              WHERE key.url_hash IN (submitted_hash, final_hash)
+              UNION
+              SELECT provenance.card_id
+              FROM public.card_catalog_provenance AS provenance
+              WHERE provenance.submitted_url_hash IN (submitted_hash, final_hash)
+                 OR provenance.final_url_hash IN (submitted_hash, final_hash)
+            ) AS bound
+            WHERE bound.card_id <> edit_target_card_id
+          ) THEN
+            RAISE EXCEPTION 'edit_target_conflict';
+          END IF;
+          resolved_card_id := edit_target_card_id;
+        ELSE
+          resolved_card_id := public.resolve_card_catalog_identity(
+            edit_target_bank, edit_target_name, edit_target_network,
+            final_url, submitted_hash, final_hash
+          );
+          IF resolved_card_id <> edit_target_card_id THEN
+            RAISE EXCEPTION 'edit_target_conflict';
+          END IF;
         END IF;
       ELSE
         resolved_card_id := public.resolve_card_catalog_identity(

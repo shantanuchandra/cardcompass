@@ -11,6 +11,15 @@ async function migrationSql() {
   return await readFile(new URL(files[0], directory), "utf8");
 }
 
+async function pageOnlyEditHotfixSql() {
+  const directory = new URL("../../supabase/migrations/", import.meta.url);
+  const files = (await readdir(directory)).filter((name) =>
+    name.endsWith("_guard_page_only_catalog_edits.sql")
+  );
+  assert.equal(files.length, 1, "expected one page-only edit hotfix migration");
+  return await readFile(new URL(files[0], directory), "utf8");
+}
+
 function functionBody(sql, name, signaturePattern = "") {
   const match = sql.match(
     new RegExp(
@@ -789,6 +798,65 @@ test("reviewed rename locks old and new identity families and rejects a conflict
     "rename does not recheck the destination family under both locks",
   );
   assert.match(sql, /rename_dual_family_lock_assertion_failed/i);
+});
+
+test("page-only edits do not evaluate unrelated malformed sibling identities", async () => {
+  const sql = await migrationSql();
+  const publish = functionBody(sql, "publish_card_catalog_identity");
+  const conflictScan = publish.indexOf(
+    "SELECT conflict.id INTO new_family_conflict",
+  );
+  assert.ok(conflictScan > 0, "destination-family conflict scan missing");
+  const identityChangeGuard = publish.lastIndexOf(
+    "IF edit_old_identity_lock IS DISTINCT FROM edit_new_identity_lock",
+    conflictScan,
+  );
+  assert.ok(
+    identityChangeGuard > 0,
+    "page-only edit reaches malformed sibling network validation",
+  );
+  assert.match(
+    publish.slice(identityChangeGuard, conflictScan),
+    /reviewed_network IS NOT NULL[\s\S]*card_catalog_effective_network\([\s\S]*edit_target_network[\s\S]*IS DISTINCT FROM reviewed_network[\s\S]*normalize_card_catalog_tier\(edit_target_name\)[\s\S]*IS DISTINCT FROM reviewed_tier/i,
+    "destination scan is not limited to a real family/network/tier move",
+  );
+  const pageOnlyBinding = publish.indexOf(
+    "page_only_edit_url_binding",
+    conflictScan,
+  );
+  const targetResolver = publish.indexOf(
+    "resolved_card_id := public.resolve_card_catalog_identity(",
+    conflictScan,
+  );
+  assert.ok(
+    pageOnlyBinding > conflictScan && pageOnlyBinding < targetResolver,
+    "page-only edit still enters the general family resolver",
+  );
+  assert.match(
+    publish.slice(pageOnlyBinding, targetResolver),
+    /card_catalog_url_keys[\s\S]*card_catalog_provenance[\s\S]*card_id <> edit_target_card_id[\s\S]*resolved_card_id := edit_target_card_id/i,
+    "page-only edit is not bound to both URL histories and its exact target",
+  );
+});
+
+test("applied publisher is upgraded in place without changing its interface", async () => {
+  const sql = await pageOnlyEditHotfixSql();
+  assert.match(sql, /pg_get_functiondef|pg_proc/i);
+  assert.match(
+    sql,
+    /IF edit_old_identity_lock IS DISTINCT FROM edit_new_identity_lock[\s\S]*edit_target_network[\s\S]*reviewed_network[\s\S]*edit_target_name[\s\S]*reviewed_tier/i,
+  );
+  assert.match(
+    sql,
+    /page_only_edit_url_binding[\s\S]*card_catalog_url_keys[\s\S]*card_catalog_provenance[\s\S]*resolved_card_id := edit_target_card_id/i,
+  );
+  assert.match(
+    sql,
+    /CREATE OR REPLACE FUNCTION public\.publish_card_catalog_identity\([\s\S]*_discovery_job_id uuid[\s\S]*_review_item_id uuid[\s\S]*_actor_id uuid[\s\S]*_action text[\s\S]*_reviewed_fields jsonb[\s\S]*_merge_card_id uuid[\s\S]*_reason text[\s\S]*_parser_version text/i,
+  );
+  assert.match(sql, /SECURITY INVOKER/i);
+  assert.match(sql, /SET search_path = public, extensions, pg_temp/i);
+  assert.doesNotMatch(sql, /CREATE TABLE|ALTER TABLE|DROP TABLE/i);
 });
 
 test("legacy URL backfill always has a nonnull deterministic observation timestamp", async () => {
