@@ -387,6 +387,31 @@ test('v6 review seals pre-mutation live state and audits exact proposal or remov
   );
 });
 
+test('SQL accepts Edge conflict-current reject targets without live mutation and preserves canonical reject audit identity', async () => {
+  const sql = await migrationSql();
+  const approval = functionBody(sql, 'approve_card_benefit_enrichment');
+  assert.match(
+    approval,
+    /decision_action\s*=\s*'reject'[\s\S]*diff'->'conflicts'[\s\S]*jsonb_array_elements\(coalesce\(item\.value->'current'/i,
+    'conflict current rows are absent from the locked reject lookup',
+  );
+  assert.match(
+    approval,
+    /decision_action\s*=\s*'reject'[\s\S]*existing_benefit_id IS NOT NULL[\s\S]*audit_decision\s*:=\s*jsonb_build_object\([\s\S]*'benefit_id',\s*existing_benefit_id/i,
+    'current conflict rejection must remain audit-only and retain the live UUID',
+  );
+  assert.match(
+    approval,
+    /decision_action\s*=\s*'reject'[\s\S]*decision_proposal_index IS NOT NULL[\s\S]*'proposal_index',\s*decision_proposal_index[\s\S]*'dedupe_key',\s*staged_proposal->>'dedupeKey'[\s\S]*'condition_hash',\s*staged_proposal->>'conditionHash'/i,
+    'canonical reject audit identity drifted from the Edge SQL-shaped wire',
+  );
+  assert.doesNotMatch(
+    approval,
+    /ELSIF\s+decision_action\s*=\s*'reject'[\s\S]{0,1200}UPDATE\s+public\.card_benefit_mapping/i,
+    'a targeted reject acquired a live mapping mutation',
+  );
+});
+
 test('v5 approval bypasses v6 identity locks while v6 preserves the shared lock order', async () => {
   const sql = await migrationSql();
   const approval = functionBody(sql, 'approve_card_benefit_enrichment');

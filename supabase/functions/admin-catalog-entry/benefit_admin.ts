@@ -1056,11 +1056,17 @@ function benefitDiff(value: unknown, v6 = false) {
 
 function benefitDecision(value: unknown, v6 = false) {
   const row = asRecord(value) ?? {};
+  const proposalIndex = number(row.proposal_index);
   return {
     action: text(row.action, 40),
     reason: text(row.reason, 500),
     change_type: text(row.change_type ?? row.changeType, 60),
     dedupe_key: text(row.dedupe_key ?? row.dedupeKey, 200),
+    condition_hash: digest(row.condition_hash ?? row.conditionHash),
+    proposal_index: proposalIndex !== null &&
+        Number.isSafeInteger(proposalIndex) && proposalIndex >= 0
+      ? proposalIndex
+      : null,
     benefit_id: text(row.benefit_id ?? row.current_benefit_id, 100),
     existing_benefit_id: text(row.existing_benefit_id, 100),
     display_priority: number(row.display_priority),
@@ -1638,6 +1644,7 @@ export async function validateV5ApprovalDecisions(
     ...objectList(diff.unchanged).flatMap((item) =>
       asRecord(item.current) ? [asRecord(item.current)!] : []
     ),
+    ...objectList(diff.conflicts).flatMap((item) => objectList(item.current)),
   ];
   const seen = new Set<string>();
   return await Promise.all(decisions.map(async (decision) => {
@@ -1662,17 +1669,23 @@ export async function validateV5ApprovalDecisions(
     }
     if (action === "reject") {
       if (
-        asRecord(decision.proposed) || asRecord(decision.edited_benefit) ||
-        asRecord(decision.editedBenefit)
+        owns(decision, "proposed") || owns(decision, "edited_benefit") ||
+        owns(decision, "editedBenefit")
       ) {
         throw new BenefitAdminError(
           "client_publication_authority_rejected",
           409,
         );
       }
+      const hasBenefit = owns(decision, "benefit");
+      const hasCurrent = owns(decision, "current");
       const submittedBenefit = asRecord(decision.benefit);
       const submittedCurrent = asRecord(decision.current);
-      if (submittedBenefit && submittedCurrent) {
+      if (
+        (hasBenefit && !submittedBenefit) ||
+        (hasCurrent && !submittedCurrent) ||
+        (hasBenefit && hasCurrent)
+      ) {
         throw new BenefitAdminError("benefit_decision_identity_mismatch", 409);
       }
       let identity = "reject:all";
@@ -1687,9 +1700,16 @@ export async function validateV5ApprovalDecisions(
             candidate.liveBenefitId === liveBenefitId
           )
           : undefined;
+        const hasDedupe = owns(decision, "dedupe_key") ||
+          owns(decision, "dedupeKey");
+        const decisionDedupe = text(
+          decision.dedupe_key ?? decision.dedupeKey,
+          200,
+        );
         if (
           !liveBenefitId || !current ||
-          submittedCurrent.liveBenefitId !== liveBenefitId
+          submittedCurrent.liveBenefitId !== liveBenefitId ||
+          (hasDedupe && decisionDedupe !== text(current.dedupeKey, 200))
         ) {
           throw new BenefitAdminError(
             "benefit_decision_identity_mismatch",
@@ -1699,7 +1719,10 @@ export async function validateV5ApprovalDecisions(
         identity = `live:${liveBenefitId}`;
         output = { ...base, benefit_id: liveBenefitId };
       } else if (submittedBenefit) {
-        if (decision.benefit_id || decision.current_benefit_id) {
+        if (
+          owns(decision, "benefit_id") ||
+          owns(decision, "current_benefit_id")
+        ) {
           throw new BenefitAdminError(
             "benefit_decision_identity_mismatch",
             409,
@@ -1710,7 +1733,16 @@ export async function validateV5ApprovalDecisions(
           200,
         );
         const proposal = proposalKey ? byKey.get(proposalKey) : undefined;
-        if (!proposal) {
+        const hasDedupe = owns(decision, "dedupe_key") ||
+          owns(decision, "dedupeKey");
+        const decisionDedupe = text(
+          decision.dedupe_key ?? decision.dedupeKey,
+          200,
+        );
+        if (
+          !proposal ||
+          (hasDedupe && decisionDedupe !== proposalKey)
+        ) {
           throw new BenefitAdminError(
             "benefit_decision_identity_mismatch",
             409,
@@ -1718,10 +1750,7 @@ export async function validateV5ApprovalDecisions(
         }
         identity = `proposal:${proposalKey}`;
         output = { ...base, proposal_index: proposal.index };
-      } else if (
-        decision.benefit_id || decision.current_benefit_id ||
-        decision.dedupe_key || decision.dedupeKey
-      ) {
+      } else if (hasRejectTargetProperty(decision)) {
         throw new BenefitAdminError("benefit_decision_identity_mismatch", 409);
       }
       if (seen.has(identity)) {
@@ -1958,25 +1987,87 @@ function validateUniqueV6DecisionTargets(
   }
 }
 
+const rejectTargetProperties = [
+  "benefit",
+  "current",
+  "proposed",
+  "edited_benefit",
+  "editedBenefit",
+  "benefit_id",
+  "current_benefit_id",
+  "dedupe_key",
+  "dedupeKey",
+  "proposal_index",
+  "proposalIndex",
+  "condition_hash",
+  "conditionHash",
+] as const;
+
+function hasRejectTargetProperty(decision: JsonRecord): boolean {
+  return rejectTargetProperties.some((key) => owns(decision, key));
+}
+
 function validateConflictResolutionDecisions(
   diff: JsonRecord,
   decisions: JsonRecord[],
 ): void {
+  const conflicts = objectList(diff.conflicts);
   const hasGlobalReject = decisions.some((decision) =>
     String(decision.action ?? "").toLowerCase() === "reject" &&
-    !asRecord(decision.benefit) && !asRecord(decision.current) &&
-    !asRecord(decision.proposed) && !decision.benefit_id &&
-    !decision.current_benefit_id && !decision.dedupe_key &&
-    !decision.dedupeKey
+    !hasRejectTargetProperty(decision)
   );
-  for (const conflict of objectList(diff.conflicts)) {
+  const proposalGroupCounts = new Map<string, number>();
+  const currentGroupCounts = new Map<string, number>();
+  for (const conflict of conflicts) {
+    for (const proposal of objectList(conflict.proposed)) {
+      const key = text(proposal.benefitId ?? proposal.dedupeKey, 200);
+      if (key) {
+        proposalGroupCounts.set(key, (proposalGroupCounts.get(key) ?? 0) + 1);
+      }
+    }
+    for (const current of objectList(conflict.current)) {
+      const liveBenefitId = text(current.liveBenefitId, 100);
+      if (liveBenefitId) {
+        currentGroupCounts.set(
+          liveBenefitId,
+          (currentGroupCounts.get(liveBenefitId) ?? 0) + 1,
+        );
+      }
+    }
+  }
+  for (const conflict of conflicts) {
     const proposalKeys = new Set(
       objectList(conflict.proposed).flatMap((proposal) => {
         const key = text(proposal.benefitId ?? proposal.dedupeKey, 200);
         return key ? [key] : [];
       }),
     );
-    if (proposalKeys.size === 0) continue;
+    if (proposalKeys.size === 0) {
+      const currentIds = new Set(
+        objectList(conflict.current).flatMap((current) => {
+          const liveBenefitId = text(current.liveBenefitId, 100);
+          return liveBenefitId ? [liveBenefitId] : [];
+        }),
+      );
+      const resolutions = decisions.filter((decision) => {
+        if (String(decision.action ?? "").toLowerCase() !== "reject") {
+          return false;
+        }
+        const submittedCurrent = asRecord(decision.current);
+        const liveBenefitId = text(
+          decision.benefit_id ?? decision.current_benefit_id,
+          100,
+        );
+        return submittedCurrent !== null && liveBenefitId !== null &&
+          submittedCurrent.liveBenefitId === liveBenefitId &&
+          currentIds.has(liveBenefitId) &&
+          currentGroupCounts.get(liveBenefitId) === 1;
+      });
+      if (!hasGlobalReject && resolutions.length !== 1) {
+        throw new BenefitAdminError("conflicting_proposal_decisions", 409);
+      }
+      continue;
+    }
     const resolutions = decisions.filter((decision) => {
       const action = String(decision.action ?? "").toLowerCase();
       const submitted = asRecord(
@@ -1989,6 +2080,7 @@ function validateConflictResolutionDecisions(
       );
       const key = text(submitted?.benefitId ?? submitted?.dedupeKey, 200);
       return key !== null && proposalKeys.has(key) &&
+        proposalGroupCounts.get(key) === 1 &&
         ["approve", "edit", "reject"].includes(action);
     });
     if (!hasGlobalReject && resolutions.length !== 1) {
@@ -2361,17 +2453,23 @@ export async function validateV6ApprovalDecisions(
     }
     if (action === "reject") {
       if (
-        asRecord(decision.proposed) || asRecord(decision.edited_benefit) ||
-        asRecord(decision.editedBenefit)
+        owns(decision, "proposed") || owns(decision, "edited_benefit") ||
+        owns(decision, "editedBenefit")
       ) {
         throw new BenefitAdminError(
           "client_publication_authority_rejected",
           409,
         );
       }
+      const hasBenefit = owns(decision, "benefit");
+      const hasCurrent = owns(decision, "current");
       const submittedBenefit = asRecord(decision.benefit);
       const submittedCurrent = asRecord(decision.current);
-      if (submittedBenefit && submittedCurrent) {
+      if (
+        (hasBenefit && !submittedBenefit) ||
+        (hasCurrent && !submittedCurrent) ||
+        (hasBenefit && hasCurrent)
+      ) {
         throw new BenefitAdminError("benefit_decision_identity_mismatch", 409);
       }
       let decisionIdentity = "reject:all";
@@ -2386,12 +2484,16 @@ export async function validateV6ApprovalDecisions(
             candidate.liveBenefitId === liveBenefitId
           )
           : undefined;
+        const hasDedupe = owns(decision, "dedupe_key") ||
+          owns(decision, "dedupeKey");
+        const decisionDedupe = text(
+          decision.dedupe_key ?? decision.dedupeKey,
+          200,
+        );
         if (
           !liveBenefitId || !current ||
           submittedCurrent.liveBenefitId !== liveBenefitId ||
-          (text(decision.dedupe_key ?? decision.dedupeKey, 200) &&
-            text(decision.dedupe_key ?? decision.dedupeKey, 200) !==
-              text(current.dedupeKey, 200))
+          (hasDedupe && decisionDedupe !== text(current.dedupeKey, 200))
         ) {
           throw new BenefitAdminError(
             "benefit_decision_identity_mismatch",
@@ -2401,7 +2503,10 @@ export async function validateV6ApprovalDecisions(
         decisionIdentity = `live:${liveBenefitId}`;
         output = { ...base, benefit_id: liveBenefitId };
       } else if (submittedBenefit) {
-        if (decision.benefit_id || decision.current_benefit_id) {
+        if (
+          owns(decision, "benefit_id") ||
+          owns(decision, "current_benefit_id")
+        ) {
           throw new BenefitAdminError(
             "benefit_decision_identity_mismatch",
             409,
@@ -2412,13 +2517,17 @@ export async function validateV6ApprovalDecisions(
           200,
         );
         const proposal = proposalKey ? stagedByKey.get(proposalKey) : undefined;
+        const hasDedupe = owns(decision, "dedupe_key") ||
+          owns(decision, "dedupeKey");
+        const decisionDedupe = text(
+          decision.dedupe_key ?? decision.dedupeKey,
+          200,
+        );
         if (
           !proposal ||
           canonicalApprovalIdentity(submittedBenefit) !==
             canonicalApprovalIdentity(proposal) ||
-          (text(decision.dedupe_key ?? decision.dedupeKey, 200) &&
-            text(decision.dedupe_key ?? decision.dedupeKey, 200) !==
-              proposalKey)
+          (hasDedupe && decisionDedupe !== proposalKey)
         ) {
           throw new BenefitAdminError(
             "benefit_decision_identity_mismatch",
@@ -2427,10 +2536,7 @@ export async function validateV6ApprovalDecisions(
         }
         decisionIdentity = `proposal:${proposalKey}`;
         output = { ...base, proposal_index: proposal.proposalIndex };
-      } else if (
-        decision.benefit_id || decision.current_benefit_id ||
-        decision.dedupe_key || decision.dedupeKey
-      ) {
+      } else if (hasRejectTargetProperty(decision)) {
         throw new BenefitAdminError("benefit_decision_identity_mismatch", 409);
       }
       if (selectedDecisionIdentities.has(decisionIdentity)) {
@@ -2617,7 +2723,7 @@ async function approve(
   const accepted = mode === "approve"
     ? ["approve", "keep_existing", "retire"]
     : mode === "edit"
-    ? ["edit", "keep_existing"]
+    ? ["approve", "edit", "reject", "keep_existing"]
     : ["reject"];
   const reason = mode === "reject" ? requiredReason(body.reason) : null;
   const target = await approvalTarget(db, body);
@@ -2628,6 +2734,15 @@ async function approve(
     target.stagedExtraction,
     target.cardId,
   );
+  if (
+    mode === "edit" &&
+    decisions.some((decision) =>
+      decision.action === "reject" &&
+      !owns(decision, "proposal_index") && !owns(decision, "benefit_id")
+    )
+  ) {
+    throw new BenefitAdminError("targeted_reject_is_required", 409);
+  }
   if (mode === "reject") {
     decisions = decisions.map((decision) => ({ ...decision, reason }));
   }

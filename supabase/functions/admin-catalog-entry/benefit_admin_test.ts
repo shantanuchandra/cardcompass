@@ -1220,15 +1220,23 @@ Deno.test("benefit approval accepts only matching pending enrichment staging and
         "approval used an unowned staging row",
       );
       const decision = (args._decisions as Record<string, any>[])[0];
-      assert(
-        decision.canonical_envelope?.version === "benefit-publication-v2" &&
-          decision.canonical_envelope?.dedupe_key?.startsWith(
-            "card-benefit-v2:card-1:",
-          ) &&
-          decision.canonical_envelope?.benefit?.benefit_category ===
-            "cashback",
-        "v5 rollback review did not route through the v2 card-scoped envelope",
-      );
+      if (decision.action === "reject") {
+        assert(
+          decision.proposal_index === 0 &&
+            !Object.hasOwn(decision, "canonical_envelope"),
+          "targeted reject did not retain only its locked proposal target",
+        );
+      } else {
+        assert(
+          decision.canonical_envelope?.version === "benefit-publication-v2" &&
+            decision.canonical_envelope?.dedupe_key?.startsWith(
+              "card-benefit-v2:card-1:",
+            ) &&
+            decision.canonical_envelope?.benefit?.benefit_category ===
+              "cashback",
+          "v5 rollback review did not route through the v2 card-scoped envelope",
+        );
+      }
       return {
         data: [{ staging_id: "staging-1", resulting_status: "approved" }],
         error: null,
@@ -1278,6 +1286,45 @@ Deno.test("benefit approval accepts only matching pending enrichment staging and
       }),
       db,
     );
+    const selectedWithoutEdit = await handle(
+      request({
+        action: "benefit-edit-approve",
+        job_id: "job-1",
+        staging_id: "staging-1",
+        decisions: [{
+          action: "approve",
+          benefit: {
+            dedupeKey: "legacy:dining-credit",
+            title: "Dining credit",
+          },
+        }],
+      }),
+      db,
+    );
+    const targetedReject = await handle(
+      request({
+        action: "benefit-edit-approve",
+        job_id: "job-1",
+        staging_id: "staging-1",
+        decisions: [{
+          action: "reject",
+          benefit: {
+            dedupeKey: "legacy:dining-credit",
+            title: "Dining credit",
+          },
+        }],
+      }),
+      db,
+    );
+    const misplacedGlobalReject = await handle(
+      request({
+        action: "benefit-edit-approve",
+        job_id: "job-1",
+        staging_id: "staging-1",
+        decisions: [{ action: "reject" }],
+      }),
+      db,
+    );
 
     assert(
       invalid.status === 400,
@@ -1291,7 +1338,22 @@ Deno.test("benefit approval accepts only matching pending enrichment staging and
       edited.status === 200,
       "matching pending staging was not edit-approved",
     );
-    assert(rpcCalls === 2, "invalid decision reached the approval RPC");
+    assert(
+      selectedWithoutEdit.status === 200,
+      "explicit conflict selection required an artificial edit",
+    );
+    assert(
+      targetedReject.status === 200,
+      "targeted conflict rejection was blocked by the edit endpoint",
+    );
+    assert(
+      misplacedGlobalReject.status === 409,
+      "global rejection was accepted through the conflict-resolution endpoint",
+    );
+    assert(
+      rpcCalls === 4,
+      "valid or invalid decisions reached the wrong RPC count",
+    );
   } finally {
     if (originalAllowlist === undefined) {
       Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
@@ -1738,6 +1800,75 @@ Deno.test("v6 approval is bound to exact server-staged canonical proposals", asy
       edited.submitted[0].edited_benefit.conditionHash ===
         proposal.conditionHash,
     "v6 edit did not retain server canonical identity",
+  );
+});
+
+Deno.test("admin presentation preserves SQL-shaped targeted reject audit identity", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const liveBenefitId = "11111111-1111-4111-8111-111111111111";
+  const presented = presentBenefitJob({
+    id: "job-1",
+    card_id: "card-1",
+    parser_version: "benefits-v6",
+    status: "completed",
+    run_mode: "manual",
+    card_benefits_staging: {
+      id: "staging-1",
+      card_id: "card-1",
+      request_type: "official_benefit_enrichment",
+      parser_version: "benefits-v6",
+      status: "rejected",
+      extracted_data: {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [proposal],
+        diff: {
+          additions: [proposal],
+        },
+      },
+      benefit_decisions: [
+        {
+          action: "reject",
+          proposal_index: 0,
+          dedupe_key: proposal.dedupeKey,
+          condition_hash: proposal.conditionHash,
+        },
+        { action: "reject", benefit_id: liveBenefitId },
+        { action: "reject", reason: "Whole review rejected" },
+      ],
+    },
+  }) as Record<string, any>;
+  assert(
+    presented.staging,
+    `SQL audit fixture was rejected by presentation: ${
+      JSON.stringify(presented)
+    }`,
+  );
+  const [canonical, currentAudit, global] = presented.staging.benefit_decisions;
+
+  assert(
+    canonical.proposal_index === 0 &&
+      canonical.dedupe_key === proposal.dedupeKey &&
+      canonical.condition_hash === proposal.conditionHash,
+    "canonical SQL reject audit lost proposal identity in presentation",
+  );
+  assert(
+    currentAudit.benefit_id === liveBenefitId &&
+      currentAudit.proposal_index === null,
+    "current SQL reject audit lost its exact live identity",
+  );
+  assert(
+    global.benefit_id === null && global.proposal_index === null &&
+      global.dedupe_key === null,
+    "global SQL reject audit acquired a target during presentation",
   );
 });
 
@@ -2204,6 +2335,210 @@ Deno.test("v6 reject wire distinguishes proposal current and global targets", as
       (proposedOnly as { code?: string }).code ===
         "client_publication_authority_rejected",
     "proposed-only reject widened into a global reject",
+  );
+});
+
+Deno.test("v5 and v6 global reject require every target property to be absent", async () => {
+  const [v6Proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const [v5Proposal] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 10% cashback on dining spends.",
+    contentHash: "a".repeat(64),
+  }], "benefits-v5");
+  assert(v5Proposal, "v5 reject fixture did not extract");
+  const malformed = [
+    { benefit: null },
+    { benefit: [] },
+    { benefit: "" },
+    { benefit: {} },
+    { current: null },
+    { current: "" },
+    { current: [] },
+    { current: {} },
+    { proposed: null },
+    { proposed: [] },
+    { proposed: "" },
+    { proposed: {} },
+    { edited_benefit: null },
+    { dedupe_key: null },
+    { dedupe_key: "" },
+    { dedupe_key: 42 },
+    { dedupeKey: null },
+    { dedupeKey: [] },
+    { benefit_id: null },
+    { benefit_id: 42 },
+    { current_benefit_id: null },
+    { current_benefit_id: "" },
+    { proposal_index: null },
+    { proposal_index: "" },
+    { condition_hash: null },
+    { conditionHash: "" },
+    { proposalIndex: null },
+  ];
+  for (const target of malformed) {
+    for (
+      const [validator, proposal, extraction] of [
+        [
+          validateV6ApprovalDecisions,
+          v6Proposal,
+          {
+            request_type: "official_benefit_enrichment",
+            parser_version: "benefits-v6",
+            proposals: [v6Proposal],
+          },
+        ],
+        [
+          validateV5ApprovalDecisions,
+          v5Proposal,
+          {
+            request_type: "official_benefit_enrichment",
+            parser_version: "benefits-v5",
+            proposals: [v5Proposal],
+          },
+        ],
+      ] as const
+    ) {
+      let error: unknown;
+      try {
+        await validator(
+          [{ action: "reject", ...target }],
+          extraction,
+          "card-1",
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      assert(
+        error instanceof Error,
+        `${String(proposal.dedupeKey)} accepted present target ${
+          JSON.stringify(target)
+        }`,
+      );
+    }
+  }
+});
+
+Deno.test("v6 conflict-current rejection emits the exact SQL no-mutation target", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const liveBenefitId = "11111111-1111-4111-8111-111111111111";
+  const current = { ...proposal, liveBenefitId };
+  let unresolved: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      [{ action: "approve", benefit: proposal }],
+      {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [proposal],
+        diff: {
+          additions: [proposal],
+          conflicts: [{
+            code: "conflicting_current_terms",
+            current: [current],
+            proposed: [],
+          }],
+        },
+      },
+      "card-1",
+    );
+  } catch (caught) {
+    unresolved = caught;
+  }
+  assert(
+    unresolved instanceof Error &&
+      (unresolved as { code?: string }).code ===
+        "conflicting_proposal_decisions",
+    "current-only conflict completed without one explicit current resolution",
+  );
+  const decisions = await validateV6ApprovalDecisions(
+    [{ action: "reject", benefit_id: liveBenefitId, current }],
+    {
+      request_type: "official_benefit_enrichment",
+      parser_version: "benefits-v6",
+      proposals: [proposal],
+      diff: {
+        conflicts: [{
+          code: "conflicting_current_terms",
+          current: [current],
+          proposed: [],
+        }],
+      },
+    },
+    "card-1",
+  );
+
+  assert(
+    decisions.length === 1 &&
+      decisions[0].action === "reject" &&
+      decisions[0].benefit_id === liveBenefitId &&
+      !Object.hasOwn(decisions[0], "proposal_index") &&
+      !Object.hasOwn(decisions[0], "canonical_envelope"),
+    "conflict-current reject did not preserve the SQL audit-only wire shape",
+  );
+});
+
+Deno.test("v5 conflict-current rejection keeps rollback wire parity", async () => {
+  const [proposal] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 10% cashback on dining spends.",
+    contentHash: "a".repeat(64),
+  }], "benefits-v5");
+  assert(proposal, "v5 conflict-current fixture did not extract");
+  const liveBenefitId = "11111111-1111-4111-8111-111111111111";
+  const current = { ...proposal, liveBenefitId };
+  const extraction = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v5",
+    proposals: [proposal],
+    diff: {
+      conflicts: [{
+        code: "conflicting_current_terms",
+        current: [current],
+        proposed: [],
+      }],
+    },
+  };
+  let unresolved: unknown;
+  try {
+    await validateV5ApprovalDecisions(
+      [{ action: "approve", benefit: proposal }],
+      extraction,
+      "card-1",
+    );
+  } catch (caught) {
+    unresolved = caught;
+  }
+  assert(
+    unresolved instanceof Error &&
+      (unresolved as { code?: string }).code ===
+        "conflicting_proposal_decisions",
+    "v5 current-only conflict completed without one explicit current resolution",
+  );
+  const decisions = await validateV5ApprovalDecisions(
+    [{ action: "reject", benefit_id: liveBenefitId, current }],
+    extraction,
+    "card-1",
+  );
+  assert(
+    decisions.length === 1 && decisions[0].benefit_id === liveBenefitId &&
+      !Object.hasOwn(decisions[0], "proposal_index"),
+    "v5 conflict-current target drifted from v6 SQL wire",
   );
 });
 

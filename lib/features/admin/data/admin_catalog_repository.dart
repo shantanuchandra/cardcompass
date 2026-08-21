@@ -137,13 +137,12 @@ class AdminCatalogRepository implements BenefitEnrichmentRepository {
     BenefitEnrichmentReview item,
     List<BenefitReviewDecision> decisions,
   ) async {
-    if (item.hasConflicts &&
-        (decisions.length != 1 || decisions.single.action != 'edit')) {
-      throw AdminCatalogRequestFailed(
-        'A conflicting proposal requires exactly one explicit edit.',
-      );
+    var submitted = decisions;
+    if (item.hasConflicts) {
+      _validateConflictResolutions(item, decisions);
+      submitted = [..._derivedDecisionsForDiff(item), ...decisions];
     }
-    await _mutate('benefit-edit-approve', item, decisions: decisions);
+    await _mutate('benefit-edit-approve', item, decisions: submitted);
   }
 
   @override
@@ -234,6 +233,12 @@ class AdminCatalogRepository implements BenefitEnrichmentRepository {
 
   List<BenefitReviewDecision> _decisionsFor(BenefitEnrichmentReview item) {
     if (item.staging.decisions.isNotEmpty) return item.staging.decisions;
+    return _derivedDecisionsForDiff(item);
+  }
+
+  List<BenefitReviewDecision> _derivedDecisionsForDiff(
+    BenefitEnrichmentReview item,
+  ) {
     final diff = item.staging.extractedData.diff;
     return [
       ...diff.additions.map(
@@ -274,6 +279,110 @@ class AdminCatalogRepository implements BenefitEnrichmentRepository {
         ),
       ),
     ];
+  }
+
+  void _validateConflictResolutions(
+    BenefitEnrichmentReview item,
+    List<BenefitReviewDecision> decisions,
+  ) {
+    final conflicts = item.staging.extractedData.diff.conflicts;
+    String? proposalKey(BenefitProposal? proposal) =>
+        proposal?.benefitId ?? proposal?.dedupeKey;
+    String? targetKey(BenefitReviewDecision decision) {
+      switch (decision.action.toLowerCase()) {
+        case 'approve':
+          if (decision.editedBenefit != null || decision.current != null) {
+            return null;
+          }
+          return proposalKey(decision.benefit ?? decision.proposed);
+        case 'edit':
+          if (decision.editedBenefit == null || decision.current != null) {
+            return null;
+          }
+          final editedKey = proposalKey(decision.editedBenefit);
+          final stagedKey = proposalKey(decision.benefit ?? decision.proposed);
+          return editedKey != null && editedKey == stagedKey ? editedKey : null;
+        case 'reject':
+          if (decision.current != null ||
+              decision.liveBenefitId != null ||
+              decision.editedBenefit != null ||
+              decision.proposed != null) {
+            return null;
+          }
+          return proposalKey(decision.benefit);
+        default:
+          return null;
+      }
+    }
+
+    String? currentRejectKey(BenefitReviewDecision decision) {
+      if (decision.action.toLowerCase() != 'reject' ||
+          decision.benefit != null ||
+          decision.proposed != null ||
+          decision.editedBenefit != null ||
+          decision.current == null ||
+          decision.liveBenefitId == null ||
+          decision.liveBenefitId != decision.current!.liveBenefitId) {
+        return null;
+      }
+      return decision.liveBenefitId;
+    }
+
+    final keysByGroup = conflicts
+        .map(
+          (conflict) =>
+              conflict.proposed.map(proposalKey).whereType<String>().toSet(),
+        )
+        .toList(growable: false);
+    final decisionKeys = decisions.map(targetKey).toList(growable: false);
+    final currentKeysByGroup = conflicts
+        .map(
+          (conflict) => conflict.current
+              .map((current) => current.liveBenefitId)
+              .whereType<String>()
+              .toSet(),
+        )
+        .toList(growable: false);
+    final currentDecisionKeys = decisions
+        .map(currentRejectKey)
+        .toList(growable: false);
+    final complete = List.generate(conflicts.length, (group) {
+      final proposalKeys = keysByGroup[group];
+      if (proposalKeys.isNotEmpty) {
+        return decisionKeys.where(proposalKeys.contains).length == 1;
+      }
+      final currentKeys = currentKeysByGroup[group];
+      return currentKeys.isNotEmpty &&
+          currentDecisionKeys.where(currentKeys.contains).length == 1;
+    }).every((resolved) => resolved);
+    final everyDecisionIsScoped = List.generate(decisions.length, (index) {
+      final proposalKey = decisionKeys[index];
+      final currentKey = currentDecisionKeys[index];
+      final proposalGroups = proposalKey == null
+          ? 0
+          : keysByGroup.where((keys) => keys.contains(proposalKey)).length;
+      final currentGroups = currentKey == null
+          ? 0
+          : currentKeysByGroup
+                .where((keys) => keys.contains(currentKey))
+                .length;
+      return proposalGroups + currentGroups == 1;
+    }).every((scoped) => scoped);
+    final submittedCurrentKeys = currentDecisionKeys.whereType<String>().toList(
+      growable: false,
+    );
+    final proposedConflictCount = keysByGroup
+        .where((keys) => keys.isNotEmpty)
+        .length;
+    if (!complete ||
+        !everyDecisionIsScoped ||
+        submittedCurrentKeys.toSet().length != submittedCurrentKeys.length ||
+        decisions.length !=
+            proposedConflictCount + submittedCurrentKeys.length) {
+      throw AdminCatalogRequestFailed(
+        'Resolve every conflict with exactly one unchanged selection, edit, or targeted rejection.',
+      );
+    }
   }
 
   Future<JsonMap> _request(Map<String, dynamic> body) async {

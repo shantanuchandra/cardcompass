@@ -481,6 +481,15 @@ class BenefitEnrichmentReview {
       return matches.single;
     }
 
+    _V6CanonicalDecisionTarget canonicalTargetForProposalIndex(int? index) {
+      if (index == null ||
+          index < 0 ||
+          index >= staging.extractedData.proposals.length) {
+        throw const FormatException('Malformed v6 decision identity.');
+      }
+      return exactCanonicalTarget(staging.extractedData.proposals[index]);
+    }
+
     _V6CurrentDecisionTarget exactCurrentTarget(BenefitProposal current) {
       if (!validCurrentProposal(current)) {
         throw const FormatException('Malformed v6 decision identity.');
@@ -559,7 +568,9 @@ class BenefitEnrichmentReview {
     final seenDecisionIdentities = <String>{};
     for (final decision in staging.decisions) {
       if (invalidOptionalUuid(decision.liveBenefitId) ||
-          invalidOptionalUuid(decision.existingBenefitId)) {
+          invalidOptionalUuid(decision.existingBenefitId) ||
+          (decision.conditionHash != null &&
+              !digest.hasMatch(decision.conditionHash!))) {
         throw const FormatException('Malformed v6 decision identity.');
       }
       final action = decision.action.toLowerCase();
@@ -570,9 +581,11 @@ class BenefitEnrichmentReview {
         if (!publishedDecisionLane && primary == null) {
           throw const FormatException('Malformed v6 decision identity.');
         }
-        final target = primary == null
-            ? canonicalTargetForKey(decision.dedupeKey)
-            : exactCanonicalTarget(primary);
+        final target = primary != null
+            ? exactCanonicalTarget(primary)
+            : decision.proposalIndex != null
+            ? canonicalTargetForProposalIndex(decision.proposalIndex)
+            : canonicalTargetForKey(decision.dedupeKey);
         for (final proposal in [decision.benefit, decision.proposed]) {
           if (proposal != null) requireCanonicalTarget(target, proposal);
         }
@@ -596,6 +609,13 @@ class BenefitEnrichmentReview {
             decision.dedupeKey != target.proposal.dedupeKey) {
           throw const FormatException('Malformed v6 decision identity.');
         }
+        if (decision.conditionHash != null &&
+            decision.conditionHash != target.proposal.conditionHash) {
+          throw const FormatException('Malformed v6 decision identity.');
+        }
+        if (!publishedDecisionLane && decision.proposalIndex != null) {
+          throw const FormatException('Malformed v6 decision identity.');
+        }
         if (decision.existingBenefitId != null &&
             decision.existingBenefitId != target.current?.liveBenefitId) {
           throw const FormatException('Malformed v6 decision identity.');
@@ -614,7 +634,10 @@ class BenefitEnrichmentReview {
         }
         decisionIdentity = 'proposal:${target.proposal.benefitId}';
       } else if (action == 'keep_existing' || action == 'retire') {
-        if (decision.proposed != null || decision.editedBenefit != null) {
+        if (decision.proposed != null ||
+            decision.editedBenefit != null ||
+            decision.proposalIndex != null ||
+            decision.conditionHash != null) {
           throw const FormatException('Malformed v6 decision identity.');
         }
         final submittedCurrent = decision.benefit ?? decision.current;
@@ -674,6 +697,15 @@ class BenefitEnrichmentReview {
           currentTarget = target;
         }
 
+        if (decision.proposalIndex != null) {
+          if (!publishedDecisionLane) {
+            throw const FormatException('Malformed v6 decision identity.');
+          }
+          canonicalTarget = canonicalTargetForProposalIndex(
+            decision.proposalIndex,
+          );
+        }
+
         if (decision.benefit != null) {
           if (decision.benefit!.liveBenefitId != null) {
             bindCurrent(decision.benefit!);
@@ -708,6 +740,10 @@ class BenefitEnrichmentReview {
           if (expectedDedupe == null || decision.dedupeKey != expectedDedupe) {
             throw const FormatException('Malformed v6 decision identity.');
           }
+        }
+        if (decision.conditionHash != null &&
+            decision.conditionHash != canonicalTarget?.proposal.conditionHash) {
+          throw const FormatException('Malformed v6 decision identity.');
         }
         if (canonicalTarget != null && currentTarget != null) {
           final linkedLiveId = canonicalTarget!.current?.liveBenefitId;
@@ -825,6 +861,7 @@ class BenefitExtraction {
     this.parserVersion,
     this.retrievedAt,
     this.crawl = const BenefitCrawlObservation(),
+    this.proposals = const [],
     this.diff = const BenefitDiff(),
   });
 
@@ -832,12 +869,16 @@ class BenefitExtraction {
     parserVersion: _text(json['parser_version']),
     retrievedAt: _text(json['retrieved_at']),
     crawl: BenefitCrawlObservation.fromJson(_map(json['crawl_observation'])),
+    proposals: _maps(
+      json['proposals'],
+    ).map(BenefitProposal.fromJson).toList(growable: false),
     diff: BenefitDiff.fromJson(_map(json['diff'])),
   );
 
   final String? parserVersion;
   final String? retrievedAt;
   final BenefitCrawlObservation crawl;
+  final List<BenefitProposal> proposals;
   final BenefitDiff diff;
 }
 
@@ -1279,6 +1320,8 @@ class BenefitReviewDecision {
     required this.action,
     this.reason,
     this.changeType,
+    this.proposalIndex,
+    this.conditionHash,
     this.liveBenefitId,
     this.existingBenefitId,
     this.dedupeKey,
@@ -1293,6 +1336,8 @@ class BenefitReviewDecision {
     action: _text(json['action']) ?? '',
     reason: _text(json['reason']),
     changeType: _text(json['change_type'] ?? json['changeType']),
+    proposalIndex: (json['proposal_index'] as num?)?.toInt(),
+    conditionHash: _text(json['condition_hash'] ?? json['conditionHash']),
     liveBenefitId: _text(json['benefit_id'] ?? json['current_benefit_id']),
     existingBenefitId: _text(json['existing_benefit_id']),
     dedupeKey: _text(json['dedupe_key'] ?? json['dedupeKey']),
@@ -1308,6 +1353,8 @@ class BenefitReviewDecision {
   final String action;
   final String? reason;
   final String? changeType;
+  final int? proposalIndex;
+  final String? conditionHash;
   final String? liveBenefitId;
   final String? existingBenefitId;
   final String? dedupeKey;
@@ -1323,6 +1370,8 @@ class BenefitReviewDecision {
         action: 'edit',
         reason: reason,
         changeType: changeType,
+        proposalIndex: proposalIndex,
+        conditionHash: conditionHash,
         liveBenefitId: liveBenefitId,
         existingBenefitId: existingBenefitId,
         dedupeKey: dedupeKey,
@@ -1375,7 +1424,9 @@ class BenefitReviewDecision {
       }
       if (liveBenefitId != null ||
           existingBenefitId != null ||
-          dedupeKey != null) {
+          dedupeKey != null ||
+          proposalIndex != null ||
+          conditionHash != null) {
         throw StateError('Global reject decisions cannot carry a target.');
       }
       return {'action': action, if (reason != null) 'reason': reason};

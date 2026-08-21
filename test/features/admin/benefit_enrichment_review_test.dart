@@ -467,6 +467,48 @@ Map<String, dynamic> _v6PublishedDecisionLaneFixture() {
   };
 }
 
+Map<String, dynamic> _legacyConflictJobJson(int groupCount) => {
+  ..._jobJson,
+  'staging': {
+    ...(_jobJson['staging'] as Map<String, dynamic>),
+    'benefit_decisions': const [],
+    'extracted_data': {
+      'parser_version': 'benefits-v1',
+      'diff': {
+        'additions': [
+          {'dedupeKey': 'safe-addition', 'title': 'Safe addition'},
+        ],
+        'conflicts': List.generate(
+          groupCount,
+          (group) => {
+            'code': 'conflicting_proposed_terms_$group',
+            'current': [
+              {
+                'liveBenefitId':
+                    '00000000-0000-4000-8000-${(group + 1).toString().padLeft(12, '0')}',
+                'dedupeKey': 'current-$group',
+                'title': 'Current $group',
+              },
+            ],
+            'proposed': [
+              {
+                'dedupeKey': 'candidate-$group-a',
+                'title': 'Candidate $group A',
+                'description': 'First terms for group $group',
+              },
+              {
+                'dedupeKey': 'candidate-$group-b',
+                'title': 'Candidate $group B',
+                'description': 'Second terms for group $group',
+              },
+            ],
+          },
+        ),
+      },
+    },
+  },
+};
+
 List<Map<String, dynamic>> _invalidV6DecisionRows() {
   final valid = _v6DecisionLaneFixture();
   final staging = valid['staging'] as Map<String, dynamic>;
@@ -624,6 +666,7 @@ class _FakeRepository implements BenefitEnrichmentRepository {
   final BenefitEnrichmentReviewPage page;
   final Object? error;
   final actions = <String>[];
+  List<BenefitReviewDecision>? submittedDecisions;
   String? retirementReason;
   String? retiredBenefitId;
 
@@ -645,7 +688,10 @@ class _FakeRepository implements BenefitEnrichmentRepository {
   Future<void> editApprove(
     BenefitEnrichmentReview item,
     List<BenefitReviewDecision> decisions,
-  ) async => actions.add('edit-approve');
+  ) async {
+    submittedDecisions = decisions;
+    actions.add('edit-approve');
+  }
 
   @override
   Future<void> reject(BenefitEnrichmentReview item, String reason) async =>
@@ -1247,6 +1293,57 @@ void main() {
   );
 
   test(
+    'terminal SQL-shaped canonical current and global reject audits remain readable',
+    () {
+      final row = _v6DecisionLaneFixture();
+      final staging = row['staging'] as Map<String, dynamic>;
+      final extraction = staging['extracted_data'] as Map<String, dynamic>;
+      final diff = extraction['diff'] as Map<String, dynamic>;
+      final proposal = Map<String, dynamic>.from(
+        (diff['additions'] as List).first as Map,
+      );
+
+      final review = BenefitEnrichmentReview.fromJson({
+        ...row,
+        'status': 'completed',
+        'staging': {
+          ...staging,
+          'status': 'rejected',
+          'extracted_data': {
+            ...extraction,
+            'proposals': [proposal],
+          },
+          'benefit_decisions': [
+            {
+              'action': 'reject',
+              'proposal_index': 0,
+              'dedupe_key': proposal['dedupeKey'],
+              'condition_hash': proposal['conditionHash'],
+              'reason': 'Canonical alternative rejected',
+            },
+            {
+              'action': 'reject',
+              'benefit_id': _v6LiveModificationId,
+              'reason': 'Current conflict row rejected',
+            },
+            {'action': 'reject', 'reason': 'Whole review rejected'},
+          ],
+        },
+      });
+
+      expect(review.staging.decisions, hasLength(3));
+      expect(review.staging.decisions[0].proposalIndex, 0);
+      expect(
+        review.staging.decisions[0].conditionHash,
+        proposal['conditionHash'],
+      );
+      expect(review.staging.decisions[0].dedupeKey, proposal['dedupeKey']);
+      expect(review.staging.decisions[1].liveBenefitId, _v6LiveModificationId);
+      expect(review.staging.decisions[2].dedupeKey, isNull);
+    },
+  );
+
+  test(
     'reject decisions serialize canonical current and global targets distinctly',
     () {
       final canonical = BenefitProposal(
@@ -1288,6 +1385,20 @@ void main() {
         () => BenefitReviewDecision(
           action: 'reject',
           proposed: canonical,
+        ).toJson(),
+        throwsStateError,
+      );
+      expect(
+        () => const BenefitReviewDecision(
+          action: 'reject',
+          proposalIndex: 0,
+        ).toJson(),
+        throwsStateError,
+      );
+      expect(
+        () => BenefitReviewDecision(
+          action: 'reject',
+          conditionHash: 'd' * 64,
         ).toJson(),
         throwsStateError,
       );
@@ -2039,6 +2150,127 @@ void main() {
     },
   );
 
+  test(
+    'repository requires one exact resolution per conflict and preserves safe lanes',
+    () async {
+      final item = BenefitEnrichmentReview.fromJson(_legacyConflictJobJson(2));
+      final conflicts = item.staging.extractedData.diff.conflicts;
+
+      Future<void> expectRejected(List<BenefitReviewDecision> decisions) async {
+        final api = _FakeApi(
+          AdminCatalogEntryResponse(200, const {'success': true}),
+        );
+        await expectLater(
+          AdminCatalogRepository(api).editApprove(item, decisions),
+          throwsA(isA<AdminCatalogRequestFailed>()),
+        );
+        expect(api.bodies, isEmpty);
+      }
+
+      await expectRejected([
+        BenefitReviewDecision(
+          action: 'approve',
+          benefit: conflicts[0].proposed[0],
+        ),
+      ]);
+      await expectRejected([
+        BenefitReviewDecision(
+          action: 'approve',
+          benefit: conflicts[0].proposed[0],
+        ),
+        BenefitReviewDecision(
+          action: 'approve',
+          benefit: conflicts[0].proposed[1],
+        ),
+        BenefitReviewDecision(
+          action: 'reject',
+          benefit: conflicts[1].proposed[0],
+        ),
+      ]);
+
+      final api = _FakeApi(
+        AdminCatalogEntryResponse(200, const {'success': true}),
+      );
+      await AdminCatalogRepository(api).editApprove(item, [
+        BenefitReviewDecision(
+          action: 'approve',
+          benefit: conflicts[0].proposed[1],
+        ),
+        BenefitReviewDecision(
+          action: 'reject',
+          reason: 'Issuer terms do not support this alternative',
+          benefit: conflicts[1].proposed[0],
+        ),
+        BenefitReviewDecision(
+          action: 'reject',
+          reason: 'Current conflict row is superseded',
+          liveBenefitId: conflicts[1].current.single.liveBenefitId,
+          current: conflicts[1].current.single,
+        ),
+      ]);
+
+      final body = api.bodies.single;
+      expect(body['action'], 'benefit-edit-approve');
+      final decisions = body['decisions'] as List;
+      expect(decisions, hasLength(4));
+      expect(decisions[0], containsPair('dedupe_key', 'safe-addition'));
+      expect(decisions[1], containsPair('action', 'approve'));
+      expect(decisions[1], containsPair('benefit', isA<Map>()));
+      expect(decisions[2], containsPair('action', 'reject'));
+      expect(decisions[2], containsPair('benefit', isA<Map>()));
+      expect(decisions[3], containsPair('action', 'reject'));
+      expect(
+        decisions[3],
+        containsPair('benefit_id', conflicts[1].current.single.liveBenefitId),
+      );
+      expect(decisions[3], containsPair('current', isA<Map>()));
+
+      final currentOnlyJson = _legacyConflictJobJson(1);
+      final currentOnlyStaging =
+          currentOnlyJson['staging'] as Map<String, dynamic>;
+      final currentOnlyExtraction =
+          currentOnlyStaging['extracted_data'] as Map<String, dynamic>;
+      final currentOnlyDiff =
+          currentOnlyExtraction['diff'] as Map<String, dynamic>;
+      final currentOnlyConflict =
+          (currentOnlyDiff['conflicts'] as List).single as Map<String, dynamic>;
+      currentOnlyConflict['proposed'] = <dynamic>[];
+      final currentOnlyItem = BenefitEnrichmentReview.fromJson(currentOnlyJson);
+      final currentOnly = currentOnlyItem
+          .staging
+          .extractedData
+          .diff
+          .conflicts
+          .single
+          .current
+          .single;
+      final currentOnlyApi = _FakeApi(
+        AdminCatalogEntryResponse(200, const {'success': true}),
+      );
+      await AdminCatalogRepository(
+        currentOnlyApi,
+      ).editApprove(currentOnlyItem, [
+        BenefitReviewDecision(
+          action: 'reject',
+          reason: 'Current terms conflict with issuer evidence',
+          liveBenefitId: currentOnly.liveBenefitId,
+          current: currentOnly,
+        ),
+      ]);
+      final currentOnlyDecisions =
+          currentOnlyApi.bodies.single['decisions'] as List;
+      expect(currentOnlyDecisions, hasLength(2));
+      expect(
+        currentOnlyDecisions.first,
+        containsPair('dedupe_key', 'safe-addition'),
+      );
+      expect(
+        currentOnlyDecisions.last,
+        containsPair('benefit_id', currentOnly.liveBenefitId),
+      );
+    },
+  );
+
   test('repository submits exact v6 retirement and edit identifiers', () async {
     final api = _FakeApi(
       AdminCatalogEntryResponse(200, const {'success': true}),
@@ -2185,13 +2417,154 @@ void main() {
     expect(
       tester
           .widget<OutlinedButton>(
-            find.widgetWithText(OutlinedButton, 'Edit proposed changes'),
+            find.widgetWithText(OutlinedButton, 'Resolve conflicts'),
           )
           .onPressed,
       isNotNull,
     );
     expect(repository.actions, isEmpty);
   });
+
+  testWidgets(
+    'conflict resolver submits unchanged edit and targeted reject across every group',
+    (tester) async {
+      tester.view.physicalSize = const Size(1000, 1800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final item = BenefitEnrichmentReview.fromJson(_legacyConflictJobJson(3));
+      final repository = _FakeRepository(
+        BenefitEnrichmentReviewPage.fromJson(const {
+          'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+          'page': 1,
+          'limit': 25,
+          'has_more': false,
+        }).copyWith(items: [item]),
+      );
+      await _pumpPanel(tester, repository);
+
+      final resolveFinder = find.text('Resolve conflicts');
+      await tester.tap(resolveFinder);
+      await tester.pumpAndSettle();
+
+      final submitFinder = find.widgetWithText(
+        FilledButton,
+        'Submit conflict resolutions',
+      );
+      expect(tester.widget<FilledButton>(submitFinder).onPressed, isNull);
+
+      Future<void> select(int group, String label) async {
+        final dropdown = find.byKey(ValueKey('conflict-resolution-$group'));
+        await tester.ensureVisible(dropdown);
+        await tester.tap(dropdown);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(label).last);
+        await tester.pumpAndSettle();
+      }
+
+      await select(0, 'Approve unchanged — Candidate 0 B');
+      await select(1, 'Edit — Candidate 1 A');
+      await tester.enterText(
+        find.byKey(const ValueKey('conflict-title-1')),
+        'Reviewed candidate 1',
+      );
+      await select(2, 'Reject alternative — Candidate 2 B');
+      await tester.enterText(
+        find.byKey(const ValueKey('conflict-reason-2')),
+        'Contradicted by issuer terms',
+      );
+      final currentReject = find.byKey(
+        const ValueKey('conflict-current-reject-1-0'),
+      );
+      await tester.ensureVisible(currentReject);
+      await tester.tap(currentReject);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('conflict-current-reason-1-0')),
+        'Current conflict row is superseded',
+      );
+      await tester.pump();
+
+      await tester.ensureVisible(submitFinder);
+      expect(tester.widget<FilledButton>(submitFinder).onPressed, isNotNull);
+      await tester.tap(submitFinder);
+      await tester.pumpAndSettle();
+
+      expect(repository.actions, ['edit-approve']);
+      final decisions = repository.submittedDecisions!;
+      expect(decisions, hasLength(4));
+      expect(decisions[0].action, 'approve');
+      expect(decisions[0].benefit?.dedupeKey, 'candidate-0-b');
+      expect(decisions[0].editedBenefit, isNull);
+      expect(decisions[1].action, 'edit');
+      expect(decisions[1].benefit?.dedupeKey, 'candidate-1-a');
+      expect(decisions[1].editedBenefit?.title, 'Reviewed candidate 1');
+      expect(decisions[2].action, 'reject');
+      expect(decisions[2].benefit?.dedupeKey, 'candidate-2-b');
+      expect(decisions[2].reason, 'Contradicted by issuer terms');
+      expect(decisions[3].action, 'reject');
+      expect(decisions[3].current?.dedupeKey, 'current-1');
+      expect(
+        decisions[3].liveBenefitId,
+        '00000000-0000-4000-8000-000000000002',
+      );
+    },
+  );
+
+  testWidgets(
+    'current-only conflict requires and submits one exact current rejection',
+    (tester) async {
+      tester.view.physicalSize = const Size(1000, 1200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final json = _legacyConflictJobJson(1);
+      final staging = json['staging'] as Map<String, dynamic>;
+      final extraction = staging['extracted_data'] as Map<String, dynamic>;
+      final diff = extraction['diff'] as Map<String, dynamic>;
+      final conflict =
+          (diff['conflicts'] as List).single as Map<String, dynamic>;
+      conflict['proposed'] = <dynamic>[];
+      final item = BenefitEnrichmentReview.fromJson(json);
+      final repository = _FakeRepository(
+        BenefitEnrichmentReviewPage.fromJson(const {
+          'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+          'page': 1,
+          'limit': 25,
+          'has_more': false,
+        }).copyWith(items: [item]),
+      );
+      await _pumpPanel(tester, repository);
+
+      await tester.tap(find.text('Resolve conflicts'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('conflict-resolution-0')), findsNothing);
+
+      await tester.tap(
+        find.byKey(const ValueKey('conflict-current-reject-0-0')),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('conflict-current-reason-0-0')),
+        'Current terms are contradicted',
+      );
+      await tester.pump();
+      final submit = find.widgetWithText(
+        FilledButton,
+        'Submit conflict resolutions',
+      );
+      expect(tester.widget<FilledButton>(submit).onPressed, isNotNull);
+      await tester.tap(submit);
+      await tester.pumpAndSettle();
+
+      expect(repository.submittedDecisions, hasLength(1));
+      expect(repository.submittedDecisions!.single.action, 'reject');
+      expect(
+        repository.submittedDecisions!.single.current?.dedupeKey,
+        'current-0',
+      );
+    },
+  );
 
   testWidgets(
     'v6 panel shows completeness attempts identity migration and eligible retirement',

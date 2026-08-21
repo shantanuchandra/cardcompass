@@ -245,6 +245,18 @@ class _BenefitEnrichmentReviewPanelState
     }
   }
 
+  Future<void> _resolveConflicts(BenefitEnrichmentReview item) async {
+    final decisions = await showDialog<List<BenefitReviewDecision>>(
+      context: context,
+      builder: (context) => _ConflictResolutionDialog(
+        conflicts: item.staging.extractedData.diff.conflicts,
+      ),
+    );
+    if (decisions != null) {
+      await _run(() => widget.repository.editApprove(item, decisions));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<BenefitEnrichmentReviewPage>(
@@ -313,7 +325,9 @@ class _BenefitEnrichmentReviewPanelState
                             }
                           : null,
                       onEdit: !_mutating && item.canReview
-                          ? () => _edit(item)
+                          ? () => item.hasConflicts
+                                ? _resolveConflicts(item)
+                                : _edit(item)
                           : null,
                       onReject: !_mutating && item.canReview
                           ? () async {
@@ -404,6 +418,339 @@ class _BenefitEnrichmentReviewPanelState
       },
     );
   }
+}
+
+enum _ConflictAction { approve, edit, reject }
+
+class _ConflictChoice {
+  const _ConflictChoice(this.action, this.proposalIndex);
+
+  final _ConflictAction action;
+  final int proposalIndex;
+}
+
+class _ConflictResolutionDialog extends StatefulWidget {
+  const _ConflictResolutionDialog({required this.conflicts});
+
+  final List<BenefitConflict> conflicts;
+
+  @override
+  State<_ConflictResolutionDialog> createState() =>
+      _ConflictResolutionDialogState();
+}
+
+class _ConflictResolutionDialogState extends State<_ConflictResolutionDialog> {
+  final _choices = <int, _ConflictChoice>{};
+  final _titles = <int, TextEditingController>{};
+  final _descriptions = <int, TextEditingController>{};
+  final _reasons = <int, TextEditingController>{};
+  final _rejectedCurrent = <String>{};
+  final _currentReasons = <String, TextEditingController>{};
+
+  @override
+  void dispose() {
+    for (final controller in [
+      ..._titles.values,
+      ..._descriptions.values,
+      ..._reasons.values,
+      ..._currentReasons.values,
+    ]) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  String _label(_ConflictAction action, BenefitProposal proposal) =>
+      switch (action) {
+        _ConflictAction.approve => 'Approve unchanged — ${proposal.label}',
+        _ConflictAction.edit => 'Edit — ${proposal.label}',
+        _ConflictAction.reject => 'Reject alternative — ${proposal.label}',
+      };
+
+  void _select(int group, String? encoded) {
+    if (encoded == null) return;
+    final parts = encoded.split(':');
+    final action = _ConflictAction.values.byName(parts.first);
+    final proposalIndex = int.parse(parts.last);
+    final proposal = widget.conflicts[group].proposed[proposalIndex];
+    final previous = _choices[group];
+    setState(() {
+      _choices[group] = _ConflictChoice(action, proposalIndex);
+      if (action == _ConflictAction.edit) {
+        final title = _titles.putIfAbsent(
+          group,
+          () => TextEditingController(text: proposal.title),
+        );
+        final description = _descriptions.putIfAbsent(
+          group,
+          () => TextEditingController(text: proposal.description),
+        );
+        if (previous?.action != action ||
+            previous?.proposalIndex != proposalIndex) {
+          title.text = proposal.title ?? '';
+          description.text = proposal.description ?? '';
+        }
+      }
+      if (action == _ConflictAction.reject) {
+        final reason = _reasons.putIfAbsent(group, TextEditingController.new);
+        if (previous?.action != action ||
+            previous?.proposalIndex != proposalIndex) {
+          reason.clear();
+        }
+      }
+    });
+  }
+
+  bool get _complete {
+    for (var group = 0; group < widget.conflicts.length; group += 1) {
+      final conflict = widget.conflicts[group];
+      if (conflict.proposed.isEmpty) {
+        final prefix = '$group:';
+        if (_rejectedCurrent.where((key) => key.startsWith(prefix)).length !=
+            1) {
+          return false;
+        }
+        continue;
+      }
+      final choice = _choices[group];
+      if (choice == null) return false;
+      if (choice.action == _ConflictAction.edit &&
+          (_titles[group]?.text.trim().length ?? 0) < 2) {
+        return false;
+      }
+      if (choice.action == _ConflictAction.reject &&
+          (_reasons[group]?.text.trim().length ?? 0) < 3) {
+        return false;
+      }
+    }
+    for (final key in _rejectedCurrent) {
+      if ((_currentReasons[key]?.text.trim().length ?? 0) < 3) return false;
+    }
+    return true;
+  }
+
+  List<BenefitReviewDecision> _decisions() {
+    final decisions = <BenefitReviewDecision>[];
+    for (var group = 0; group < widget.conflicts.length; group += 1) {
+      final choice = _choices[group];
+      if (choice == null) continue;
+      final proposal = widget.conflicts[group].proposed[choice.proposalIndex];
+      decisions.add(switch (choice.action) {
+        _ConflictAction.approve => BenefitReviewDecision(
+          action: 'approve',
+          dedupeKey: proposal.dedupeKey,
+          benefit: proposal,
+        ),
+        _ConflictAction.edit => BenefitReviewDecision(
+          action: 'edit',
+          dedupeKey: proposal.dedupeKey,
+          benefit: proposal,
+          proposed: proposal,
+          editedBenefit: proposal.copyWith(
+            title: _titles[group]!.text.trim(),
+            description: _descriptions[group]!.text.trim(),
+          ),
+        ),
+        _ConflictAction.reject => BenefitReviewDecision(
+          action: 'reject',
+          reason: _reasons[group]!.text.trim(),
+          dedupeKey: proposal.dedupeKey,
+          benefit: proposal,
+        ),
+      });
+    }
+    for (var group = 0; group < widget.conflicts.length; group += 1) {
+      for (
+        var currentIndex = 0;
+        currentIndex < widget.conflicts[group].current.length;
+        currentIndex += 1
+      ) {
+        final key = '$group:$currentIndex';
+        if (!_rejectedCurrent.contains(key)) continue;
+        final current = widget.conflicts[group].current[currentIndex];
+        decisions.add(
+          BenefitReviewDecision(
+            action: 'reject',
+            reason: _currentReasons[key]!.text.trim(),
+            liveBenefitId: current.liveBenefitId,
+            dedupeKey: current.dedupeKey,
+            current: current,
+          ),
+        );
+      }
+    }
+    return decisions;
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Resolve benefit conflicts'),
+    content: SizedBox(
+      width: 560,
+      height: 480,
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Choose exactly one outcome for every conflict. Selecting an unchanged proposal publishes its exact staged terms.',
+            ),
+            const SizedBox(height: 12),
+            for (var group = 0; group < widget.conflicts.length; group += 1)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Conflict ${group + 1}: ${widget.conflicts[group].code ?? 'Unspecified conflict'}',
+                    ),
+                    if (widget.conflicts[group].proposed.isNotEmpty)
+                      DropdownButtonFormField<String>(
+                        key: ValueKey('conflict-resolution-$group'),
+                        initialValue: _choices[group] == null
+                            ? null
+                            : '${_choices[group]!.action.name}:${_choices[group]!.proposalIndex}',
+                        decoration: const InputDecoration(
+                          labelText: 'Required resolution',
+                        ),
+                        items: [
+                          for (
+                            var proposalIndex = 0;
+                            proposalIndex <
+                                widget.conflicts[group].proposed.length;
+                            proposalIndex += 1
+                          )
+                            for (final action in _ConflictAction.values)
+                              DropdownMenuItem(
+                                value: '${action.name}:$proposalIndex',
+                                child: Text(
+                                  _label(
+                                    action,
+                                    widget
+                                        .conflicts[group]
+                                        .proposed[proposalIndex],
+                                  ),
+                                ),
+                              ),
+                        ],
+                        onChanged: (value) => _select(group, value),
+                      )
+                    else
+                      const Padding(
+                        padding: EdgeInsets.only(top: 8),
+                        child: Text(
+                          'Select exactly one current benefit to reject.',
+                        ),
+                      ),
+                    for (
+                      var currentIndex = 0;
+                      currentIndex < widget.conflicts[group].current.length;
+                      currentIndex += 1
+                    ) ...[
+                      Builder(
+                        builder: (context) {
+                          final current =
+                              widget.conflicts[group].current[currentIndex];
+                          final key = '$group:$currentIndex';
+                          return CheckboxListTile(
+                            key: ValueKey(
+                              'conflict-current-reject-$group-$currentIndex',
+                            ),
+                            contentPadding: EdgeInsets.zero,
+                            value: _rejectedCurrent.contains(key),
+                            onChanged: current.liveBenefitId == null
+                                ? null
+                                : (selected) {
+                                    setState(() {
+                                      if (selected == true) {
+                                        if (widget
+                                            .conflicts[group]
+                                            .proposed
+                                            .isEmpty) {
+                                          _rejectedCurrent.removeWhere(
+                                            (candidate) =>
+                                                candidate.startsWith('$group:'),
+                                          );
+                                        }
+                                        _rejectedCurrent.add(key);
+                                        _currentReasons.putIfAbsent(
+                                          key,
+                                          TextEditingController.new,
+                                        );
+                                      } else {
+                                        _rejectedCurrent.remove(key);
+                                      }
+                                    });
+                                  },
+                            title: Text(
+                              '${widget.conflicts[group].proposed.isEmpty ? 'Reject' : 'Also reject'} current — ${current.label}',
+                            ),
+                          );
+                        },
+                      ),
+                      if (_rejectedCurrent.contains('$group:$currentIndex'))
+                        TextField(
+                          key: ValueKey(
+                            'conflict-current-reason-$group-$currentIndex',
+                          ),
+                          controller: _currentReasons['$group:$currentIndex'],
+                          onChanged: (_) => setState(() {}),
+                          decoration: const InputDecoration(
+                            labelText: 'Current-target rejection reason',
+                          ),
+                        ),
+                    ],
+                    if (_choices[group]?.action == _ConflictAction.edit) ...[
+                      const SizedBox(height: 8),
+                      TextField(
+                        key: ValueKey('conflict-title-$group'),
+                        controller: _titles[group],
+                        onChanged: (_) => setState(() {}),
+                        decoration: const InputDecoration(
+                          labelText: 'Benefit title',
+                        ),
+                      ),
+                      TextField(
+                        key: ValueKey('conflict-description-$group'),
+                        controller: _descriptions[group],
+                        onChanged: (_) => setState(() {}),
+                        decoration: const InputDecoration(
+                          labelText: 'Description',
+                        ),
+                      ),
+                    ],
+                    if (_choices[group]?.action == _ConflictAction.reject) ...[
+                      const SizedBox(height: 8),
+                      TextField(
+                        key: ValueKey('conflict-reason-$group'),
+                        controller: _reasons[group],
+                        onChanged: (_) => setState(() {}),
+                        decoration: const InputDecoration(
+                          labelText: 'Targeted rejection reason',
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: _complete
+            ? () => Navigator.pop(context, _decisions())
+            : null,
+        child: const Text('Submit conflict resolutions'),
+      ),
+    ],
+  );
 }
 
 class _ProgressSummary extends StatelessWidget {
@@ -590,7 +937,7 @@ class _BenefitReviewCard extends StatelessWidget {
               const Divider(),
               const Text('Conflicts'),
               Text(
-                'Resolve each conflict with one explicit edit or reject this review. Bulk apply is disabled.',
+                'Resolve each conflict with one unchanged selection, edit, or targeted rejection. Global reject remains separate. Bulk apply is disabled.',
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
               ...diff.conflicts.expand(
@@ -643,7 +990,11 @@ class _BenefitReviewCard extends StatelessWidget {
                 ),
                 OutlinedButton(
                   onPressed: onEdit,
-                  child: const Text('Edit proposed changes'),
+                  child: Text(
+                    item.hasConflicts
+                        ? 'Resolve conflicts'
+                        : 'Edit proposed changes',
+                  ),
                 ),
                 TextButton(
                   onPressed: onReject,

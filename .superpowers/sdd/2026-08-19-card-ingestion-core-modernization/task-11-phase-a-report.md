@@ -57,7 +57,7 @@ remaining Phase-A finding. PostgreSQL apply remains intentionally deferred.
 ## Migration hashes
 
 - `20260819163046_review_card_benefit_enrichment_v2.sql`:
-  `06617a093e94a7fac9bc5f48b8935b4f91ba30370014428b91237586c8698126`
+  `67b26a48faa5cd49daf48e12d920b6b1501dbbf161fadd9b743cb2528b389d92`
 - `20260819205037_recur_card_enrichment_jobs.sql`:
   `6789a78b7e3dff9008623fae2de2a1446ee1369aa2a3c018f8ece3ef6bee3ba2`
 

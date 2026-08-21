@@ -1454,6 +1454,10 @@ BEGIN
           UNION ALL
           SELECT item.value->'benefit'
           FROM jsonb_array_elements(coalesce(staging_row.extracted_data->'diff'->'possibleRemovals', '[]'::jsonb)) AS item(value)
+          UNION ALL
+          SELECT conflict_current.value
+          FROM jsonb_array_elements(coalesce(staging_row.extracted_data->'diff'->'conflicts', '[]'::jsonb)) AS item(value)
+          CROSS JOIN LATERAL jsonb_array_elements(coalesce(item.value->'current', '[]'::jsonb)) AS conflict_current(value)
         ) AS current_benefits
         WHERE current_benefits.benefit->>'liveBenefitId' = existing_benefit_id::text
       ) THEN RAISE EXCEPTION 'existing_mapping_not_found';
@@ -1485,6 +1489,10 @@ BEGIN
             UNION ALL
             SELECT item.value->'benefit'
             FROM jsonb_array_elements(coalesce(staging_row.extracted_data->'diff'->'possibleRemovals', '[]'::jsonb)) AS item(value)
+            UNION ALL
+            SELECT conflict_current.value
+            FROM jsonb_array_elements(coalesce(staging_row.extracted_data->'diff'->'conflicts', '[]'::jsonb)) AS item(value)
+            CROSS JOIN LATERAL jsonb_array_elements(coalesce(item.value->'current', '[]'::jsonb)) AS conflict_current(value)
           ) AS current_benefits
           WHERE current_benefits.benefit->>'liveBenefitId' = existing_benefit_id::text
         ) THEN RAISE EXCEPTION 'existing_mapping_not_found';
