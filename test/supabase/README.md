@@ -137,6 +137,66 @@ If marker ownership is ambiguous, cleanup fails closed. Do not compensate with
 manual broad SQL. Investigate using the captured run ID and remove only IDs
 whose ownership is independently proven.
 
+## Guarded linked database verification
+
+This rollout was verified against only `cardcompass`
+(`prbcoxqobhjnnfnxevxf`). Before any database command, require the linked ref
+and obtain the database password from an untracked secret source. Never put the
+password literal in shell history, a committed file, a process argument, or
+captured output. The sequence below uses a mode-`0600` libpq password file and
+password-free connection arguments.
+
+```bash
+test "$(sed -n '1p' supabase/.temp/project-ref)" = \
+  "prbcoxqobhjnnfnxevxf"
+
+pgpass_file="$(mktemp /tmp/cardcompass-pgpass.XXXXXX)"
+chmod 600 "$pgpass_file"
+trap 'unlink "$pgpass_file"' EXIT
+printf 'CardCompass database password: ' >&2
+IFS= read -r -s SUPABASE_DB_PASSWORD
+printf '\n'
+printf '%s:%s:%s:%s:%s\n' \
+  'aws-1-ap-south-1.pooler.supabase.com' '6543' 'postgres' \
+  'postgres.prbcoxqobhjnnfnxevxf' "$SUPABASE_DB_PASSWORD" > "$pgpass_file"
+unset SUPABASE_DB_PASSWORD
+export PGPASSFILE="$pgpass_file"
+transaction_url="postgresql://postgres.prbcoxqobhjnnfnxevxf@aws-1-ap-south-1.pooler.supabase.com:6543/postgres?sslmode=require&default_query_exec_mode=simple_protocol"
+postgres_url="postgresql://postgres.prbcoxqobhjnnfnxevxf@aws-1-ap-south-1.pooler.supabase.com:6543/postgres?sslmode=require"
+
+supabase migration list --db-url "$transaction_url"
+supabase db push --db-url "$transaction_url" --dry-run
+supabase db lint --db-url "$transaction_url" --level warning
+supabase db advisors --db-url "$transaction_url" \
+  --type security --level warn --fail-on error
+supabase db advisors --db-url "$transaction_url" \
+  --type performance --level warn --fail-on error
+psql "$postgres_url" --set=ON_ERROR_STOP=1 \
+  --file=scripts/audit-card-ingestion.sql
+
+/opt/homebrew/opt/postgresql@17/bin/pg_dump \
+  --dbname="$postgres_url" \
+  --schema=public \
+  --schema-only \
+  --no-owner \
+  --file=schema.sql
+
+unset PGPASSFILE transaction_url postgres_url
+unlink "$pgpass_file"
+trap - EXIT
+```
+
+The `default_query_exec_mode=simple_protocol` parameter is required when the
+CLI uses Supabase's transaction pooler; prepared statements are unsupported on
+that endpoint. It does not change migration semantics. PostgreSQL client 17 is
+required to dump the hosted PostgreSQL 17 schema. Verify the dump contains no
+`COPY`, `INSERT`, connection secret, or customer data before committing it.
+
+For this execution, Docker/local Supabase, database reset, seed, migration
+history repair, broad cleanup, Edge deployment, secret mutation, and workflow
+dispatch are prohibited. A final dry run must report `Remote database is up to
+date`; migration history must have one exact local/remote row per migration.
+
 ## Excluded credentialed Dart tests
 
 The credential-free commands above do not execute the live portions of these

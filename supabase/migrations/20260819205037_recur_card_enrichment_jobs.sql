@@ -2587,6 +2587,11 @@ DECLARE
   selected_parser text := lower(trim(coalesce(_parser_version, '')));
   pilot_count integer;
   promoted_count integer;
+  pilot_card_count integer;
+  pilot_profile_count integer;
+  pilot_issuer_count integer;
+  pilot_profiles text[];
+  pilot_issuer_values_valid boolean;
   all_qualified boolean;
   pilot_card_id uuid;
 BEGIN
@@ -3273,7 +3278,7 @@ REVOKE ALL ON FUNCTION public.card_enrichment_pilot_live_state_snapshot(uuid)
 GRANT EXECUTE ON FUNCTION public.card_enrichment_pilot_live_state_snapshot(uuid)
   TO service_role;
 REVOKE ALL ON FUNCTION public.capture_card_enrichment_pilot_publication_snapshot()
-  FROM PUBLIC, anon, authenticated;
+  FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION public.card_enrichment_enqueue_catalog_eligible(
   uuid, text, text, text, text, text, text, boolean, boolean, boolean
 ) FROM PUBLIC, anon, authenticated;
@@ -3305,7 +3310,7 @@ REVOKE ALL ON FUNCTION public.promote_qualified_card_benefit_enrichment_pilot(te
 GRANT EXECUTE ON FUNCTION public.promote_qualified_card_benefit_enrichment_pilot(text)
   TO service_role;
 REVOKE ALL ON FUNCTION public.schedule_terminal_card_enrichment_observation()
-  FROM PUBLIC, anon, authenticated;
+  FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION public.requeue_due_card_catalog_enrichment_jobs(text, integer, timestamptz)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.requeue_due_card_catalog_enrichment_jobs(text, integer, timestamptz)
@@ -3415,10 +3420,10 @@ BEGIN
      ) IS NOT NULL
      OR public.canonical_card_enrichment_timestamp(
        '2026-02-20T05:30:00.000+05:30'
-     ) IS NOT NULL
+     ) <> '2026-02-20T00:00:00Z'::timestamptz
      OR public.canonical_card_enrichment_timestamp(
        '2026-02-20 00:00:00.000Z'
-     ) IS NOT NULL THEN
+     ) <> '2026-02-20T00:00:00Z'::timestamptz THEN
     RAISE EXCEPTION 'recurrence policy assertion failed';
   END IF;
   PERFORM set_config('TimeZone', previous_timezone, true);
@@ -3976,8 +3981,8 @@ BEGIN
     '2026-09-01T00:00:00Z'::timestamptz
   );
   IF jsonb_array_length(history) <> 24
-     OR history->0->>'observed_at' <> '2026-08-26T00:00:00.000Z'
-     OR history->23->>'observed_at' <> '2026-08-03T00:00:00.000Z'
+     OR history->0->>'observed_at' <> '2026-08-26T00:00:00.000000Z'
+     OR history->23->>'observed_at' <> '2026-08-03T00:00:00.000000Z'
      OR history::text LIKE '%must-not-survive%'
      OR history::text LIKE '%2999-01-01%'
      OR jsonb_array_length(same_time_history) <> 2

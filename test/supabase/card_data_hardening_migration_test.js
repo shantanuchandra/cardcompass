@@ -38,7 +38,9 @@ test('forward migration revokes and removes every PAN or expiry RPC overload bef
 
 test('canonical schema no longer declares PAN or card expiry storage', async () => {
   const schema = await readFile(new URL('schema.sql', repoRoot), 'utf8');
-  const userCards = schema.match(/CREATE TABLE IF NOT EXISTS user_cards\s*\(([\s\S]*?)\n\);/i)?.[1];
+  const userCards = schema.match(
+    /CREATE TABLE (?:IF NOT EXISTS )?(?:public\.)?user_cards\s*\(([\s\S]*?)\n\);/i,
+  )?.[1];
 
   assert.ok(userCards, 'canonical user_cards table is required');
   assert.doesNotMatch(userCards, /\bcard_number\b/i);

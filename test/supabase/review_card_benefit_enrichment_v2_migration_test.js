@@ -233,6 +233,15 @@ test('apply-time array boundary assertions alias generate_series output', async 
   );
 });
 
+test('canonical envelope JSONB key removal is unambiguous on PostgreSQL 17', async () => {
+  const sql = await migrationSql();
+  assert.match(
+    sql,
+    /\(benefit_value->'value_config'\)\s*-\s*'offer_subject'::text\s*-\s*'restrictions'::text\s*-\s*'exclusions'::text/i,
+    'the extracted JSONB value must be parenthesized and every subtraction key explicitly typed as text',
+  );
+});
+
 test('publication inserts immutable canonical rows and scopes every lifecycle mutation to one mapping', async () => {
   const approval = functionBody(
     await migrationSql(),

@@ -1046,7 +1046,7 @@ BEGIN
      OR benefit_value->'value_config'->'restrictions' IS DISTINCT FROM condition_value->'restrictions'
      OR benefit_value->'value_config'->'exclusions' IS DISTINCT FROM condition_value->'exclusions'
      OR benefit_value->'value_config'->'offer_subject' IS DISTINCT FROM condition_value->'semantic_key'
-     OR (benefit_value->'value_config' - 'offer_subject' - 'restrictions' - 'exclusions')
+     OR ((benefit_value->'value_config') - 'offer_subject'::text - 'restrictions'::text - 'exclusions'::text)
         IS DISTINCT FROM condition_value->'value_config' THEN
     RAISE EXCEPTION 'canonical_envelope_terms_mismatch';
   END IF;

@@ -2582,8 +2582,8 @@ BEGIN
     LIMIT 1
     FOR UPDATE;
     IF latest_lifecycle_job_id IS DISTINCT FROM job_row.id
-       OR latest_lifecycle_state IS DISTINCT FROM CASE
-         WHEN _action = 'mark_discontinued' THEN 'discontinued' ELSE 'active' END THEN
+       OR latest_lifecycle_state IS DISTINCT FROM (CASE
+         WHEN _action = 'mark_discontinued' THEN 'discontinued' ELSE 'active' END) THEN
       RAISE EXCEPTION 'stale_catalog_lifecycle_review';
     END IF;
   END IF;
@@ -3142,8 +3142,14 @@ BEGIN
   ) INTO stage_definition;
   stage_lock := strpos(stage_definition, 'card_catalog_review_stage:');
   job_lock := strpos(stage_definition, 'card_catalog_publication:job:');
-  job_row_lock := strpos(stage_definition, 'FROM public.card_discovery_jobs AS job');
-  review_row_lock := strpos(stage_definition, 'FROM public.card_catalog_review_queue AS review');
+  job_row_lock := job_lock + strpos(
+    substr(stage_definition, job_lock),
+    'FROM public.card_discovery_jobs AS job'
+  );
+  review_row_lock := job_row_lock + strpos(
+    substr(stage_definition, job_row_lock),
+    'FROM public.card_catalog_review_queue AS review'
+  );
   IF stage_lock = 0 OR job_lock <= stage_lock
      OR job_row_lock <= job_lock OR review_row_lock <= job_row_lock
      OR strpos(stage_definition, 'FOR UPDATE') = 0 THEN

@@ -95,6 +95,11 @@ test("review staging is one service-only transaction with canonical lock order a
     /GRANT EXECUTE ON FUNCTION public\.stage_card_catalog_identity_review\([\s\S]*?TO service_role/i,
   );
   assert.match(sql, /review_stage_lock_order_assertion_failed/i);
+  assert.match(
+    sql,
+    /job_row_lock\s*:=\s*job_lock\s*\+\s*strpos\(\s*substr\(stage_definition,\s*job_lock\)[\s\S]*review_row_lock\s*:=\s*job_row_lock\s*\+\s*strpos\(\s*substr\(stage_definition,\s*job_row_lock\)/i,
+    "the apply-time audit must search for row locks after the advisory lock, not an earlier lookup",
+  );
   assert.match(sql, /review_stage_authority_assertion_failed/i);
 });
 
@@ -836,6 +841,11 @@ test("lifecycle evidence is chronological, semantic, bounded, and supersedes sta
     publisher,
     /latest_lifecycle_job_id[\s\S]*stale_catalog_lifecycle_review/i,
     "admin lifecycle approval does not prove its review is latest",
+  );
+  assert.match(
+    publisher,
+    /latest_lifecycle_state\s+IS DISTINCT FROM\s+\(CASE[\s\S]*WHEN _action = 'mark_discontinued' THEN 'discontinued'[\s\S]*ELSE 'active' END\)/i,
+    "the lifecycle CASE expression must be parenthesized for PostgreSQL's PL/pgSQL parser",
   );
   assert.match(sql, /lifecycle_latest_evidence_assertion_failed/i);
 });

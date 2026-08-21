@@ -524,6 +524,12 @@ test('pilot qualification atomically promotes the existing exact five identities
   const cohortAction = functionBody(sql, 'card_enrichment_pilot_cohort_action');
   const enqueue = functionBody(sql, 'enqueue_card_benefit_enrichment_jobs');
 
+  assert.match(
+    promote,
+    /DECLARE[\s\S]*pilot_card_count integer;[\s\S]*pilot_profile_count integer;[\s\S]*pilot_issuer_count integer;[\s\S]*pilot_profiles text\[\];[\s\S]*pilot_issuer_values_valid boolean;/i,
+    'every aggregate selected by the pilot promotion gate must be declared',
+  );
+
   assert.match(qualify, /successful_no_change/i);
   assert.match(qualify, /review_status/i);
   assert.match(qualify, /approved_count/i);
@@ -834,7 +840,17 @@ test('canonical recurrence timestamps and history normalization have apply-time 
     sql,
     /2026-02-30T00:00:00\.000Z[\s\S]*2026-02-20T05:30:00\.000\+05:30/i,
   );
+  assert.match(
+    sql,
+    /canonical_card_enrichment_timestamp\(\s*'2026-02-20T05:30:00\.000\+05:30'\s*\)\s*<>\s*'2026-02-20T00:00:00Z'::timestamptz[\s\S]*canonical_card_enrichment_timestamp\(\s*'2026-02-20 00:00:00\.000Z'\s*\)\s*<>\s*'2026-02-20T00:00:00Z'::timestamptz/i,
+    'apply-time recurrence assertions must accept and normalize supported offset and PostgreSQL-style timestamps',
+  );
   assert.match(sql, /America\/New_York[\s\S]*2026-04-09T07:30:00\+00:00/i);
+  assert.match(
+    sql,
+    /history->0->>'observed_at'\s*<>\s*'2026-08-26T00:00:00\.000000Z'[\s\S]*history->23->>'observed_at'\s*<>\s*'2026-08-03T00:00:00\.000000Z'/i,
+    'history assertions must use the shared six-microsecond UTC serializer',
+  );
   assert.match(sql, /legacy-root[\s\S]*legacy-history/i);
 });
 
@@ -945,6 +961,19 @@ test('single-token contextual privacy and every Task6 helper have explicit ACL i
       aclBlock,
       new RegExp(`public\\.${name}\\(`, 'i'),
       `${name} is missing from the exhaustive ACL intent list`,
+    );
+  }
+  for (const triggerOnly of [
+    'schedule_terminal_card_enrichment_observation',
+    'capture_card_enrichment_pilot_publication_snapshot',
+  ]) {
+    assert.match(
+      sql,
+      new RegExp(
+        `REVOKE ALL ON FUNCTION public\\.${triggerOnly}\\(\\)\\s+FROM PUBLIC, anon, authenticated, service_role`,
+        'i',
+      ),
+      `${triggerOnly} must revoke stale service-role execute grants`,
     );
   }
   for (const signature of [
