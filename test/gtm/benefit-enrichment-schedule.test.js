@@ -19,6 +19,10 @@ test("scheduler invokes scheduled enrichment safely with its dedicated credentia
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(
     workflow,
+    /run_mode:\s*\n\s*description:\s*Benefit enrichment run mode[\s\S]*default:\s*scheduled[\s\S]*options:\s*\n\s*-\s*scheduled\s*\n\s*-\s*pilot/,
+  );
+  assert.match(
+    workflow,
     /if:\s*github\.event_name == 'workflow_dispatch' \|\| vars\.CARD_INGESTION_V6_SCHEDULE_ENABLED == 'true'/,
   );
   assert.match(
@@ -32,12 +36,20 @@ test("scheduler invokes scheduled enrichment safely with its dedicated credentia
     /-H\s+"x-cardcompass-cron-secret:\s*\$\{BENEFIT_ENRICHMENT_CRON_SECRET\}"/i,
   );
   assert.match(workflow, /SUPABASE_URL/);
+  assert.match(workflow, /run_mode=.*inputs\.run_mode/);
+  assert.match(workflow, /retry_count=2/);
   assert.match(
     workflow,
-    /curl\s+--fail-with-body\s+--connect-timeout\s+10\s+--max-time\s+240\s+--retry\s+2/,
+    /if \[\[ "\$run_mode" == "pilot" \]\]; then\s*\n\s*retry_count=0/,
+  );
+  assert.match(
+    workflow,
+    /curl\s+--fail-with-body\s+--connect-timeout\s+10\s+--max-time\s+240\s+--retry\s+"\$retry_count"/,
   );
   assert.match(workflow, /-X\s+POST/);
-  assert.match(workflow, /\{\\?"runMode\\?":\\?"scheduled\\?"\}/);
+  assert.ok(
+    workflow.includes('--data "{\\"runMode\\":\\"${run_mode}\\"}"'),
+  );
   assert.match(workflow, /JSON\.parse/);
   assert.match(workflow, /runId/);
   assert.match(workflow, /payload\?\.status === "paused"/);
