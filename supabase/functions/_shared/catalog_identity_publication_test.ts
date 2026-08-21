@@ -466,6 +466,24 @@ Deno.test("semantic lifecycle identity excludes transport time while bounded his
     identity_validated: true,
     retrieved_at: "2026-08-20T00:00:00.000Z",
     transport: { attempted_at: "2026-08-20T00:00:01.000Z", duration_ms: 20 },
+    nested: {
+      content_hash: "a".repeat(64),
+      etag: '"first"',
+      last_modified: "Wed, 19 Aug 2026 00:00:00 GMT",
+      not_modified: false,
+      " last_modified ": "Wed, 19 Aug 2026 00:00:00 GMT",
+      submitted_url: "https://www.axis.bank.in/cards/neo?variant=gold",
+      submitted_url_hash: "b".repeat(64),
+      final_resource_identity_hash: "c".repeat(64),
+      urls: ["https://www.axis.bank.in/cards/neo?source=first"],
+      url_hash: "d".repeat(64),
+      resource_identity_hash: "e".repeat(64),
+      source_identity_hash: "f".repeat(64),
+      fetch_attempts: [{
+        content_hash: "1".repeat(64),
+        url: "https://www.axis.bank.in/cards/neo?attempt=first",
+      }],
+    },
   });
   const replay = semanticCatalogSourceObservation({
     kind: "exact_card_reappearance",
@@ -473,10 +491,45 @@ Deno.test("semantic lifecycle identity excludes transport time while bounded his
     identity_validated: true,
     retrieved_at: "2026-08-20T01:00:00.000Z",
     transport: { attempted_at: "2026-08-20T01:00:01.000Z", duration_ms: 90 },
+    nested: {
+      content_hash: "d".repeat(64),
+      ETag: '"second"',
+      "last-modified": "Wed, 19 Aug 2026 01:00:00 GMT",
+      "not-modified": true,
+      " last_modified ": "Wed, 19 Aug 2026 01:00:00 GMT",
+      submitted_url: "https://www.axis.bank.in/cards/neo?variant=platinum",
+      submitted_url_hash: "e".repeat(64),
+      final_resource_identity_hash: "f".repeat(64),
+      urls: ["https://www.axis.bank.in/cards/neo?source=second"],
+      url_hash: "a".repeat(64),
+      resource_identity_hash: "b".repeat(64),
+      source_identity_hash: "c".repeat(64),
+      fetch_attempts: [{
+        content_hash: "2".repeat(64),
+        url: "https://www.axis.bank.in/cards/neo?attempt=second",
+      }, {
+        content_hash: "3".repeat(64),
+        url: "https://www.axis.bank.in/cards/neo?attempt=third",
+      }],
+    },
   });
   assert(
     JSON.stringify(first) === JSON.stringify(replay),
     "transport timestamps changed semantic lifecycle identity",
+  );
+  const meaningChange = semanticCatalogSourceObservation({
+    kind: "strong_explicit_discontinuation",
+    source_status: 200,
+    identity_validated: true,
+    explicit_discontinuation: true,
+    nested: {
+      content_hash: "f".repeat(64),
+      submitted_url: "https://www.axis.bank.in/cards/neo",
+    },
+  });
+  assert(
+    JSON.stringify(first) !== JSON.stringify(meaningChange),
+    "real lifecycle meaning change collapsed into transport replay",
   );
 
   let history: unknown[] = [];
@@ -819,6 +872,10 @@ Deno.test("explicit named card subjects outrank neutral lifecycle vocabulary", (
       `<h2>Axis Neo Credit Card</h2><div class="availability">Axis Access Credit Card is no longer issued</div>`,
       `<h2>Axis Neo Credit Card</h2><div class="status">Axis Status Credit Card has been withdrawn</div>`,
       `<table><tr><td>Axis Neo Credit Card — Axis May Credit Card discontinued May 2026</td></tr></table>`,
+      `<h2>Axis Neo Credit Card</h2><p>Status: “Axis Rewards Credit Card” discontinued effective August 2026.</p>`,
+      `<h2>Axis Neo Credit Card</h2><div class="availability">[Axis Access Credit Card] is no longer issued</div>`,
+      `<h2>Axis Neo Credit Card</h2><div class="status">(Axis Status Credit Card) has been withdrawn</div>`,
+      `<table><tr><td>Axis Neo Credit Card — 'Axis May Credit Card' discontinued May 2026</td></tr></table>`,
     ]
   ) {
     const evidence = cardDiscontinuationEvidence(

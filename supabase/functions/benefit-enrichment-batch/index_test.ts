@@ -2321,6 +2321,11 @@ Deno.test("pilot retained envelope rejects an entirely omitted required source a
 function issuerSchedulerStore(input: {
   jobs?: Array<Record<string, any>>;
   catalog?: Array<Record<string, any>>;
+  afterJobRange?: (input: {
+    rangeIndex: number;
+    rows: Array<Record<string, any>>;
+    jobs: Array<Record<string, any>>;
+  }) => void;
   failUpdate?: (
     payload: Record<string, any>,
     matchingRows: Array<Record<string, any>>,
@@ -2333,9 +2338,11 @@ function issuerSchedulerStore(input: {
   const jobs = input.jobs ?? [];
   const catalog = input.catalog ?? [];
   const backlogRanges: Array<[number, number]> = [];
+  const pageReadIds: string[] = [];
   const orCalls: string[] = [];
   const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   let sequence = jobs.length;
+  let jobRangeCount = 0;
   const matches = (
     row: Record<string, any>,
     filters: Array<(row: Record<string, any>) => boolean>,
@@ -2505,7 +2512,19 @@ function issuerSchedulerStore(input: {
           return this;
         },
         in(column: string, values: unknown[]) {
-          filters.push((row) => values.includes(row[column]));
+          filters.push((row) => {
+            const jsonField = column.match(/^evidence->>([a-z_]+)$/);
+            const actual = jsonField
+              ? row.evidence?.[jsonField[1]]
+              : row[column];
+            return values.includes(actual);
+          });
+          return this;
+        },
+        gt(column: string, value: string) {
+          filters.push((row) =>
+            typeof row[column] === "string" && row[column] > value
+          );
           return this;
         },
         lte(column: string, value: string) {
@@ -2546,10 +2565,15 @@ function issuerSchedulerStore(input: {
               return 0;
             },
           );
+          const page = selected.slice(from, to + 1);
+          pageReadIds.push(...page.map((row) => String(row.id)));
+          input.afterJobRange?.({
+            rangeIndex: jobRangeCount++,
+            rows: page,
+            jobs,
+          });
           return Promise.resolve({
-            data: selected.slice(from, to + 1).map((row) =>
-              projectIssuerSchedulerRow(row, projection)
-            ),
+            data: page.map((row) => projectIssuerSchedulerRow(row, projection)),
             error: null,
           });
         },
@@ -2590,7 +2614,7 @@ function issuerSchedulerStore(input: {
       return query;
     },
   };
-  return { db, jobs, backlogRanges, orCalls, rpcCalls };
+  return { db, jobs, backlogRanges, pageReadIds, orCalls, rpcCalls };
 }
 
 function projectIssuerSchedulerRow(
@@ -2796,6 +2820,41 @@ Deno.test("approved issuer loading explicitly paginates beyond the Data API defa
     )?.issuer === "ICICI Bank",
     "an early issuer's 1,000+ cards hid a later issuer",
   );
+});
+
+Deno.test("a final short approved-catalog page that crosses the deadline cannot select an issuer", async () => {
+  let nowMs = 0;
+  const db = {
+    from(table: string) {
+      assert(table === "card_catalog", "catalog deadline read wrong table");
+      return {
+        select() {
+          return this;
+        },
+        order() {
+          return this;
+        },
+        range() {
+          nowMs = 100;
+          return Promise.resolve({ data: [], error: null });
+        },
+      };
+    },
+  };
+  let failedClosed = false;
+  try {
+    await loadApprovedIssuerCatalog(db, 200, {
+      limit: 20,
+      used: 0,
+      deadlineAt: 50,
+      nowMs: () => nowMs,
+    });
+  } catch (error) {
+    failedClosed = String(error).includes(
+      "issuer_discovery_catalog_scan_exhausted",
+    );
+  }
+  assert(failedClosed, "deadline-crossing catalog page completed selection");
 });
 
 Deno.test("issuer discovery action accepts only bounded scheduled or manual modes", () => {
@@ -3406,6 +3465,236 @@ Deno.test("operator quarantine retry resets a fresh attempt while reject remains
   );
 });
 
+Deno.test("quarantine retry preserves the terminal episode and a later concurrent failure creates one new review", async () => {
+  const selected = {
+    issuer: "Axis Bank",
+    canonical_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+  };
+  const store = issuerSchedulerStore({});
+  const initial = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-20T00:00:00.000Z"),
+  );
+  assert(initial.seed, "episode fixture did not create an anchor");
+  const producer = store.jobs[0];
+  Object.assign(producer, {
+    status: "failed",
+    attempt_count: 5,
+    next_retry_at: "2026-08-20T01:00:00.000Z",
+    failure_category: "attempts_exhausted",
+    updated_at: "2026-08-20T01:00:00.000Z",
+  });
+  await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-20T01:00:01.000Z"),
+  );
+  const firstReview = store.jobs.find((row) => row.id !== producer.id);
+  assert(firstReview, "first quarantine episode was not staged");
+  assert(
+    producer.evidence.quarantine_fence.episode === 1,
+    "first quarantine episode was not a durable integer",
+  );
+  const firstObservation = structuredClone(
+    firstReview.evidence.source_observation,
+  );
+  Object.assign(firstReview, {
+    status: "resolved",
+    failure_category: null,
+    updated_at: "2026-08-20T01:05:00.000Z",
+  });
+  const terminalFirstReview = structuredClone(firstReview);
+
+  // Mirrors the reviewed SQL Retry transition on the private producer.
+  Object.assign(producer, {
+    status: "failed",
+    attempt_count: 0,
+    next_retry_at: "2026-08-20T01:05:00.000Z",
+    failure_category: "issuer_discovery_operator_retry",
+    updated_at: "2026-08-20T01:05:00.000Z",
+  });
+  const retried = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-20T01:05:01.000Z"),
+  );
+  assert(retried.seed, "operator retry was not claimable");
+  Object.assign(producer, {
+    status: "failed",
+    attempt_count: 5,
+    next_retry_at: "2026-08-20T02:00:00.000Z",
+    failure_category: "attempts_exhausted",
+    updated_at: "2026-08-20T02:00:00.000Z",
+  });
+
+  await Promise.all([
+    claimIssuerDiscoveryRun(
+      store.db,
+      selected,
+      new Date("2026-08-20T02:00:01.000Z"),
+    ),
+    claimIssuerDiscoveryRun(
+      store.db,
+      selected,
+      new Date("2026-08-20T02:00:01.000Z"),
+    ),
+  ]);
+
+  const reviews = store.jobs.filter((row) => row.id !== producer.id);
+  assert(
+    reviews.length === 2,
+    `expected two episodes, found ${reviews.length}`,
+  );
+  assert(
+    JSON.stringify(reviews.find((row) => row.id === firstReview.id)) ===
+      JSON.stringify(terminalFirstReview),
+    "later quarantine rewrote the terminal first review",
+  );
+  const secondReview = reviews.find((row) => row.id !== firstReview.id);
+  assert(
+    secondReview?.status === "review_required",
+    "later failure did not create one new pending review",
+  );
+  assert(
+    secondReview.evidence.source_observation.episode_identity !==
+      firstObservation.episode_identity,
+    "later failure reused the prior quarantine episode identity",
+  );
+  assert(
+    producer.evidence.quarantine_fence.episode === 2,
+    "later quarantine did not advance the durable episode integer",
+  );
+});
+
+Deno.test("quarantine conflict counts use the persisted fence reason instead of caller reclassification", async () => {
+  const selected = {
+    issuer: "Axis Bank",
+    canonical_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+  };
+  const stableKey = await sha256TextFixture(
+    "issuer-directory-anchor:axis bank",
+  );
+  const producer = {
+    id: "persisted-conflict-anchor",
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "Axis Bank",
+    dedupe_key: stableKey,
+    status: "failed",
+    failure_category: "issuer_discovery_quarantined",
+    attempt_count: 1,
+    next_retry_at: "2026-08-20T00:00:00.000Z",
+    created_at: "2026-08-19T00:00:00.000Z",
+    updated_at: "2026-08-19T00:00:00.000Z",
+    evidence: {
+      kind: "issuer_directory_anchor",
+      issuer: "Axis Bank",
+      canonical_url: selected.canonical_url,
+      run_date: "2026-08-19",
+      quarantine_reason: "invalid_run_evidence",
+      quarantine_fence: {
+        version: 1,
+        classification: "issuer_discovery_quarantine",
+        semantic_identity:
+          "issuer-discovery-quarantine-v1:persisted-conflict-anchor",
+        anchor_job_id: "persisted-conflict-anchor",
+        issuer: "Axis Bank",
+        reason: "anchor_identity_conflict",
+        retryable: false,
+        retryability_reason: "manual_repair_required",
+      },
+    },
+  };
+  const store = issuerSchedulerStore({ jobs: [producer] });
+  const claim = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-20T00:00:01.000Z"),
+  );
+
+  assert(claim.status === "quarantined", "persisted conflict was not fenced");
+  assert(
+    claim.reviewSummary?.conflicts === 1,
+    "caller reason hid the persisted conflict count",
+  );
+});
+
+Deno.test("a terminal pre-episode pending quarantine remains one admin item", async () => {
+  const selected = {
+    issuer: "Axis Bank",
+    canonical_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+  };
+  const producerId = "legacy-episode-anchor";
+  const stableKey = await sha256TextFixture(
+    "issuer-directory-anchor:axis bank",
+  );
+  const legacyReviewKey = await sha256TextFixture(
+    `issuer-discovery-quarantine:${producerId}:issuer_discovery_quarantine`,
+  );
+  const store = issuerSchedulerStore({
+    jobs: [{
+      id: producerId,
+      user_id: null,
+      discovery_source: "issuer_crawl",
+      issuer: "Axis Bank",
+      dedupe_key: stableKey,
+      status: "failed",
+      failure_category: "issuer_discovery_quarantined",
+      attempt_count: 1,
+      next_retry_at: null,
+      created_at: "2026-08-19T00:00:00.000Z",
+      updated_at: "2026-08-19T00:00:00.000Z",
+      evidence: {
+        kind: "issuer_directory_anchor",
+        issuer: "Axis Bank",
+        canonical_url: selected.canonical_url,
+        run_date: "2026-08-19",
+        quarantine_reason: "anchor_identity_conflict",
+        quarantine_fence: {
+          version: 1,
+          classification: "issuer_discovery_quarantine",
+          semantic_identity: `issuer-discovery-quarantine-v1:${producerId}`,
+          anchor_job_id: producerId,
+          issuer: "Axis Bank",
+          reason: "anchor_identity_conflict",
+          retryable: false,
+          retryability_reason: "manual_repair_required",
+        },
+      },
+    }, {
+      id: "legacy-pending-review-job",
+      user_id: null,
+      discovery_source: "issuer_crawl",
+      issuer: "Axis Bank",
+      dedupe_key: legacyReviewKey,
+      status: "review_required",
+      review_item_id: "legacy-pending-review-item",
+      failure_category: null,
+      attempt_count: 0,
+      next_retry_at: null,
+      created_at: "2026-08-19T00:00:01.000Z",
+      updated_at: "2026-08-19T00:00:01.000Z",
+      evidence: {
+        source_observation: { kind: "issuer_discovery_quarantine" },
+      },
+    }],
+  });
+
+  const claim = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-20T00:00:01.000Z"),
+  );
+
+  assert(claim.status === "quarantined", "terminal legacy fence was reopened");
+  assert(store.jobs.length === 2, "legacy pending review was duplicated");
+  assert(
+    store.rpcCalls.length === 0,
+    "terminal legacy review was restaged instead of remaining admin-actionable",
+  );
+});
+
 Deno.test("unfinished issuer backlog is paginated, resumed oldest-first across UTC days, then releases fresh rotation", async () => {
   const now = new Date("2026-08-22T00:00:00.000Z");
   const oldOutcomes = persistedIssuerOutcomes(41);
@@ -3513,6 +3802,35 @@ Deno.test("unfinished issuer backlog is paginated, resumed oldest-first across U
   );
 });
 
+Deno.test("a final short issuer-backlog page that crosses the deadline cannot advance selection", async () => {
+  let nowMs = 0;
+  const store = issuerSchedulerStore({
+    jobs: [],
+    afterJobRange: () => {
+      nowMs = 100;
+    },
+  });
+  let failedClosed = false;
+  try {
+    await loadIssuerDiscoveryBacklog(
+      store.db,
+      new Date("2026-08-20T00:00:00.000Z"),
+      100,
+      20,
+      { limit: 20, used: 0, deadlineAt: 50, nowMs: () => nowMs },
+    );
+  } catch (error) {
+    failedClosed = String(error).includes(
+      "issuer_discovery_backlog_scan_exhausted",
+    );
+  }
+  assert(failedClosed, "deadline-crossing backlog page completed selection");
+  assert(
+    store.rpcCalls.length === 0,
+    "deadline-crossing backlog mutated state",
+  );
+});
+
 Deno.test("exhausted oldest backlog is terminally quarantined so the next run can progress", async () => {
   const now = new Date("2026-08-22T00:00:00.000Z");
   const jobs = ["exhausted", "resumable"].map((id, index) => ({
@@ -3580,7 +3898,9 @@ Deno.test("exhausted oldest backlog is terminally quarantined so the next run ca
     observation.anchor_job_id === "exhausted" &&
       observation.issuer === "Axis Bank" &&
       Object.keys(observation).sort().join(",") ===
-        "anchor_job_id,classification,issuer,kind,reason,retryability_reason,retryable" &&
+        "anchor_job_id,classification,episode_identity,issuer,kind,reason,retryability_reason,retryable" &&
+      observation.episode_identity ===
+        "issuer-discovery-quarantine-v1:exhausted:1" &&
       observation.retryable === true &&
       observation.retryability_reason === "attempt_budget_reset_allowed",
     "operator review did not expose the exact bounded anchor reference",
@@ -4419,17 +4739,19 @@ Deno.test("multiple due legacy rows fail closed into exact linked quarantine rev
 
   assert(claim.status === "legacy_conflict", "duplicate legacy rows crawled");
   assert(store.jobs.length === 4, "conflict did not use separate review jobs");
+  const stagedAnchorIds = store.rpcCalls.map((call) =>
+    (call.args._source_evidence as any).source_observation.anchor_job_id
+  ).sort();
   assert(
     store.rpcCalls.length === 2 &&
-      store.rpcCalls.every((call, index) =>
+      store.rpcCalls.every((call) =>
         call.name === "stage_card_catalog_identity_review" &&
         call.args._discovery_job_id === null &&
-        (call.args._source_evidence as any).source_observation.anchor_job_id ===
-          jobs[index].id &&
         (call.args._validation_warnings as string[]).includes(
           "issuer_discovery_quarantine",
         )
-      ),
+      ) && JSON.stringify(stagedAnchorIds) ===
+        JSON.stringify(["newer", "older"]),
     "legacy conflict did not create separate exact-reference Task7 reviews",
   );
   assert(
@@ -4553,7 +4875,7 @@ Deno.test("one invocation quarantines at most twenty of one thousand corrupt sta
   );
 });
 
-Deno.test("issuer anchor scan catches combined kind key and issuer corruption through every identity field", async () => {
+Deno.test("issuer anchor scan catches producer-shaped key and issuer corruption without guessing from ordinary review rows", async () => {
   const canonicalUrl =
     "https://www.axis.bank.in/cards/credit-card/neo-credit-card";
   const digest = await crypto.subtle.digest(
@@ -4569,7 +4891,7 @@ Deno.test("issuer anchor scan catches combined kind key and issuer corruption th
       issuer: "Wrong Bank",
       dedupe_key: "corrupt-key",
       evidence: {
-        kind: "untrusted-kind",
+        kind: "issuer_directory_anchor",
         issuer: " Axis   Bank ",
         canonical_url: canonicalUrl,
         run_date: "2026-08-19",
@@ -4619,7 +4941,97 @@ Deno.test("issuer anchor scan catches combined kind key and issuer corruption th
   }
 });
 
-Deno.test("issuer anchor scan paginates past one thousand combined-corrupt rows", async () => {
+Deno.test("ordinary Task7 identity lifecycle catalog-review and candidate rows survive an issuer anchor claim unchanged", async () => {
+  const canonicalUrl =
+    "https://www.axis.bank.in/cards/credit-card/neo-credit-card";
+  const ordinaryRows = [{
+    id: "identity-review",
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "Axis Bank",
+    dedupe_key: "identity-review-key",
+    status: "review_required",
+    review_item_id: "identity-review-item",
+    failure_category: null,
+    attempt_count: 0,
+    next_retry_at: null,
+    created_at: "2026-08-18T00:00:00.000Z",
+    updated_at: "2026-08-18T00:00:00.000Z",
+    evidence: { semantic_product_hash: "a".repeat(64) },
+  }, {
+    id: "lifecycle-review",
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "Axis Bank",
+    dedupe_key: "lifecycle-review-key",
+    status: "rejected",
+    review_item_id: "lifecycle-review-item",
+    failure_category: "operator_rejected",
+    attempt_count: 0,
+    next_retry_at: null,
+    created_at: "2026-08-18T00:00:01.000Z",
+    updated_at: "2026-08-18T00:00:01.000Z",
+    evidence: {
+      card_id: "11111111-1111-4111-8111-111111111111",
+      lifecycle_state: "discontinued",
+    },
+  }, {
+    id: "catalog-review",
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "Axis Bank",
+    dedupe_key: "catalog-review-key",
+    status: "review_required",
+    review_item_id: "catalog-review-item",
+    failure_category: null,
+    attempt_count: 0,
+    next_retry_at: null,
+    created_at: "2026-08-18T00:00:02.000Z",
+    updated_at: "2026-08-18T00:00:02.000Z",
+    evidence: {
+      source_observation: {
+        kind: "complete_issuer_directory_absence",
+      },
+    },
+  }, {
+    id: "candidate-outcome",
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "Axis Bank",
+    dedupe_key: "candidate-outcome-key",
+    status: "rejected",
+    review_item_id: null,
+    failure_category: "not_a_card",
+    attempt_count: 0,
+    next_retry_at: null,
+    created_at: "2026-08-18T00:00:03.000Z",
+    updated_at: "2026-08-18T00:00:03.000Z",
+    evidence: { kind: "issuer_candidate_outcome", disposition: "rejected" },
+  }];
+  const before = structuredClone(ordinaryRows);
+  const store = issuerSchedulerStore({ jobs: ordinaryRows });
+
+  const claim = await claimIssuerDiscoveryRun(
+    store.db,
+    { issuer: "Axis Bank", canonical_url: canonicalUrl },
+    new Date("2026-08-20T00:00:00.000Z"),
+  );
+
+  assert(claim.status === "claimed" && claim.seed, "anchor was not claimed");
+  assert(store.rpcCalls.length === 0, "ordinary Task7 rows were quarantined");
+  assert(
+    JSON.stringify(store.jobs.slice(0, before.length)) ===
+      JSON.stringify(before),
+    "an ordinary Task7 row was terminalized or relinked",
+  );
+  assert(
+    store.jobs.filter((row) => row.evidence?.kind === "issuer_directory_anchor")
+      .length === 1,
+    "claim did not create exactly one durable directory producer",
+  );
+});
+
+Deno.test("issuer producer scan paginates past one thousand retained anchors", async () => {
   const canonicalUrl =
     "https://www.axis.bank.in/cards/credit-card/neo-credit-card";
   const jobs = Array.from({ length: 1005 }, (_, index) => ({
@@ -4635,7 +5047,7 @@ Deno.test("issuer anchor scan paginates past one thousand combined-corrupt rows"
     created_at: `2026-01-01T00:${String(index % 60).padStart(2, "0")}:00.000Z`,
     updated_at: "2026-08-19T00:00:00.000Z",
     evidence: {
-      kind: "untrusted-kind",
+      kind: "issuer_directory_anchor",
       issuer: "AXIS    BANK",
       canonical_url: canonicalUrl,
       run_date: "2026-08-19",
@@ -4653,8 +5065,66 @@ Deno.test("issuer anchor scan paginates past one thousand combined-corrupt rows"
     "scan stopped at the former 1,000-row window",
   );
   assert(
-    store.backlogRanges.some(([from]) => from >= 1000),
-    "stable scan did not paginate beyond one thousand rows",
+    new Set(store.pageReadIds).size >= 1005,
+    "stable producer scan did not read every retained row",
+  );
+});
+
+Deno.test("issuer producer keyset pages more than one thousand retained rows exactly once during an earlier insert", async () => {
+  const canonicalUrl =
+    "https://www.axis.bank.in/cards/credit-card/neo-credit-card";
+  const originalIds = Array.from(
+    { length: 1005 },
+    (_, index) =>
+      `00000000-0000-4000-8000-${String(index + 1000).padStart(12, "0")}`,
+  );
+  const jobs = originalIds.map((id, index) => ({
+    id,
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "Axis Bank",
+    dedupe_key: `corrupt-producer-${index}`,
+    status: "resolved",
+    failure_category: null,
+    attempt_count: 1,
+    next_retry_at: null,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-08-19T00:00:00.000Z",
+    evidence: {
+      kind: "issuer_directory_anchor",
+      issuer: "Axis Bank",
+      canonical_url: canonicalUrl,
+      run_date: "2026-08-19",
+    },
+  }));
+  const store = issuerSchedulerStore({
+    jobs,
+    afterJobRange: ({ rangeIndex, jobs }) => {
+      if (rangeIndex !== 0) return;
+      jobs.push({
+        ...structuredClone(jobs[0]),
+        id: "00000000-0000-4000-8000-000000000001",
+        dedupe_key: "concurrent-earlier-key",
+      });
+    },
+  });
+
+  await claimIssuerDiscoveryRun(
+    store.db,
+    { issuer: "Axis Bank", canonical_url: canonicalUrl },
+    new Date("2026-08-20T00:00:00.000Z"),
+  );
+
+  const originalIdSet = new Set(originalIds);
+  const originalReads = store.pageReadIds.filter((id) => originalIdSet.has(id));
+  assert(
+    originalReads.length === originalIds.length,
+    `producer scan returned ${originalReads.length} original rows`,
+  );
+  assert(
+    new Set(originalReads).size === originalIds.length &&
+      originalIds.every((id) => originalReads.includes(id)),
+    "issuer producer history was skipped or duplicated across pages",
   );
 });
 
@@ -4706,6 +5176,37 @@ Deno.test("issuer anchor scan fails closed when its deadline prevents exhaustive
   );
 });
 
+Deno.test("a final short issuer-anchor page that crosses the deadline performs no claim or mutation", async () => {
+  const canonicalUrl =
+    "https://www.axis.bank.in/cards/credit-card/neo-credit-card";
+  let nowMs = 0;
+  const store = issuerSchedulerStore({
+    jobs: [],
+    afterJobRange: ({ rangeIndex }) => {
+      if (rangeIndex === 0) nowMs = 100;
+    },
+  });
+  let failedClosed = false;
+  try {
+    await claimIssuerDiscoveryRun(
+      store.db,
+      { issuer: "Axis Bank", canonical_url: canonicalUrl },
+      new Date("2026-08-20T00:00:00.000Z"),
+      { deadlineAt: 50, nowMs: () => nowMs },
+    );
+  } catch (error) {
+    failedClosed = String(error).includes(
+      "issuer_discovery_stable_scan_exhausted",
+    );
+  }
+  assert(failedClosed, "deadline-crossing short page completed the scan");
+  assert(store.jobs.length === 0, "deadline-crossing scan inserted a claim");
+  assert(
+    store.rpcCalls.length === 0,
+    "deadline-crossing scan staged review work",
+  );
+});
+
 Deno.test("quarantine staging checks the invocation deadline before every transition", async () => {
   const canonicalUrl =
     "https://www.axis.bank.in/cards/credit-card/neo-credit-card";
@@ -4728,23 +5229,37 @@ Deno.test("quarantine staging checks the invocation deadline before every transi
       run_date: "2026-08-19",
     },
   }));
-  let deadlineChecks = 0;
-  const store = issuerSchedulerStore({ jobs });
-  const claim = await claimIssuerDiscoveryRun(
-    store.db,
-    { issuer: "Axis Bank", canonical_url: canonicalUrl },
-    new Date("2026-08-20T00:00:00.000Z"),
-    {
-      deadlineAt: 50,
-      nowMs: () => deadlineChecks++ < 2 ? 0 : 100,
+  let nowMs = 0;
+  const store = issuerSchedulerStore({
+    jobs,
+    failUpdate: (payload) => {
+      if (payload.failure_category === "issuer_discovery_quarantined") {
+        nowMs = 100;
+      }
+      return null;
     },
-  );
-  assert(store.rpcCalls.length === 1, "deadline allowed another transition");
+  });
+  let deadlineStopped = false;
+  try {
+    await claimIssuerDiscoveryRun(
+      store.db,
+      { issuer: "Axis Bank", canonical_url: canonicalUrl },
+      new Date("2026-08-20T00:00:00.000Z"),
+      { deadlineAt: 50, nowMs: () => nowMs },
+    );
+  } catch (error) {
+    deadlineStopped = String(error).includes(
+      "issuer_discovery_deadline_exceeded",
+    );
+  }
+  assert(deadlineStopped, "post-transition deadline was not rechecked");
+  assert(store.rpcCalls.length === 0, "deadline allowed review staging");
   assert(
-    (claim as any).reviewSummary?.remaining === 24,
-    "deadline summary hid exact unprocessed quarantine work",
+    store.jobs.filter((row) =>
+      row.failure_category === "issuer_discovery_quarantined"
+    ).length === 1,
+    "deadline allowed another producer transition",
   );
-  assert(claim.seed === null, "deadline exhaustion started a seed crawl");
 });
 
 Deno.test("issuer handler summary reports quarantine work as non-empty", () => {

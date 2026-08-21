@@ -141,6 +141,10 @@ const RESOURCE_FIELD_KEYS = new Set([
 ]);
 
 const TRANSPORT_ONLY_OBSERVATION_KEYS = new Set([
+  "content_hash",
+  "etag",
+  "last_modified",
+  "not_modified",
   "retrieved_at",
   "attempted_at",
   "observed_at",
@@ -153,6 +157,54 @@ const TRANSPORT_ONLY_OBSERVATION_KEYS = new Set([
   "footer",
   "generated_at",
 ]);
+
+function isTransportOnlyObservationKey(rawKey: string): boolean {
+  const key = rawKey.trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[-\s]+/g, "_")
+    .toLowerCase();
+  return TRANSPORT_ONLY_OBSERVATION_KEYS.has(key) ||
+    key === "url" || key === "urls" ||
+    key.endsWith("_url") || key.endsWith("_urls") ||
+    key === "url_hash" || key.endsWith("_url_hash") ||
+    key === "resource_identity_hash" ||
+    key.endsWith("_resource_identity_hash") ||
+    key === "source_identity_hash" || key.endsWith("_source_identity_hash");
+}
+
+const OMIT_TRANSPORT_ONLY_BRANCH = Symbol("omit_transport_only_branch");
+
+function stripTransportOnlyObservation(
+  value: unknown,
+  normalizeStrings: boolean,
+  root = false,
+): unknown | typeof OMIT_TRANSPORT_ONLY_BRANCH {
+  if (Array.isArray(value)) {
+    const output: unknown[] = [];
+    for (const entry of value) {
+      const stripped = stripTransportOnlyObservation(entry, normalizeStrings);
+      if (stripped !== OMIT_TRANSPORT_ONLY_BRANCH) output.push(stripped);
+    }
+    return !root && value.length > 0 && output.length === 0
+      ? OMIT_TRANSPORT_ONLY_BRANCH
+      : output;
+  }
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    const output: Record<string, unknown> = {};
+    for (const [key, entry] of entries) {
+      if (isTransportOnlyObservationKey(key)) continue;
+      const stripped = stripTransportOnlyObservation(entry, normalizeStrings);
+      if (stripped !== OMIT_TRANSPORT_ONLY_BRANCH) output[key] = stripped;
+    }
+    return !root && entries.length > 0 && Object.keys(output).length === 0
+      ? OMIT_TRANSPORT_ONLY_BRANCH
+      : output;
+  }
+  return normalizeStrings && typeof value === "string"
+    ? value.trim().replace(/\s+/g, " ")
+    : value;
+}
 
 function nonEmpty(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
@@ -333,39 +385,17 @@ function stableJsonValue(value: unknown): unknown {
 export async function semanticProductEnvelopeHash(
   input: Record<string, unknown>,
 ): Promise<string> {
-  const stripTransport = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(stripTransport);
-    if (value !== null && typeof value === "object") {
-      return Object.fromEntries(
-        Object.entries(value as Record<string, unknown>)
-          .filter(([key]) => !TRANSPORT_ONLY_OBSERVATION_KEYS.has(key))
-          .map(([key, entry]) => [key, stripTransport(entry)]),
-      );
-    }
-    return typeof value === "string"
-      ? value.trim().replace(/\s+/g, " ")
-      : value;
-  };
   const bounded = boundedCatalogSourceObservation(input);
-  return await sha256(JSON.stringify(stableJsonValue(stripTransport(bounded))));
+  const semantic = stripTransportOnlyObservation(bounded, true, true);
+  return await sha256(JSON.stringify(stableJsonValue(semantic)));
 }
 
 export function semanticCatalogSourceObservation(
   input: Record<string, unknown>,
 ): Record<string, unknown> {
   const sanitized = boundedCatalogSourceObservation(input);
-  const strip = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(strip);
-    if (value !== null && typeof value === "object") {
-      return Object.fromEntries(
-        Object.entries(value as Record<string, unknown>)
-          .filter(([key]) => !TRANSPORT_ONLY_OBSERVATION_KEYS.has(key))
-          .map(([key, entry]) => [key, strip(entry)]),
-      );
-    }
-    return value;
-  };
-  return stableJsonValue(strip(sanitized)) as Record<string, unknown>;
+  const semantic = stripTransportOnlyObservation(sanitized, false, true);
+  return stableJsonValue(semantic) as Record<string, unknown>;
 }
 
 function observationHistoryKey(entry: Record<string, unknown>): string {
@@ -705,7 +735,7 @@ export function cardDiscontinuationEvidence(
   );
   const hasForeignExplicitCardSubject = (value: string) => {
     const subjects = [...value.matchAll(
-      /(?:^|[,:;.!?\u2013\u2014-]\s*)((?:[a-z0-9&+'\u2019.-]+\s+){1,16}(?:credit\s+)?card)\b/gi,
+      /(?:^|[,:;.!?\u2013\u2014-]\s*)(?:["'\u2018\u2019\u201c\u201d([{<]\s*)*((?:[a-z0-9&+'\u2019.-]+\s+){1,16}(?:credit\s+)?card)\b/gi,
     )].map((match) => match[1] ?? "");
     return subjects.some((subject) => {
       const identity = meaningful(subject).filter((token) =>

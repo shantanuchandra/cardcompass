@@ -543,24 +543,57 @@ DECLARE
 BEGIN
   IF _value IS NULL THEN RETURN 'null'::jsonb; END IF;
   IF jsonb_typeof(_value) = 'object' THEN
-    SELECT coalesce(jsonb_object_agg(entry.key,
-      public.catalog_lifecycle_semantic_observation(entry.value)
-      ORDER BY entry.key), '{}'::jsonb)
+    SELECT coalesce(jsonb_object_agg(
+      entry.key, cleaned.value ORDER BY entry.key
+    ), '{}'::jsonb)
     INTO result
     FROM jsonb_each(_value) AS entry
-    WHERE entry.key NOT IN (
+    CROSS JOIN LATERAL (
+      SELECT lower(regexp_replace(regexp_replace(
+        trim(entry.key), '([a-z0-9])([A-Z])', '\1_\2', 'g'
+      ), '[-[:space:]]+', '_', 'g')) AS normalized_key
+    ) AS normalized
+    CROSS JOIN LATERAL (
+      SELECT public.catalog_lifecycle_semantic_observation(entry.value) AS value
+    ) AS cleaned
+    WHERE normalized.normalized_key NOT IN (
+      'content_hash', 'etag', 'last_modified', 'not_modified',
       'retrieved_at', 'attempted_at', 'observed_at', 'transport',
       'duration_ms', 'retry_after_ms', 'request_started_at',
-      'request_completed_at'
-    );
+      'request_completed_at', 'nonce', 'footer', 'generated_at',
+      'url', 'urls', 'url_hash', 'resource_identity_hash',
+      'source_identity_hash'
+    )
+      AND normalized.normalized_key !~
+        '(_url|_urls|_url_hash|_resource_identity_hash|_source_identity_hash)$'
+      AND NOT (
+        jsonb_typeof(entry.value) = 'object'
+        AND entry.value <> '{}'::jsonb
+        AND cleaned.value = '{}'::jsonb
+      )
+      AND NOT (
+        jsonb_typeof(entry.value) = 'array'
+        AND entry.value <> '[]'::jsonb
+        AND cleaned.value = '[]'::jsonb
+      );
     RETURN result;
   ELSIF jsonb_typeof(_value) = 'array' THEN
-    SELECT coalesce(jsonb_agg(
-      public.catalog_lifecycle_semantic_observation(entry.value)
-      ORDER BY entry.ordinality
-    ), '[]'::jsonb)
+    SELECT coalesce(jsonb_agg(cleaned.value ORDER BY entry.ordinality), '[]'::jsonb)
     INTO result
-    FROM jsonb_array_elements(_value) WITH ORDINALITY AS entry(value, ordinality);
+    FROM jsonb_array_elements(_value) WITH ORDINALITY AS entry(value, ordinality)
+    CROSS JOIN LATERAL (
+      SELECT public.catalog_lifecycle_semantic_observation(entry.value) AS value
+    ) AS cleaned
+    WHERE NOT (
+      jsonb_typeof(entry.value) = 'object'
+      AND entry.value <> '{}'::jsonb
+      AND cleaned.value = '{}'::jsonb
+    )
+      AND NOT (
+        jsonb_typeof(entry.value) = 'array'
+        AND entry.value <> '[]'::jsonb
+        AND cleaned.value = '[]'::jsonb
+      );
     RETURN result;
   END IF;
   RETURN _value;
@@ -1898,8 +1931,8 @@ BEGIN
              review_row.proposed_fields->'source_observation'
            ) AS quarantine_field(key)
            WHERE quarantine_field.key NOT IN (
-             'anchor_job_id', 'classification', 'issuer', 'kind', 'reason',
-             'retryable', 'retryability_reason'
+             'anchor_job_id', 'classification', 'episode_identity', 'issuer',
+             'kind', 'reason', 'retryable', 'retryability_reason'
            )
          )
          OR jsonb_typeof(
@@ -1947,6 +1980,121 @@ BEGIN
          OR issuer_quarantine_anchor.id = job_row.id
          OR issuer_quarantine_anchor.user_id IS NOT NULL
          OR issuer_quarantine_anchor.discovery_source <> 'issuer_crawl'
+         OR issuer_quarantine_anchor.evidence->>'kind' NOT IN (
+           'issuer_directory_anchor', 'issuer_directory_run'
+         )
+         OR (_action = 'retry' AND (
+           lower(regexp_replace(
+             trim(issuer_quarantine_anchor.evidence->>'issuer'),
+             '\s+', ' ', 'g'
+           )) IS DISTINCT FROM lower(regexp_replace(
+             trim(issuer_quarantine_anchor.issuer), '\s+', ' ', 'g'
+           ))
+           OR public.canonical_card_resource_url(
+             issuer_quarantine_anchor.evidence->>'canonical_url'
+           ) IS DISTINCT FROM trim(
+             issuer_quarantine_anchor.evidence->>'canonical_url'
+           )
+           OR NOT public.card_catalog_source_matches_issuer(
+             issuer_quarantine_anchor.issuer,
+             issuer_quarantine_anchor.evidence->>'canonical_url'
+           )
+           OR coalesce(
+             issuer_quarantine_anchor.evidence->>'run_date', ''
+           ) !~ '^\d{4}-\d{2}-\d{2}$'
+           OR to_char(to_date(
+             issuer_quarantine_anchor.evidence->>'run_date', 'YYYY-MM-DD'
+           ), 'YYYY-MM-DD') IS DISTINCT FROM
+             issuer_quarantine_anchor.evidence->>'run_date'
+           OR issuer_quarantine_anchor.attempt_count NOT BETWEEN 0 AND 5
+           OR (
+             issuer_quarantine_anchor.evidence->>'kind' =
+               'issuer_directory_anchor'
+             AND issuer_quarantine_anchor.dedupe_key IS DISTINCT FROM encode(
+               extensions.digest(convert_to(
+                 'issuer-directory-anchor:' || lower(regexp_replace(
+                   trim(issuer_quarantine_anchor.issuer), '\s+', ' ', 'g'
+                 )), 'UTF8'
+               ), 'sha256'), 'hex'
+             )
+           )
+         ))
+         OR issuer_quarantine_anchor.evidence->'quarantine_fence'->>'version'
+           IS DISTINCT FROM '1'
+         OR issuer_quarantine_anchor.evidence->'quarantine_fence'->>'classification'
+           IS DISTINCT FROM 'issuer_discovery_quarantine'
+         OR issuer_quarantine_anchor.evidence->'quarantine_fence'->>'anchor_job_id'
+           IS DISTINCT FROM issuer_quarantine_anchor.id::text
+         OR coalesce(
+           issuer_quarantine_anchor.evidence->'quarantine_fence'->>'reason', ''
+         ) NOT IN (
+           'resume_attempts_exhausted', 'transient_producer_state',
+           'invalid_run_evidence', 'legacy_anchor_conflict',
+           'anchor_identity_conflict'
+         )
+         OR (
+           issuer_quarantine_anchor.evidence->'quarantine_fence'->>'reason'
+             IN ('resume_attempts_exhausted', 'transient_producer_state')
+           AND (
+             issuer_quarantine_anchor.evidence->'quarantine_fence'->>'retryable'
+               IS DISTINCT FROM 'true'
+             OR issuer_quarantine_anchor.evidence->'quarantine_fence'->>'retryability_reason'
+               IS DISTINCT FROM 'attempt_budget_reset_allowed'
+           )
+         )
+         OR (
+           issuer_quarantine_anchor.evidence->'quarantine_fence'->>'reason'
+             IN (
+               'invalid_run_evidence', 'legacy_anchor_conflict',
+               'anchor_identity_conflict'
+             )
+           AND (
+             issuer_quarantine_anchor.evidence->'quarantine_fence'->>'retryable'
+               IS DISTINCT FROM 'false'
+             OR issuer_quarantine_anchor.evidence->'quarantine_fence'->>'retryability_reason'
+               IS DISTINCT FROM 'manual_repair_required'
+           )
+         )
+         OR lower(regexp_replace(
+           trim(issuer_quarantine_anchor.evidence->'quarantine_fence'->>'issuer'),
+           '\s+', ' ', 'g'
+         )) IS DISTINCT FROM lower(regexp_replace(
+           trim(issuer_quarantine_anchor.issuer), '\s+', ' ', 'g'
+         ))
+         OR review_row.proposed_fields->'source_observation'->>'classification'
+           IS DISTINCT FROM
+             issuer_quarantine_anchor.evidence->'quarantine_fence'->>'classification'
+         OR review_row.proposed_fields->'source_observation'->>'reason'
+           IS DISTINCT FROM
+             issuer_quarantine_anchor.evidence->'quarantine_fence'->>'reason'
+         OR review_row.proposed_fields->'source_observation'->>'retryable'
+           IS DISTINCT FROM
+             issuer_quarantine_anchor.evidence->'quarantine_fence'->>'retryable'
+         OR review_row.proposed_fields->'source_observation'->>'retryability_reason'
+           IS DISTINCT FROM
+             issuer_quarantine_anchor.evidence->'quarantine_fence'->>'retryability_reason'
+         OR NOT coalesce((
+           (
+             coalesce(
+               issuer_quarantine_anchor.evidence->'quarantine_fence'->>'episode', ''
+             ) ~ '^[1-9][0-9]{0,5}$'
+             AND review_row.proposed_fields->'source_observation'->>'episode_identity'
+               = issuer_quarantine_anchor.evidence->'quarantine_fence'->>'semantic_identity'
+             AND review_row.proposed_fields->'source_observation'->>'episode_identity'
+               = 'issuer-discovery-quarantine-v1:' ||
+                 issuer_quarantine_anchor.id::text || ':' ||
+                 issuer_quarantine_anchor.evidence->'quarantine_fence'->>'episode'
+           )
+           OR (
+             issuer_quarantine_anchor.evidence->'quarantine_fence'->>'episode'
+               IS NULL
+             AND issuer_quarantine_anchor.evidence->'quarantine_fence'->>'semantic_identity'
+               = 'issuer-discovery-quarantine-v1:' ||
+                 issuer_quarantine_anchor.id::text
+             AND review_row.proposed_fields->'source_observation'->>'episode_identity'
+               IS NULL
+           )
+         ), false)
          OR lower(regexp_replace(
            trim(issuer_quarantine_anchor.issuer), '\s+', ' ', 'g'
          )) IS DISTINCT FROM lower(regexp_replace(
@@ -3308,5 +3456,103 @@ BEGIN
   END IF;
 END;
 $task7_identity_hardening_assertions$;
+
+DO $task11_lifecycle_transport_semantics$
+DECLARE
+  first_semantic jsonb;
+  replay_semantic jsonb;
+  changed_semantic jsonb;
+  stage_definition text;
+  publication_definition text;
+BEGIN
+  first_semantic := public.catalog_lifecycle_semantic_observation(
+    jsonb_build_object(
+      'kind', 'exact_card_reappearance',
+      'source_status', 200,
+      'identity_validated', true,
+      'retrieved_at', '2026-08-20T00:00:00Z',
+      'nested', jsonb_build_object(
+        'content_hash', repeat('a', 64),
+        'etag', '"first"',
+        'last_modified', 'Wed, 20 Aug 2026 00:00:00 GMT',
+        'not_modified', false,
+        ' last_modified ', 'Wed, 20 Aug 2026 00:00:01 GMT',
+        'submitted_url', 'https://www.axis.bank.in/cards/neo?variant=gold',
+        'submitted_url_hash', repeat('b', 64),
+        'final_resource_identity_hash', repeat('c', 64),
+        'urls', jsonb_build_array('https://www.axis.bank.in/cards/neo?source=first'),
+        'url_hash', repeat('d', 64),
+        'resource_identity_hash', repeat('e', 64),
+        'source_identity_hash', repeat('f', 64),
+        'fetch_attempts', jsonb_build_array(jsonb_build_object(
+          'content_hash', repeat('1', 64),
+          'url', 'https://www.axis.bank.in/cards/neo?attempt=first'
+        ))
+      )
+    )
+  );
+  replay_semantic := public.catalog_lifecycle_semantic_observation(
+    jsonb_build_object(
+      'kind', 'exact_card_reappearance',
+      'source_status', 200,
+      'identity_validated', true,
+      'retrieved_at', '2026-08-20T01:00:00Z',
+      'nested', jsonb_build_object(
+        'content_hash', repeat('d', 64),
+        'ETag', '"second"',
+        'last-modified', 'Wed, 20 Aug 2026 01:00:00 GMT',
+        'not-modified', true,
+        ' last_modified ', 'Wed, 20 Aug 2026 01:00:01 GMT',
+        'submitted_url', 'https://www.axis.bank.in/cards/neo?variant=platinum',
+        'submitted_url_hash', repeat('e', 64),
+        'final_resource_identity_hash', repeat('f', 64),
+        'urls', jsonb_build_array('https://www.axis.bank.in/cards/neo?source=second'),
+        'url_hash', repeat('a', 64),
+        'resource_identity_hash', repeat('b', 64),
+        'source_identity_hash', repeat('c', 64),
+        'fetch_attempts', jsonb_build_array(
+          jsonb_build_object(
+            'content_hash', repeat('2', 64),
+            'url', 'https://www.axis.bank.in/cards/neo?attempt=second'
+          ),
+          jsonb_build_object(
+            'content_hash', repeat('3', 64),
+            'url', 'https://www.axis.bank.in/cards/neo?attempt=third'
+          )
+        )
+      )
+    )
+  );
+  changed_semantic := public.catalog_lifecycle_semantic_observation(
+    jsonb_build_object(
+      'kind', 'strong_explicit_discontinuation',
+      'source_status', 200,
+      'identity_validated', true,
+      'explicit_discontinuation', true,
+      'nested', jsonb_build_object(
+        'content_hash', repeat('f', 64),
+        'submitted_url', 'https://www.axis.bank.in/cards/neo'
+      )
+    )
+  );
+  IF first_semantic IS DISTINCT FROM replay_semantic
+     OR first_semantic IS NOT DISTINCT FROM changed_semantic THEN
+    RAISE EXCEPTION 'lifecycle_transport_semantic_parity_assertion_failed';
+  END IF;
+
+  SELECT pg_get_functiondef(
+    'public.stage_card_catalog_lifecycle_review(uuid,text,jsonb,text,text,text,text)'::regprocedure
+  ) INTO stage_definition;
+  SELECT pg_get_functiondef(
+    'public.publish_card_catalog_identity(uuid,uuid,uuid,text,jsonb,uuid,text,text)'::regprocedure
+  ) INTO publication_definition;
+  IF strpos(stage_definition, 'lower(_source_url_hash)') = 0
+     OR strpos(publication_definition, '''episode_identity''') = 0
+     OR strpos(publication_definition, 'quarantine_fence') = 0
+     OR strpos(publication_definition, '''issuer_directory_anchor''') = 0 THEN
+    RAISE EXCEPTION 'issuer_quarantine_episode_binding_assertion_failed';
+  END IF;
+END;
+$task11_lifecycle_transport_semantics$;
 
 COMMIT;

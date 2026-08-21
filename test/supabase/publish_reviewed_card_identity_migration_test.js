@@ -840,6 +840,62 @@ test("lifecycle evidence is chronological, semantic, bounded, and supersedes sta
   assert.match(sql, /lifecycle_latest_evidence_assertion_failed/i);
 });
 
+test("lifecycle semantic SQL recursively removes transport identity while quarantine decisions bind an episode", async () => {
+  const sql = await migrationSql();
+  const semantic = functionBody(
+    sql,
+    "catalog_lifecycle_semantic_observation",
+  );
+  const publisher = functionBody(sql, "publish_card_catalog_identity");
+  for (
+    const transportKey of [
+      "content_hash",
+      "etag",
+      "last_modified",
+      "not_modified",
+      "_url_hash",
+      "_resource_identity_hash",
+    ]
+  ) {
+    assert.match(
+      semantic,
+      new RegExp(transportKey),
+      `SQL lifecycle semantics retained ${transportKey}`,
+    );
+  }
+  assert.match(
+    sql,
+    /task11_lifecycle_transport_semantics[\s\S]*first_semantic[\s\S]*replay_semantic[\s\S]*changed_semantic[\s\S]*lifecycle_transport_semantic_parity_assertion_failed/i,
+    "migration lacks executable transport-vs-meaning parity assertions",
+  );
+  assert.match(
+    publisher,
+    /episode_identity[\s\S]*quarantine_fence[\s\S]*semantic_identity/i,
+    "admin decisions are not bound to the producer quarantine episode",
+  );
+  assert.match(
+    publisher,
+    /source_observation[\s\S]*classification[\s\S]*quarantine_fence[\s\S]*reason[\s\S]*retryable[\s\S]*retryability_reason/i,
+    "admin decisions are not bound to the full persisted quarantine policy",
+  );
+  assert.match(
+    publisher,
+    /issuer_directory_anchor[\s\S]*issuer_directory_run/i,
+    "quarantine retry accepts an ordinary Task7 row as a producer anchor",
+  );
+  assert.match(
+    publisher,
+    /_action = 'retry'[\s\S]*canonical_card_resource_url[\s\S]*card_catalog_source_matches_issuer[\s\S]*run_date[\s\S]*attempt_count NOT BETWEEN 0 AND 5[\s\S]*dedupe_key[\s\S]*issuer-directory-anchor:/i,
+    "quarantine Retry is not bound to the exact durable producer shape",
+  );
+  assert.match(
+    publisher,
+    /quarantine_fence'->>'episode'[\s\S]*IS NULL[\s\S]*issuer-discovery-quarantine-v1:'[\s\S]*issuer_quarantine_anchor\.id::text[\s\S]*episode_identity'[\s\S]*IS NULL/i,
+    "episode-one decisions cannot consume a legacy pre-episode quarantine fence",
+  );
+  assert.match(sql, /issuer_quarantine_episode_binding_assertion_failed/i);
+});
+
 test("network authority combines stored column and product name without a legacy wildcard", async () => {
   const sql = await migrationSql();
   const resolver = functionBody(sql, "resolve_card_catalog_identity");
