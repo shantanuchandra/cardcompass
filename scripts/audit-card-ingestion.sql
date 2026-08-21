@@ -43,6 +43,56 @@ WITH public_relations AS (
   SELECT job.status, job.parser_version, job.run_mode, count(*)::bigint AS row_count
   FROM public.card_catalog_enrichment_jobs AS job
   GROUP BY job.status, job.parser_version, job.run_mode
+), supported_issuers(issuer) AS (
+  VALUES
+    ('Axis Bank'), ('HDFC Bank'), ('ICICI Bank'), ('Kotak Bank'),
+    ('IndusInd Bank'), ('HSBC'), ('SBI Card'), ('IDFC FIRST Bank'),
+    ('Yes Bank'), ('AU Small Finance Bank'), ('RBL Bank'),
+    ('Bank of Baroda'), ('Punjab National Bank'), ('Standard Chartered'),
+    ('American Express')
+), supported_issuer_coverage AS (
+  SELECT supported.issuer,
+         count(catalog.id)::bigint AS catalog_cards,
+         count(DISTINCT active.card_id)::bigint AS cards_with_active_benefits,
+         count(active.mapping_id)::bigint AS active_benefit_mappings
+  FROM supported_issuers AS supported
+  LEFT JOIN public.card_catalog AS catalog
+    ON lower(trim(catalog.bank)) = lower(supported.issuer)
+   AND lower(trim(catalog.card_type)) = 'credit'
+  LEFT JOIN public.active_card_benefits AS active ON active.card_id = catalog.id
+  GROUP BY supported.issuer
+), active_benefit_families AS (
+  SELECT lower(trim(active.benefit_category)) AS category,
+         lower(trim(coalesce(active.benefit_type, ''))) AS benefit_type,
+         count(*)::bigint AS mapping_count,
+         count(DISTINCT active.card_id)::bigint AS card_count
+  FROM public.active_card_benefits AS active
+  GROUP BY lower(trim(active.benefit_category)),
+           lower(trim(coalesce(active.benefit_type, '')))
+), enrichment_failures AS (
+  SELECT job.parser_version, job.status,
+         coalesce(job.failure_category, '') AS failure_category,
+         count(*)::bigint AS row_count
+  FROM public.card_catalog_enrichment_jobs AS job
+  WHERE job.status IN ('failed', 'quarantined', 'review_required')
+  GROUP BY job.parser_version, job.status, coalesce(job.failure_category, '')
+), catalog_hygiene AS (
+  SELECT catalog.id, catalog.bank, catalog.card_name, catalog.card_type,
+         catalog.card_url,
+         array_remove(ARRAY[
+           CASE WHEN catalog.card_type IS DISTINCT FROM lower(trim(catalog.card_type))
+             THEN 'noncanonical_card_type' END,
+           CASE WHEN catalog.bank = 'Kotak Mahindra Bank'
+             THEN 'noncanonical_issuer' END,
+           CASE WHEN catalog.card_url IS NULL OR trim(catalog.card_url) = ''
+             THEN 'missing_official_url' END,
+           CASE WHEN lower(coalesce(catalog.card_url, '')) ~
+             '/(track-your|useful-links|stories|whitepass)(/|\\.|$)'
+             THEN 'probable_non_product_url' END
+         ], NULL) AS reasons
+  FROM public.card_catalog AS catalog
+), catalog_hygiene_findings AS (
+  SELECT * FROM catalog_hygiene WHERE cardinality(reasons) > 0
 ), duplicate_catalog_identities AS (
   SELECT lower(trim(catalog.bank)) AS normalized_issuer,
          lower(regexp_replace(trim(catalog.card_name), '[^a-zA-Z0-9]+', '', 'g')) AS normalized_name,
@@ -170,6 +220,47 @@ SELECT
   coalesce((SELECT jsonb_agg(jsonb_build_object('status', status, 'parser_version', parser_version,
     'run_mode', run_mode, 'count', row_count) ORDER BY status, parser_version, run_mode)
     FROM job_groups), '[]'::jsonb) AS details
+UNION ALL
+SELECT
+  'supported_issuer_catalog_and_benefit_coverage'::text AS check_name,
+  (SELECT count(*) FROM supported_issuer_coverage
+    WHERE catalog_cards = 0 OR cards_with_active_benefits < catalog_cards)::bigint AS finding_count,
+  '[]'::jsonb AS catalog_ids,
+  coalesce((SELECT jsonb_agg(jsonb_build_object(
+    'issuer', issuer,
+    'catalog_cards', catalog_cards,
+    'cards_with_active_benefits', cards_with_active_benefits,
+    'active_benefit_mappings', active_benefit_mappings
+  ) ORDER BY issuer) FROM supported_issuer_coverage), '[]'::jsonb) AS details
+UNION ALL
+SELECT
+  'active_benefit_category_type_coverage'::text AS check_name,
+  (SELECT count(*) FROM active_benefit_families)::bigint AS finding_count,
+  '[]'::jsonb AS catalog_ids,
+  coalesce((SELECT jsonb_agg(jsonb_build_object(
+    'category', category, 'benefit_type', benefit_type,
+    'mapping_count', mapping_count, 'card_count', card_count
+  ) ORDER BY category, benefit_type) FROM active_benefit_families), '[]'::jsonb) AS details
+UNION ALL
+SELECT
+  'enrichment_failure_categories'::text AS check_name,
+  coalesce((SELECT sum(row_count) FROM enrichment_failures), 0)::bigint AS finding_count,
+  '[]'::jsonb AS catalog_ids,
+  coalesce((SELECT jsonb_agg(jsonb_build_object(
+    'parser_version', parser_version, 'status', status,
+    'failure_category', failure_category, 'count', row_count
+  ) ORDER BY parser_version, status, failure_category)
+    FROM enrichment_failures), '[]'::jsonb) AS details
+UNION ALL
+SELECT
+  'catalog_ingestion_hygiene'::text AS check_name,
+  (SELECT count(*) FROM catalog_hygiene_findings)::bigint AS finding_count,
+  coalesce((SELECT jsonb_agg(id::text ORDER BY id::text)
+    FROM catalog_hygiene_findings), '[]'::jsonb) AS catalog_ids,
+  coalesce((SELECT jsonb_agg(jsonb_build_object(
+    'catalog_id', id, 'issuer', bank, 'card_name', card_name,
+    'card_type', card_type, 'card_url', card_url, 'reasons', reasons
+  ) ORDER BY bank, card_name, id) FROM catalog_hygiene_findings), '[]'::jsonb) AS details
 UNION ALL
 SELECT
   'duplicate_normalized_catalog_identity'::text AS check_name,

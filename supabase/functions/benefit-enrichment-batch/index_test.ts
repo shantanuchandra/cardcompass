@@ -34,6 +34,7 @@ import {
   scheduledPipelinePaused,
   seedScheduledQueueIfAllowed,
   selectIssuerDiscoveryCandidate,
+  selectSupportedIssuerDiscoveryCandidate,
   shouldStageMaterialProposal,
   sourceObservationReviewSummary,
   sourceObservationSummary,
@@ -109,6 +110,45 @@ Deno.test("scheduled runs return paused before inventory or job access", async (
   assert(
     calls.join(",") === "admin_runtime_controls",
     "scheduled work touched inventory or jobs before the pause check",
+  );
+});
+
+Deno.test("scheduled issuer discovery uses the same fail-closed runtime control", async () => {
+  const calls: string[] = [];
+  const response = await handleBenefitEnrichmentBatch(
+    new Request(
+      "http://localhost/benefit-enrichment-batch",
+      {
+        method: "POST",
+        headers: {
+          authorization: "Bearer test-service-key",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "issuer_discovery",
+          runMode: "scheduled",
+        }),
+      },
+    ),
+    {
+      serviceKey: "test-service-key",
+      cronSecret: "test-cron-secret",
+      createDb: () => runtimeControlDb({ is_paused: true }, null, calls),
+      runId: () => "test-run",
+    },
+  );
+  assert(response.status === 200, "paused issuer run was not acknowledged");
+  assert(
+    JSON.stringify(await response.json()) === JSON.stringify({
+      status: "paused",
+      control: "benefit_enrichment_scheduled",
+      action: "issuer_discovery",
+    }),
+    "issuer pause response changed",
+  );
+  assert(
+    calls.join(",") === "admin_runtime_controls",
+    "issuer discovery touched catalog or jobs before the pause check",
   );
 });
 
@@ -2843,6 +2883,60 @@ Deno.test("issuer discovery rotates a sorted issuer set by UTC day with restart 
   );
 });
 
+Deno.test("issuer discovery rotates every supported bank even before its first catalog card exists", () => {
+  const observed = new Map<string, string>();
+  for (let offset = 0; offset < 15; offset += 1) {
+    const selected = selectSupportedIssuerDiscoveryCandidate(
+      [],
+      new Date(Date.UTC(2026, 7, 20 + offset)),
+    );
+    assert(selected, `supported issuer slot ${offset} was empty`);
+    observed.set(selected.issuer, selected.canonical_url);
+  }
+  assert(
+    JSON.stringify([...observed.keys()].sort()) === JSON.stringify([
+      "AU Small Finance Bank",
+      "American Express",
+      "Axis Bank",
+      "Bank of Baroda",
+      "HDFC Bank",
+      "HSBC",
+      "ICICI Bank",
+      "IDFC FIRST Bank",
+      "IndusInd Bank",
+      "Kotak Bank",
+      "Punjab National Bank",
+      "RBL Bank",
+      "SBI Card",
+      "Standard Chartered",
+      "Yes Bank",
+    ]),
+    `supported issuer rotation drifted: ${
+      JSON.stringify([...observed.keys()].sort())
+    }`,
+  );
+  assert(
+    [...observed.values()].every((url) => url.startsWith("https://")),
+    "supported issuer seed included a non-HTTPS URL",
+  );
+
+  const catalogUrl =
+    "https://www.axis.bank.in/cards/credit-card/neo-credit-card";
+  const selectedFromCatalog = Array.from(
+    { length: 15 },
+    (_, offset) =>
+      selectSupportedIssuerDiscoveryCandidate([{
+        bank: "Axis Bank",
+        card_url: catalogUrl,
+        card_type: "credit",
+      }], new Date(Date.UTC(2026, 7, 20 + offset))),
+  ).find((candidate) => candidate?.issuer === "Axis Bank");
+  assert(
+    selectedFromCatalog?.canonical_url === catalogUrl,
+    "static bootstrap seed replaced an approved catalog product URL",
+  );
+});
+
 Deno.test("issuer run progress replaces a retried candidate without evicting another completed key", () => {
   const existing = Array.from({ length: 200 }, (_, index) => ({
     candidate_key: index.toString(16).padStart(64, "0"),
@@ -3103,10 +3197,14 @@ Deno.test("failed issuer anchors honor retry backoff on an immediate workflow in
     200,
   );
   assert(
-    String(immediate.status) === "backoff",
-    "future retry anchor was reclaimed",
+    String(immediate.status) === "backoff" ||
+      (immediate.status === "claimed" &&
+        immediate.seed?.issuer !== "Axis Bank"),
+    "future retry anchor was reclaimed instead of advancing another issuer",
   );
-  assert(immediate.seed === null, "backoff returned a crawl seed");
+  if (immediate.status === "backoff") {
+    assert(immediate.seed === null, "backoff returned a crawl seed");
+  }
   assert(anchor.attempt_count === 2, "backoff incremented the attempt counter");
   assert(
     anchor.status === "failed" &&
@@ -4014,9 +4112,8 @@ Deno.test("unfinished issuer backlog is paginated, resumed oldest-first across U
   assert(fresh.status === "claimed", "fresh UTC rotation stayed starved");
   assert(fresh.seed?.runDate === "2026-08-22", "fresh day slot was not used");
   assert(
-    fresh.seed?.rotationJobId !== "old-axis" &&
-      fresh.seed?.rotationJobId !== "later-hdfc",
-    "completed backlog was reclaimed again",
+    fresh.seed?.rotationEvidence.run_date === "2026-08-22",
+    "fresh rotation did not advance the stable issuer anchor to a new slot",
   );
 });
 
@@ -4248,7 +4345,12 @@ Deno.test("malformed retained attempt state is quarantined before claim", async 
     new Date("2026-08-20T00:00:00.000Z"),
     200,
   );
-  assert(claim.status === "empty", "malformed attempt state was claimed");
+  assert(
+    claim.status === "empty" ||
+      (claim.status === "claimed" &&
+        claim.seed?.rotationJobId !== "invalid-attempt"),
+    "malformed attempt state was claimed",
+  );
   assert(
     store.jobs[0].status === "failed" &&
       store.jobs[0].failure_category === "issuer_discovery_quarantined" &&

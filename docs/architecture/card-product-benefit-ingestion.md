@@ -113,7 +113,7 @@ flowchart TB
 
 | Component | Responsibility | Important constraint |
 |---|---|---|
-| `benefit-enrichment-batch` | Seeds/claims jobs, discovers issuer inventory, fetches cards, verifies identity, extracts, diffs, stages, retries | Claim RPC supports five jobs, but scheduled mode currently requests one; a claim contains one issuer; parser is `benefits-v5` |
+| `benefit-enrichment-batch` | Seeds/claims jobs, discovers issuer inventory, fetches cards, verifies identity, extracts, diffs, stages, retries | Scheduled mode claims one card or one issuer; current parser is `benefits-v6`; both scheduled lanes share a fail-closed runtime control |
 | `issuer_card_crawl` | Reads sitemap/index candidates, scores URLs, classifies pages, persists new-card review candidates | 200 URLs considered, 40 candidate fetches, sitemap depth 2 |
 | `official_issuer_fetch` | Canonicalizes URL, validates issuer domain and DNS, follows bounded redirects, enforces type/size/time policy, hashes content | HTTPS and first-party allowlist only; rejects private/loopback resolution |
 | `supporting_documents` | Follows same-card links for benefits, fees, charges, rewards, terms, conditions, or MITC | Hard limit 8 and depth 2; batch currently passes `maximumLinks: 1` |
@@ -230,13 +230,21 @@ This approval is atomic inside PostgreSQL: either the accepted benefits/mappings
 
 ### What the current parser actually extracts
 
-The production parser is deterministic TypeScript, not an LLM. The current `benefits-v5` implementation recognizes the following concrete structures:
+The production parser is deterministic TypeScript, not an LLM. The current `benefits-v6` implementation recognizes the following concrete structures:
 
 | Family | Recognized values and conditions | Stored projection |
 |---|---|---|
 | Cashback | percentage or fixed cashback; optional cap, period, restriction, exclusions, end date | category `cashback`; `rate` or `value`; `cap`; `period`; restrictions/exclusions |
-| Reward points | “earn N reward points”; optional spend threshold and spend restriction | category `rewards`; type `reward_points`; value/threshold; movie reward config when applicable |
+| Reward points | “earn/get N reward points”; optional spend threshold and spend restriction | category `points`; type `reward_points`; value/threshold; movie reward config when applicable |
+| Points multiplier | explicit `NX` points plus optional points cap, period, and spend family | category `points`; type `reward_multiplier` |
+| Welcome/milestone points | explicit points plus spend threshold and issuance/annual trigger | category `points`; type `welcome_bonus` or `milestone_bonus` |
+| Air miles | explicit miles per rupee threshold and spend restriction | category `miles`; type `air_miles` |
 | Lounge | explicit number of complimentary lounge visits; optional period/exclusions/end date | category `travel`; type `lounge_access`; visit count/frequency/period |
+| Fuel surcharge waiver | explicit waiver percentage or monetary cap | category `fuel`; type `fuel_surcharge_waiver` |
+| Category discount | explicit percentage and a named dining, grocery, utility, shopping, healthcare, travel, or general spend family | named category; type `percent_discount` |
+| Insurance | named insurance coverage with an explicit monetary amount | category `insurance`; type `insurance_cover` |
+| Golf and concierge | explicit complimentary/count-based golf access or complimentary/dedicated/24x7 concierge | category `golf` or `concierge` |
+| Annual fee waiver | explicit annual/renewal fee waiver and spend threshold | category `other`; type `fee_waiver` |
 | Movie percentage discount | explicit percent; optional transaction cap; detected platform/partner | category `entertainment`; `value_config.discount_type = percent` |
 | Movie BOGO | explicit buy-one-get-one plus mandatory cap and usage frequency | `discount_type = bogo`; cap; monthly/quarterly/yearly usage |
 | Movie fixed discount | explicit rupee discount | `discount_type = fixed`; discount amount |
@@ -382,13 +390,13 @@ Staging identity is unique on `(card_id, source_url_hash, parser_version, conten
 
 ## Current limitations and architectural risks
 
-1. **Extractor coverage is intentionally narrow.** Dining, fuel, insurance, forex markup, fee waivers, travel credits, golf, concierge, EMI, milestone rewards outside the implemented movie form, and many issuer-specific offers are not yet parsed.
-2. **Runtime supporting-document breadth is below the audited ceiling.** The collector supports eight links/depth two, but the batch worker currently requests only one supporting link for Edge compute safety. Important terms can therefore be missed and appear as possible removals.
+1. **Extractor coverage is explicit, not inferential.** The families listed above are parsed only when their concrete commercial terms are present. Forex markup, EMI facilities, generic marketing privileges, unvalued vouchers/subscriptions, and issuer-specific prose outside these grammars remain review/detection work rather than guessed benefits.
+2. **Supporting-document breadth is bounded.** The collector follows at most eight links to depth two and fails required-source overflow closed. Important terms on JavaScript-only or unrelated document trees can still be missed and appear as possible removals.
 3. **PDF extraction is lightweight.** It reads common literal `Tj`/`TJ` operators and deflated streams; scanned, encrypted, font-encoded, or structurally complex PDFs can yield empty text and be skipped.
 4. **No JavaScript execution.** Client-rendered issuer pages can appear empty or insufficient even when visible in a browser.
 5. **Presence is stronger than absence.** A found, grounded term can be proposed; a missing term can never prove removal. This is safe but creates ongoing review debt for stale benefits.
 6. **Two scraping implementations exist.** The legacy `scrape-card` proxy and canonical fetcher have different allowlists and controls, increasing drift risk.
-7. **Broad design model exceeds live parser.** The design discusses general rates, caps, thresholds, merchants, channels, effective dates, and exclusions. The schema can carry much of this, but only the patterns listed in Depth 3 are currently populated.
+7. **Hosted rollout can lag source.** Operational success must be measured by parser version, per-issuer/card coverage, review age, and category/type growth; an HTTP-200 scheduler invocation alone is not an ingestion success.
 
 ### Recommended next architecture steps
 

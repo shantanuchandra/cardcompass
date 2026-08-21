@@ -128,6 +128,41 @@ const ISSUER_DISCOVERY_BACKLOG_MAX_PAGES = 10;
 const ISSUER_DISCOVERY_MAX_ATTEMPTS = 5;
 const ISSUER_DISCOVERY_QUARANTINE_BATCH = 20;
 
+const SUPPORTED_ISSUER_DISCOVERY_SEEDS = Object.freeze(
+  [
+    { issuer: "Axis Bank", canonical_url: "https://www.axisbank.com/" },
+    { issuer: "HDFC Bank", canonical_url: "https://www.hdfcbank.com/" },
+    { issuer: "ICICI Bank", canonical_url: "https://www.icicibank.com/" },
+    { issuer: "Kotak Bank", canonical_url: "https://www.kotak.com/" },
+    { issuer: "IndusInd Bank", canonical_url: "https://www.indusind.com/" },
+    { issuer: "HSBC", canonical_url: "https://www.hsbc.co.in/" },
+    { issuer: "SBI Card", canonical_url: "https://www.sbicard.com/" },
+    {
+      issuer: "IDFC FIRST Bank",
+      canonical_url: "https://www.idfcfirstbank.com/",
+    },
+    { issuer: "Yes Bank", canonical_url: "https://www.yesbank.in/" },
+    {
+      issuer: "AU Small Finance Bank",
+      canonical_url: "https://www.aubank.in/",
+    },
+    { issuer: "RBL Bank", canonical_url: "https://www.rblbank.com/" },
+    {
+      issuer: "Bank of Baroda",
+      canonical_url: "https://www.bobfinancial.com/",
+    },
+    {
+      issuer: "Punjab National Bank",
+      canonical_url: "https://www.pnbcard.in/",
+    },
+    { issuer: "Standard Chartered", canonical_url: "https://www.sc.com/in/" },
+    {
+      issuer: "American Express",
+      canonical_url: "https://www.americanexpress.com/in/",
+    },
+  ] as const,
+);
+
 export function claimLimitForInvocation(_runMode: RunMode): 1 {
   return 1;
 }
@@ -5076,6 +5111,39 @@ export function selectIssuerDiscoveryCandidate(
   return sorted[daySlot % sorted.length];
 }
 
+/**
+ * Keeps discovery independent from existing catalog coverage. Catalog product
+ * URLs remain preferred when present; an allowlisted official origin bootstraps
+ * issuers that have not published their first reviewed catalog card yet.
+ */
+export function selectSupportedIssuerDiscoveryCandidate(
+  catalogRows: Array<Record<string, unknown>>,
+  now = new Date(),
+): Pick<EnrichmentJob, "issuer" | "canonical_url"> | null {
+  const catalogIssuers = new Set<string>();
+  for (const row of catalogRows) {
+    const issuer = String(row.bank ?? "").trim();
+    const url = String(row.card_url ?? "").trim();
+    if (
+      issuerRowIsApproved(row) &&
+      String(row.card_type ?? "").trim().toLowerCase() === "credit" &&
+      allowedOfficialUrl(issuer, url)
+    ) catalogIssuers.add(normalizedIssuerKey(issuer));
+  }
+  const bootstrapRows = SUPPORTED_ISSUER_DISCOVERY_SEEDS
+    .filter((seed) => !catalogIssuers.has(normalizedIssuerKey(seed.issuer)))
+    .map((seed) => ({
+      bank: seed.issuer,
+      card_url: seed.canonical_url,
+      card_type: "credit",
+      is_discontinued: false,
+    }));
+  return selectIssuerDiscoveryCandidate(
+    [...catalogRows, ...bootstrapRows],
+    now,
+  );
+}
+
 export async function recordIssuerDiscoveryOutcome(
   db: UntypedSupabaseClient,
   seed: IssuerDiscoverySeed,
@@ -6244,7 +6312,7 @@ export async function loadDiscoverySeed(
   if (issuerDiscoveryDeadlineReached(quarantineBudget)) {
     throw new Error("issuer_discovery_catalog_scan_exhausted");
   }
-  const selected = selectIssuerDiscoveryCandidate(rows, now);
+  const selected = selectSupportedIssuerDiscoveryCandidate(rows, now);
   if (issuerDiscoveryDeadlineReached(quarantineBudget)) {
     throw new Error("issuer_discovery_catalog_scan_exhausted");
   }
@@ -6292,6 +6360,23 @@ export async function handleBenefitEnrichmentBatch(
       const issuerMode = issuerDiscoveryRunMode(body);
       if (!issuerMode) {
         return json({ error: "invalid_issuer_discovery_request" }, 400);
+      }
+      try {
+        if (await runtimeControlPausesRun(db, issuerMode)) {
+          return json({
+            status: "paused",
+            control: "benefit_enrichment_scheduled",
+            action: "issuer_discovery",
+          });
+        }
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === "runtime_control_unavailable"
+        ) {
+          return json({ error: "runtime_control_unavailable" }, 503);
+        }
+        throw error;
       }
       const claim = await loadDiscoverySeed(db, new Date(), 200, {
         deadlineAt: invocationStartedAt + INVOCATION_DEADLINE_MS,

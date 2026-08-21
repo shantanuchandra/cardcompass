@@ -861,14 +861,20 @@ function decimal(value: string | undefined): number | undefined {
 }
 
 function money(text: string): number | undefined {
-  return decimal(
-    text.match(/(?:₹|rs\.?|inr)\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i)?.[1],
+  const matched = text.match(
+    /(?:₹|rs\.?|inr)\s*([0-9][0-9,]*(?:\.\d{1,2})?)\s*(lakh|lac|lacs|crore|crores)?/i,
   );
+  const value = decimal(matched?.[1]);
+  if (value === undefined) return undefined;
+  const unit = matched?.[2]?.toLowerCase();
+  return value * (unit?.startsWith("crore") ? 10_000_000 : unit ? 100_000 : 1);
 }
 
 function period(text: string): string | undefined {
   const matched = text.match(
     /\bper\s+(statement\s+month|calendar\s+month|month|quarter|year|annum|week|day)\b/i,
+  )?.[1] ?? text.match(
+    /\bin\s+(?:a|one|each)\s+(calendar\s+month|month|quarter|year|week|day)\b/i,
   )?.[1];
   if (!matched) return undefined;
   return normalize(matched).replace("annum", "year");
@@ -994,7 +1000,7 @@ function parseCashback(text: string): ParsedFields | null {
 
 function parseRewards(text: string): ParsedFields | null {
   const matched = text.match(
-    /\bearn\s+([0-9]+(?:\.\d+)?)\s+reward\s+points?\b/i,
+    /\b(?:earn|get)\s+([0-9]+(?:\.\d+)?)\s+reward\s+points?\b/i,
   );
   if (!matched) return null;
   const thresholdMatch = text.match(
@@ -1026,6 +1032,293 @@ function parseRewards(text: string): ParsedFields | null {
     restrictions: normalizedRestriction ? [normalizedRestriction] : [],
     exclusions: exclusions(text),
     ...(dateToIso(text) === undefined ? {} : { effectiveTo: dateToIso(text) }),
+  };
+}
+
+function parseRewardMultiplier(text: string): ParsedFields | null {
+  const matched = text.match(
+    /\bearn\s+([0-9]+(?:\.\d+)?)\s*[x×]\s+reward\s+points?\b/i,
+  );
+  if (!matched) return null;
+  const multiplier = decimal(matched[1]);
+  const cap = decimal(
+    text.match(
+      /\b(?:capp?ed\s+(?:at|to)|maximum\s+(?:of\s+)?)\s*([0-9][0-9,]*)\s+reward\s+points?\b/i,
+    )?.[1],
+  );
+  const restriction = text.match(
+    /\breward\s+points?\s+on\s+(.+?)(?=\s*,?\s*(?:capp?ed|maximum|excluding|valid|until|per\b)|[.;]|$)/i,
+  )?.[1];
+  return {
+    category: "points",
+    valueType: "reward_multiplier",
+    rate: multiplier,
+    ...(cap === undefined ? {} : { cap }),
+    ...(period(text) === undefined ? {} : { period: period(text) }),
+    valueConfig: {
+      reward_type: "points_multiplier",
+      multiplier,
+      ...(cap === undefined ? {} : { max_reward_points: cap }),
+    },
+    restrictions: restriction ? [normalize(restriction)] : [],
+    exclusions: exclusions(text),
+  };
+}
+
+function parseWelcomeBonus(text: string): ParsedFields | null {
+  if (
+    !/\b(?:within\s+[0-9]+\s+days?|card\s+issuance|welcome|joining)\b/i.test(
+      text,
+    )
+  ) {
+    return null;
+  }
+  const matched = text.match(
+    /\b(?:get|earn|receive)\s+([0-9][0-9,]*(?:\.\d+)?)\s+(?:bonus\s+|welcome\s+)?reward\s+points?\b/i,
+  );
+  if (!matched) return null;
+  const thresholdText = text.match(
+    /\bspends?\s+(?:of|above|over)\s+((?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d+)?\s*(?:lakh|lac|lacs|crore|crores)?)/i,
+  )?.[1];
+  const threshold = money(thresholdText ?? "");
+  if (threshold === undefined) return null;
+  const value = decimal(matched[1]);
+  const days = decimal(text.match(/\bwithin\s+([0-9]+)\s+days?\b/i)?.[1]);
+  return {
+    category: "points",
+    valueType: "welcome_bonus",
+    value,
+    threshold,
+    valueConfig: {
+      reward_type: "points",
+      reward_points: value,
+      threshold_amount: threshold,
+      milestone_type: "welcome",
+      ...(days === undefined ? {} : { qualification_days: days }),
+    },
+    restrictions: [],
+    exclusions: exclusions(text),
+  };
+}
+
+function parseMilestoneBonus(text: string): ParsedFields | null {
+  const matched = text.match(
+    /\b([0-9][0-9,]*(?:\.\d+)?)\s+(?:bonus|welcome|renewal)\s+reward\s+points?\b/i,
+  );
+  if (!matched) return null;
+  const thresholdText = text.match(
+    /\b(?:annual\s+)?spends?\s+(?:of|above|over)\s+((?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d+)?\s*(?:lakh|lac|lacs|crore|crores)?)/i,
+  )?.[1];
+  const threshold = money(thresholdText ?? "");
+  if (threshold === undefined) return null;
+  const value = decimal(matched[1]);
+  return {
+    category: "points",
+    valueType: "milestone_bonus",
+    value,
+    threshold,
+    ...(/\bannual\b/i.test(text) ? { period: "year" } : {}),
+    valueConfig: {
+      reward_type: "points",
+      reward_points: value,
+      threshold_amount: threshold,
+      milestone_type: /\bannual\b/i.test(text) ? "annual" : "spend",
+    },
+    restrictions: [],
+    exclusions: exclusions(text),
+  };
+}
+
+function parseAirMiles(text: string): ParsedFields | null {
+  const matched = text.match(
+    /\bearn\s+([0-9]+(?:\.\d+)?)\s+(?:air\s+)?miles?\b/i,
+  );
+  if (!matched) return null;
+  const thresholdText = text.match(
+    /\b(?:for\s+every|per)\s*((?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d{1,2})?)/i,
+  )?.[1];
+  const threshold = money(thresholdText ?? "");
+  if (threshold === undefined) return null;
+  const restriction = text.match(
+    /\bspent\s+on\s+(.+?)(?=\s*,?\s*(?:valid|until|excluding)|[.;]|$)/i,
+  )?.[1];
+  return {
+    category: "miles",
+    valueType: "air_miles",
+    value: decimal(matched[1]),
+    threshold,
+    valueConfig: {
+      reward_type: "air_miles",
+      miles: decimal(matched[1]),
+      threshold_amount: threshold,
+    },
+    restrictions: restriction ? [normalize(restriction)] : [],
+    exclusions: exclusions(text),
+  };
+}
+
+function parseFuelSurchargeWaiver(text: string): ParsedFields | null {
+  if (!/\bfuel\s+surcharge\s+waiv(?:er|ed)\b/i.test(text)) return null;
+  const rate = decimal(
+    text.match(/\b([0-9]+(?:\.\d+)?)\s*%\s*fuel\s+surcharge\s+waiv(?:er|ed)\b/i)
+      ?.[1],
+  );
+  const cap = cappedAmount(text);
+  if (rate === undefined && cap === undefined) return null;
+  return {
+    category: "fuel",
+    valueType: "fuel_surcharge_waiver",
+    ...(rate === undefined ? {} : { rate }),
+    ...(cap === undefined ? {} : { cap }),
+    ...(period(text) === undefined ? {} : { period: period(text) }),
+    valueConfig: {
+      waiver_type: "fuel_surcharge",
+      ...(rate === undefined ? {} : { waiver_percent: rate }),
+      ...(cap === undefined ? {} : { max_waiver: cap }),
+    },
+    restrictions: ["fuel transactions"],
+    exclusions: exclusions(text),
+  };
+}
+
+function parseInsuranceCover(text: string): ParsedFields | null {
+  if (!/\binsurance\b/i.test(text) || !/\bcover(?:age)?\b/i.test(text)) {
+    return null;
+  }
+  const coverage = money(
+    text.match(
+      /\bcover(?:age)?\s+(?:of|up\s+to)\s+((?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d+)?\s*(?:lakh|lac|lacs|crore|crores)?)/i,
+    )?.[1] ?? "",
+  );
+  if (coverage === undefined) return null;
+  const coverageType = normalize(
+    text.match(/\b([a-z][a-z\s-]{1,60}?\s+insurance)\s+cover(?:age)?\b/i)
+      ?.[1] ??
+      "insurance",
+  );
+  return {
+    category: "insurance",
+    valueType: "insurance_cover",
+    value: coverage,
+    cap: coverage,
+    valueConfig: { coverage_type: coverageType, coverage_amount: coverage },
+    restrictions: [coverageType],
+    exclusions: exclusions(text),
+  };
+}
+
+function parseGolfAccess(text: string): ParsedFields | null {
+  const matched = text.match(
+    /\b([0-9]+)\s+complimentary\s+golf\s+(?:rounds?|games?|visits?|lessons?)\b/i,
+  );
+  const included =
+    /\bcomplimentary\s+golf\s+(?:rounds?|games?|visits?|lessons?)\b/i
+      .test(text);
+  if (!matched && !included) return null;
+  const value = decimal(matched?.[1]);
+  return {
+    category: "golf",
+    valueType: "golf_access",
+    ...(value === undefined ? {} : { value }),
+    ...(matched ? { frequency: `${matched[1]} golf visits` } : {}),
+    ...(period(text) === undefined ? {} : { period: period(text) }),
+    valueConfig: {
+      ...(value === undefined ? {} : { access_count: value }),
+      access_type: "golf",
+      access_included: true,
+    },
+    restrictions: [],
+    exclusions: exclusions(text),
+  };
+}
+
+function parseConciergeAccess(text: string): ParsedFields | null {
+  if (!/\bconcierge\s+(?:service|services|assistance)\b/i.test(text)) {
+    return null;
+  }
+  if (
+    !/\b(?:complimentary|24\s*[x×]\s*7|round-the-clock|dedicated)\b/i.test(text)
+  ) {
+    return null;
+  }
+  const availability = /\b24\s*[x×]\s*7\b/i.test(text) ? "24x7" : "included";
+  return {
+    category: "concierge",
+    valueType: "concierge_access",
+    valueConfig: { availability },
+    restrictions: [],
+    exclusions: exclusions(text),
+  };
+}
+
+function parseFeeWaiver(text: string): ParsedFields | null {
+  if (
+    !/\b(?:annual|renewal|membership)\s+fee\b/i.test(text) ||
+    !/\bwaiv(?:er|ed|er\s+of|ed\s+off)\b/i.test(text)
+  ) return null;
+  const thresholdText = text.match(
+    /\bspends?\s+(?:of|above|over)\s+((?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d+)?\s*(?:lakh|lac|lacs|crore|crores)?)/i,
+  )?.[1];
+  const threshold = money(thresholdText ?? "");
+  if (threshold === undefined) return null;
+  return {
+    category: "other",
+    valueType: "fee_waiver",
+    threshold,
+    period: "year",
+    valueConfig: { fee_type: "annual", min_spend: threshold },
+    restrictions: [],
+    exclusions: exclusions(text),
+  };
+}
+
+function discountCategory(text: string): string | undefined {
+  if (/\b(?:dining|restaurant|restaurants|eazydiner)\b/i.test(text)) {
+    return "dining";
+  }
+  if (/\b(?:grocery|groceries|supermarket|bigbasket)\b/i.test(text)) {
+    return "grocery";
+  }
+  if (/\b(?:utility|utilities|bill\s+payments?)\b/i.test(text)) {
+    return "utility";
+  }
+  if (/\b(?:healthcare|medical|pharmacy|pharmacies|hospital)\b/i.test(text)) {
+    return "healthcare";
+  }
+  if (
+    /\b(?:all|general)\s+(?:retail\s+)?(?:spends?|purchases?)\b/i.test(text)
+  ) return "general";
+  if (/\b(?:shopping|retail|department\s+stores?)\b/i.test(text)) {
+    return "shopping";
+  }
+  if (/\b(?:travel|flights?|hotels?)\b/i.test(text)) return "travel";
+  return undefined;
+}
+
+function parseCategoryDiscount(text: string): ParsedFields | null {
+  if (/\b(?:cashback|movies?|cinema)\b/i.test(text)) return null;
+  const rate = decimal(
+    text.match(/\b([0-9]+(?:\.\d+)?)\s*%\s*(?:off|discount)\b/i)?.[1] ??
+      text.match(/\bdiscount(?:ed)?\s+(?:of\s+)?([0-9]+(?:\.\d+)?)\s*%\b/i)
+        ?.[1],
+  );
+  const category = discountCategory(text);
+  if (rate === undefined || category === undefined) return null;
+  const cap = cappedAmount(text);
+  return {
+    category,
+    valueType: "percent_discount",
+    rate,
+    ...(cap === undefined ? {} : { cap }),
+    ...(period(text) === undefined ? {} : { period: period(text) }),
+    valueConfig: {
+      spend_category: category,
+      discount_type: "percent",
+      discount_percent: rate,
+      ...(cap === undefined ? {} : { max_discount: cap }),
+    },
+    restrictions: [category],
+    exclusions: exclusions(text),
   };
 }
 
@@ -1081,7 +1374,8 @@ function startsIndependentBenefitClause(text: string): boolean {
       .test(text) ||
     (/\b(?:free|complimentary)\b[\s\S]*\bmovie\s+tickets?\b/i.test(text) &&
       /\b(?:year|annual|annum)\b/i.test(text)) ||
-    /\b(?:cashback|reward\s+points?|lounge)\b/i.test(text) ||
+    /\b(?:cashback|reward\s+points?|air\s+miles?|lounge|fuel\s+surcharge|insurance\s+cover|golf|concierge|fee\s+waiv)\b/i
+      .test(text) ||
     /(?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d{1,2})?\s*(?:off|discount)\b/i
       .test(text);
 }
@@ -1236,14 +1530,17 @@ function parseMovieBenefit(text: string): ParsedFields | null {
 }
 
 function parseLounge(text: string): ParsedFields | null {
-  if (!/\b(?:airport\s+)?lounge\b/i.test(text)) return null;
+  if (!/\b(?:airport\s+)?lounges?\b/i.test(text)) return null;
   const beforeLounge = text.match(
     /\b([0-9]+)\s+(?:complimentary\s+)?(?:airport\s+)?lounge\s+(?:access\s+)?visits?\b/i,
   )?.[1];
   const afterLounge = text.match(
     /\b(?:airport\s+)?lounge\s+access\s*:\s*([0-9]+)\s+complimentary\s+visits?\b/i,
   )?.[1];
-  const visitCount = beforeLounge ?? afterLounge;
+  const freeVisits = text.match(
+    /\b([0-9]+)\s+(?:free|complimentary)\s+(?:airport\s+|lounge\s+)?visits?\b[\s\S]*\b(?:airport\s+)?lounges?\b/i,
+  )?.[1];
+  const visitCount = beforeLounge ?? afterLounge ?? freeVisits;
   if (!visitCount) return null;
   const visits = decimal(visitCount);
   return {
@@ -1263,7 +1560,12 @@ function parseLine(
   document: TrustedBenefitDocument,
   parserVersion: string,
 ): ParsedBenefit | null {
-  const fields = parseMovieBenefit(text) ?? parseCashback(text) ??
+  const fields = parseMovieBenefit(text) ?? parseFuelSurchargeWaiver(text) ??
+    parseRewardMultiplier(text) ?? parseWelcomeBonus(text) ??
+    parseMilestoneBonus(text) ?? parseAirMiles(text) ??
+    parseInsuranceCover(text) ?? parseGolfAccess(text) ??
+    parseConciergeAccess(text) ?? parseFeeWaiver(text) ??
+    parseCategoryDiscount(text) ?? parseCashback(text) ??
     parseRewards(text) ?? parseLounge(text);
   if (!fields) return null;
   const sourceExcerpt = sanitize(text);
@@ -1276,8 +1578,32 @@ function parseLine(
     ? `${fields.value} reward points`
     : fields.valueType === "lounge_access"
     ? `${fields.value} lounge visits`
+    : fields.valueType === "fuel_surcharge_waiver"
+    ? fields.rate === undefined
+      ? "Fuel surcharge waiver"
+      : `${fields.rate}% fuel surcharge waiver`
+    : fields.valueType === "insurance_cover"
+    ? `₹${fields.value} insurance cover`
+    : fields.valueType === "golf_access"
+    ? fields.value === undefined
+      ? "Complimentary golf access"
+      : `${fields.value} complimentary golf visits`
+    : fields.valueType === "concierge_access"
+    ? "Complimentary concierge access"
+    : fields.valueType === "fee_waiver"
+    ? "Annual fee waiver"
+    : fields.valueType === "air_miles"
+    ? `${fields.value} air miles`
+    : fields.valueType === "milestone_bonus"
+    ? `${fields.value} bonus reward points`
+    : fields.valueType === "welcome_bonus"
+    ? `${fields.value} welcome reward points`
+    : fields.valueType === "reward_multiplier"
+    ? `${fields.rate}X reward points`
     : fields.valueType === "percent_discount"
-    ? `${fields.rate}% off movie tickets`
+    ? `${fields.rate}% off ${
+      fields.category === "entertainment" ? "movie tickets" : fields.category
+    }`
     : fields.valueType === "bogo"
     ? "Buy 1 get 1 movie ticket"
     : fields.valueType === "fixed_discount"
@@ -1471,7 +1797,16 @@ export function offerSubjectForProposal(
       : /\binternational\b/.test(text)
       ? "international"
       : "general")
-    : category === "cashback" || category === "points"
+    : category === "insurance"
+    ? [
+      "air accident insurance",
+      "personal accident insurance",
+      "travel insurance",
+      "purchase protection",
+      "card fraud",
+      "lost card",
+    ].find((term) => text.includes(term))?.replace(/\s+/g, "_") ?? "general"
+    : category === "cashback" || category === "points" || category === "miles"
     ? [
       "dining",
       "fuel",

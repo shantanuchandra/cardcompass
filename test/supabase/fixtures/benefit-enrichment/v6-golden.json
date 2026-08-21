@@ -102,7 +102,53 @@
   {
     "name": "fee waiver threshold",
     "text": "Annual fee waiver on spends of ₹2 lakh in a year.",
-    "expected": []
+    "expected": [
+      {
+        "benefitId": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:84dfc514417249894345b8d54cc1028dd8c536060ee0ecce176efe9f19ea25e7",
+        "dedupeKey": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:84dfc514417249894345b8d54cc1028dd8c536060ee0ecce176efe9f19ea25e7",
+        "conditionHash": "84dfc514417249894345b8d54cc1028dd8c536060ee0ecce176efe9f19ea25e7",
+        "parserVersion": "benefits-v6",
+        "title": "Annual fee waiver",
+        "description": "Annual fee waiver on spends of ₹2 lakh in a year.",
+        "category": "other",
+        "valueType": "fee_waiver",
+        "value": null,
+        "rate": null,
+        "cap": null,
+        "threshold": 200000,
+        "valueConfig": {
+          "fee_type": "annual",
+          "min_spend": 200000,
+          "period": "year",
+          "threshold": 200000,
+          "offer_subject": "other:fee_waiver:general",
+          "restrictions": [],
+          "exclusions": {
+            "additional": { "source_terms": [] },
+            "categories": [],
+            "days": [],
+            "mcc_codes": [],
+            "merchants": [],
+            "transaction_types": []
+          }
+        },
+        "partners": [],
+        "frequency": null,
+        "period": "year",
+        "restrictions": [],
+        "exclusions": {
+          "additional": { "source_terms": [] },
+          "categories": [],
+          "days": [],
+          "mcc_codes": [],
+          "merchants": [],
+          "transaction_types": []
+        },
+        "effectiveFrom": null,
+        "effectiveTo": null,
+        "warnings": []
+      }
+    ]
   },
   {
     "name": "points multiplier",
@@ -208,12 +254,104 @@
   {
     "name": "fuel surcharge waiver",
     "text": "Fuel surcharge waiver on fuel transactions up to ₹400 per month.",
-    "expected": []
+    "expected": [
+      {
+        "benefitId": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:d3bdc6c1465b1b6fda0901736a1f89036956c9c87be43591f8fb58092f2a6e11",
+        "dedupeKey": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:d3bdc6c1465b1b6fda0901736a1f89036956c9c87be43591f8fb58092f2a6e11",
+        "conditionHash": "d3bdc6c1465b1b6fda0901736a1f89036956c9c87be43591f8fb58092f2a6e11",
+        "parserVersion": "benefits-v6",
+        "title": "Fuel surcharge waiver",
+        "description": "Fuel surcharge waiver on fuel transactions up to ₹400 per month.",
+        "category": "fuel",
+        "valueType": "fuel_surcharge_waiver",
+        "value": null,
+        "rate": null,
+        "cap": 400,
+        "threshold": null,
+        "valueConfig": {
+          "cap": 400,
+          "max_waiver": 400,
+          "period": "month",
+          "waiver_type": "fuel_surcharge",
+          "offer_subject": "fuel:fuel_surcharge_waiver:general",
+          "restrictions": ["fuel transactions"],
+          "exclusions": {
+            "additional": { "source_terms": [] },
+            "categories": [],
+            "days": [],
+            "mcc_codes": [],
+            "merchants": [],
+            "transaction_types": []
+          }
+        },
+        "partners": [],
+        "frequency": null,
+        "period": "month",
+        "restrictions": ["fuel transactions"],
+        "exclusions": {
+          "additional": { "source_terms": [] },
+          "categories": [],
+          "days": [],
+          "mcc_codes": [],
+          "merchants": [],
+          "transaction_types": []
+        },
+        "effectiveFrom": null,
+        "effectiveTo": null,
+        "warnings": []
+      }
+    ]
   },
   {
     "name": "insurance exclusion",
     "text": "Travel insurance cover of ₹5 lakh excluding pre-existing conditions.",
-    "expected": []
+    "expected": [
+      {
+        "benefitId": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:b0c237a9220148754df38637ada45d8e98206bc636bf7b8052c80d1683893572",
+        "dedupeKey": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:b0c237a9220148754df38637ada45d8e98206bc636bf7b8052c80d1683893572",
+        "conditionHash": "b0c237a9220148754df38637ada45d8e98206bc636bf7b8052c80d1683893572",
+        "parserVersion": "benefits-v6",
+        "title": "₹500000 insurance cover",
+        "description": "Travel insurance cover of ₹5 lakh excluding pre-existing conditions.",
+        "category": "insurance",
+        "valueType": "insurance_cover",
+        "value": 500000,
+        "rate": null,
+        "cap": 500000,
+        "threshold": null,
+        "valueConfig": {
+          "cap": 500000,
+          "coverage_amount": 500000,
+          "coverage_type": "travel insurance",
+          "value": 500000,
+          "offer_subject": "insurance:insurance_cover:travel_insurance",
+          "restrictions": ["travel insurance"],
+          "exclusions": {
+            "additional": { "source_terms": ["pre-existing conditions"] },
+            "categories": [],
+            "days": [],
+            "mcc_codes": [],
+            "merchants": [],
+            "transaction_types": []
+          }
+        },
+        "partners": [],
+        "frequency": null,
+        "period": null,
+        "restrictions": ["travel insurance"],
+        "exclusions": {
+          "additional": { "source_terms": ["pre-existing conditions"] },
+          "categories": [],
+          "days": [],
+          "mcc_codes": [],
+          "merchants": [],
+          "transaction_types": []
+        },
+        "effectiveFrom": null,
+        "effectiveTo": null,
+        "warnings": []
+      }
+    ]
   },
   {
     "name": "tiered milestone rewards",
