@@ -80,7 +80,7 @@ final routerProvider = Provider<GoRouter>((ref) {
     refreshListenable: refreshListenable,
     redirect: (context, state) {
       final authState = ref.read(authNotifierProvider);
-      if (authState.isLoading) return null;
+      if (authStatusIsPending(authState)) return null;
       final isAuthed = authState.valueOrNull == AuthStatus.authenticated;
       final loc = state.matchedLocation;
       if (Uri.base.fragment.contains('access_token')) return null;
@@ -97,7 +97,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: appLoginPath, builder: (_, s) => const LoginScreen()),
       GoRoute(
         path: '/',
-        pageBuilder: (_, s) => ref.read(authNotifierProvider).isLoading
+        pageBuilder: (_, s) =>
+            authStatusIsPending(ref.read(authNotifierProvider))
             ? const NoTransitionPage(child: SplashScreen())
             : _appShellPage(),
       ),

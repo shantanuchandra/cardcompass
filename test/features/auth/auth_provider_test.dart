@@ -35,6 +35,21 @@ ProviderContainer _container(
 
 void main() {
   test(
+    'a resolved auth value is not blocked by dependency refresh loading',
+    () {
+      final refreshing = const AsyncLoading<AuthStatus>().copyWithPrevious(
+        const AsyncData(AuthStatus.unauthenticated),
+        isRefresh: false,
+      );
+
+      expect(refreshing.isLoading, isTrue);
+      expect(refreshing.hasValue, isTrue);
+      expect(authStatusIsPending(refreshing), isFalse);
+      expect(authStatusIsPending(const AsyncLoading<AuthStatus>()), isTrue);
+    },
+  );
+
+  test(
     'missing auth user is unauthenticated without reading a profile',
     () async {
       var reads = 0;

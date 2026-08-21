@@ -15,6 +15,7 @@ class LoginScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final auth = ref.watch(authNotifierProvider);
+    final authPending = authStatusIsPending(auth);
     final callbackFailed =
         Uri.base.queryParameters.containsKey('code') &&
         auth.valueOrNull == AuthStatus.unauthenticated;
@@ -28,7 +29,7 @@ class LoginScreen extends ConsumerWidget {
     return Theme(
       data: AppTheme.marketing,
       child: LoginView(
-        isLoading: auth.isLoading,
+        isLoading: authPending,
         callbackFailed: callbackFailed,
         error: auth.error,
         onGoogleSignIn: () =>
