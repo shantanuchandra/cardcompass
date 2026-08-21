@@ -87,6 +87,41 @@ function decodedText(html: string): string {
     .slice(0, 160_000);
 }
 
+function catalogIdentityTokens(value: string): string[] {
+  const generic = new Set(["bank", "card", "cards", "credit", "the", "and"]);
+  return value.toLowerCase().split(/[^a-z0-9]+/).filter((token) =>
+    token.length > 1 && !generic.has(token)
+  );
+}
+
+function productScopedCatalogHtml(
+  html: string,
+  expectedCardName: string,
+): string {
+  if (!html.trim() || !/<[a-z][\s\S]*>/i.test(html)) return html;
+  let cleaned = html;
+  for (let pass = 0; pass < 4; pass += 1) {
+    const next = cleaned
+      .replace(/<(header|nav|footer|aside)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
+      .replace(
+        /<([a-z][a-z0-9:-]*)\b[^>]*\brole\s*=\s*(?:"(?:banner|navigation|contentinfo|complementary)"|'(?:banner|navigation|contentinfo|complementary)'|(?:banner|navigation|contentinfo|complementary))[^>]*>[\s\S]*?<\/\1\s*>/gi,
+        " ",
+      );
+    if (next === cleaned) break;
+    cleaned = next;
+  }
+  const expectedTokens = catalogIdentityTokens(expectedCardName);
+  if (expectedTokens.length === 0) return cleaned;
+  const mainSections = [...cleaned.matchAll(
+    /<main\b[^>]*>[\s\S]*?<\/main\s*>/gi,
+  )].map((match) => match[0]);
+  const targetMain = mainSections.find((section) => {
+    const tokens = new Set(catalogIdentityTokens(decodedText(section)));
+    return expectedTokens.every((token) => tokens.has(token));
+  });
+  return targetMain ?? cleaned;
+}
+
 function excerpt(value: string): string {
   return redactSensitiveUrlsInText(value)
     .replace(/(?<!\d)(?:\d[\s-]*){6,}(?!\d)/g, "[redacted]")
@@ -113,23 +148,35 @@ function feeField(
   text: string,
   label: RegExp,
 ): FieldEvidence<number> | undefined {
-  const line = labelledLine(text, label);
-  if (!line) return undefined;
-  const value = normalizeMoney(line);
-  return value == null
-    ? undefined
-    : { value, confidence: 0.96, evidence: excerpt(line) };
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (!label.test(line)) continue;
+    if (
+      /\b(?:waiv(?:e|er|ed)|spend|eligible|threshold|add[- ]?on|supplementary)\b/i
+        .test(line)
+    ) {
+      continue;
+    }
+    const context = `${line} ${lines[index + 1] ?? ""}`.trim();
+    const value = normalizeMoney(context);
+    if (value != null) {
+      return { value, confidence: 0.96, evidence: excerpt(context) };
+    }
+  }
+  return undefined;
 }
 
 export function normalizeOfficialCatalogPage(
   html: string,
   sourceUrl: string,
+  expectedCardName = "",
 ): {
   patch: CatalogPatch;
   benefits: BenefitCandidate[];
   evidence: Record<string, string>;
 } {
-  const text = decodedText(html);
+  const text = decodedText(productScopedCatalogHtml(html, expectedCardName));
   sourceUrl = safeHttpsDisplayUrl(sourceUrl) ?? "invalid-source";
   const patch: CatalogPatch = {};
   const joiningFee = feeField(text, /\bjoining\s+fee\b/i);
@@ -152,7 +199,10 @@ export function normalizeOfficialCatalogPage(
     };
   }
 
-  const networkLine = labelledLine(text, /\bnetwork\b/i);
+  const networkLine = labelledLine(
+    text,
+    /^\s*(?:(?:card|payment)\s+)?network\b/i,
+  );
   const network = networkLine?.match(
     /\b(visa|mastercard|rupay|american express|amex)\b/i,
   )?.[1];

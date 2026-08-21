@@ -41,6 +41,35 @@ test("normalizes explicit Indian fee and APR values", () => {
   assert.equal(result.patch.network?.value, "Visa");
 });
 
+test("catalog scalar extraction ignores site-wide header and footer offers", () => {
+  const result = normalizeOfficialCatalogPage(
+    `
+      <header>
+        <p>Annual Fee ₹3,50,000</p>
+        <p>Network Mastercard</p>
+      </header>
+      <main>
+        <h1>IndianOil Axis Bank Credit Card</h1>
+        <p>Spend more than ₹3,50,000 in a card anniversary year and you will be eligible for annual fee waiver.</p>
+        <p>A related Sapphiro product testimonial mentions a dual network Mastercard card.</p>
+        <dl>
+          <dt>Joining Fee</dt><dd>₹500 + GST</dd>
+          <dt>Annual Fee</dt><dd>₹500 + GST</dd>
+          <dt>Network</dt><dd>Visa</dd>
+        </dl>
+      </main>
+      <footer><p>Finance charges 48% annually</p></footer>
+    `,
+    "https://www.axis.bank.in/cards/credit-card/indianoil-axis-bank-credit-card",
+    "IndianOil",
+  );
+
+  assert.equal(result.patch.joining_fee?.value, 500);
+  assert.equal(result.patch.annual_fee?.value, 500);
+  assert.equal(result.patch.network?.value, "Visa");
+  assert.equal(result.patch.apr, undefined);
+});
+
 test("backfills null fields but reports non-null conflicts", () => {
   assert.deepEqual(
     diffCatalogFields(

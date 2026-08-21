@@ -268,7 +268,11 @@ export async function processCatalogEnrichmentJob(
       String(catalog.card_name ?? ""),
       page.finalUrl,
     );
-    const normalized = normalizeOfficialCatalogPage(page.text, page.finalUrl);
+    const normalized = normalizeOfficialCatalogPage(
+      page.text,
+      page.finalUrl,
+      String(catalog.card_name ?? ""),
+    );
     const publicationEvidence = {
       official_url: page.finalResourceUrl ?? page.finalUrl,
       ...publicationFieldsFromFetch(page),
