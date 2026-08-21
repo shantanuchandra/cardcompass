@@ -29,19 +29,30 @@ For a pilot run, the worker:
    `card_catalog` card, its `card_benefit_mapping` rows, and mapped `benefits`.
 2. Fetches each selected source once through the existing safe fetcher.
 3. Retains at most nine immutable in-memory documents. Overflow throws instead
-   of truncating verification input.
+   of truncating verification input. PDF literal and compressed-stream text
+   share one cumulative extraction budget; overflow is an explicit
+   `oversized` source result rather than a retained prefix.
 4. Runs two independent `benefits-v6` extractions over separate clones of that
    same retained snapshot.
-5. Converts fetched documents to replay input v2: bounded known issuer/card
-   context, queryless display URLs, opaque requested/final identities, content
-   hash, minimal public benefit/identity facts, and at most eight sanitized
-   hyperlink href/required-source-vocabulary pairs with opaque resource identity. The replay does
+5. Converts fetched documents to replay input v3: bounded known issuer/card
+   context; separate queryless display URLs and exact approved functional
+   resource URLs; independently recomputed requested/final identities; content
+   hash; explicit fact count/overflow/privacy-normalization fields; every
+   bounded benefit/card-identity/ambiguity fact found while scanning the entire
+   source; and at most eight sanitized hyperlink href/resource/required-source
+   vocabulary pairs with recomputed identity and explicit query policy. The replay does
    not copy `expected_required_source_keys`; the live and qualification paths
    reuse the same required-link predicate to derive them independently. It then
    uses that persisted form for both extraction passes, the card-identity
    classifier, and the qualification-time actual v6 parser rerun. Each retained
-   document URL plus opaque identity must match the exact authoritative
-   attempt. A link must bind either to that exact attempt or to the requested
+   document resource URL plus recomputed opaque identity must match the exact
+   authoritative attempt. Only `document`, `file`, `locale`, and `version`
+   query keys survive with exact safe bytes/order/duplicates and a 512-byte raw
+   value cap; tracking is removed before its value is inspected, and sensitive
+   after approved percent decoding, encoded-control, encoded-key, malformed, or
+   unknown queries fail closed. Primary resources preserve the fetcher's exact
+   `submittedResourceUrl`, not only its queryless display. A link
+   must bind either to that exact attempt or to the requested
    side of a retained requested-to-final redirect; an identity borrowed from a
    different href fails. Retained card labels must be the current catalog name,
    name/network label, or a current catalog alias.
@@ -64,12 +75,21 @@ For a pilot run, the worker:
 8. Recursively inspects persistable artifacts and retained envelopes before
    any staging write, and repeats the check before finalization, for
    raw-body, statement/customer, credential, token, lease, signed-query, and
-   secret-bearing fields and byte overflow. Replay minimization removes emails,
+   secret-bearing fields and byte overflow. It performs bounded recursive
+   percent/HTML decoding, Unicode NFKD compatibility normalization, zero-width
+   and combining-mark removal, common confusable folding, and cross-script
+   digit normalization before detection. Replay minimization removes emails,
    payment/PAN numbers including spaced/dashed forms, phones, long account or
    customer IDs (including values longer than 19 digits), alphanumeric
    PAN/payment IDs, formatted phones, labeled
    single- or multi-word customer names, arbitrary prose, and unknown
-   person-like subjects regardless of lowercase, uppercase, or mixed casing.
+   person-like subjects regardless of lowercase, uppercase, mixed casing, or
+   Devanagari/normalized Unicode form. Residual named entities and decimal-digit
+   scripts fail closed. Context exceptions require an exact issuer/product
+   phrase associated with the subject; catalog-label word substrings do not
+   qualify. Privacy is checked per bounded retained fact, so benign irrelevant
+   footer entities do not contaminate a safe benefit fact. A relevant private
+   fact sets explicit overflow and blocks the run rather than disappearing.
    Hyperlink anchors are reduced to a tiny required-source vocabulary rather
    than retaining arbitrary prose. Direct official-source probes prove those bytes never
    reach either staging or finalization. Cache validators are omitted from
@@ -79,7 +99,9 @@ For a pilot run, the worker:
    bindings, five distinct profiles, and three normalized issuers.
 10. Publishes Task 4 review results under the global review advisory -> benefit
     identity advisory -> card row -> staging row order shared with Task 7, then
-    revalidates the locked credit-card identity. JSON audit timestamps are
+    revalidates the locked credit-card identity. This new identity/card lock is
+    scoped to `benefits-v6`; historical `benefits-v5` approval keeps its prior
+    semantics even without current catalog/card-type state. JSON audit timestamps are
     explicit six-microsecond UTC strings; `Z`, positive offsets, negative
     offsets, spaces, and variable fractional widths normalize to the same
     instant without erasing true microsecond changes.
@@ -172,10 +194,26 @@ and lease tokens are omitted.
   representable; no-change is not inferred from `proposals.length == 0`.
 - Required HTML/PDF/supporting failure remains incomplete; possible removals
   are suppressed and counted.
-- Query-bearing required hyperlinks retain only a queryless display href plus
-  opaque full-resource identity. A link omitted consistently from both the
+- Query-bearing required hyperlinks retain a queryless display href separately
+  from the exact approved functional resource URL. Edge and SQL recompute the
+  opaque identity from that exact URL; supplied hashes cannot qualify. Query
+  order/duplicates remain identity-bearing, tracking is removed before its
+  encoded value is interpreted, and root URL plus allowed/forbidden percent
+  escape parity is tested. Decoded sensitive names such as `access_token` or
+  `customer id`, encoded controls, invalid UTF-8 escapes, and raw values beyond
+  512 bytes fail in both Edge and SQL. A link omitted consistently from both the
   supplied expected set and attempts still fails independent classification;
   hyperlink overflow fails closed.
+- Late benefit facts and late rival-card ambiguity are retained. No count,
+  per-fact, total-byte, or hyperlink bound is silently sliced; an explicit
+  overflow bit blocks qualification. PDF aggregate extraction overflow is an
+  explicit failure, including late facts beyond the old prefix boundary.
+- Nested percent/HTML encodings, Unicode digits, fullwidth text, combining and
+  zero-width forms, confusable person names, emails, PAN/payment numbers,
+  phones, and long account IDs are rejected before staging/finalization while
+  exact known issuer/card prose remains allowed. Unknown named entities in a
+  relevant fact and residual Unicode decimal digits fail closed; benign
+  irrelevant footer entities do not block an otherwise safe page.
 - Changed terms and shared legacy identities continue through the existing
   canonical diff/review tests.
 - Any live card, mapped benefit, or mapping hash/count change fails proof;
@@ -346,6 +384,62 @@ Edge finalizer casing privacy                 0 passed, 1 failed
   uppercase/mixed-case proposal subject       crossed the pre-write boundary
 ```
 
+Fourth fresh-review RED checkpoint, before round-4 production edits:
+
+```text
+Edge replay/fact/resource/privacy behaviors   0 passed, 7 failed
+  late benefit                               silently sliced from replay
+  late rival card                            ambiguity disappeared
+  oversized relevant fact                    qualified without overflow
+  functional resource                        exact URL/hash recomputation absent
+  unknown query keys                         product/variant/token accepted
+  encoded Unicode PII                        survived direct pre-write validation
+  encoded official-source PII                reached a process write payload
+supporting exact resource                     0 passed, 1 failed
+Task 4/Task 6 migration contracts             0 passed, 3 failed
+  v5/v6 lock scope; v3 resource/overflow fields; SQL privacy parity absent
+```
+
+A final parity/coverage audit added four further behavioral reds before their
+fixes:
+
+```text
+Edge functional query key                     0 passed, 1 failed
+  percent-encoded key                         passed Edge but failed SQL policy
+Task 6 root resource serialization            0 passed, 1 failed
+  root URL with functional query              hashed with a different slash form
+supporting late required anchor               0 passed, 1 failed
+  required hint after 256 characters          disappeared before classification
+functional query value policy                 0 passed, 2 failed
+  sensitive value / non-parity escapes        passed the Edge and SQL boundaries
+```
+
+The round-4 independent review then exercised the remaining full-source,
+identity-association, and serializer parity paths before their fixes:
+
+```text
+relevant private fact                         0 passed, 1 failed
+  private benefit sentence                    silently disappeared without overflow
+commercial headings                           0 passed, 1 failed
+  safe benefit-family headings                were misclassified as person names
+exact context association                     0 passed, 1 failed
+  "India gets"                               inherited State Bank of India allowlist
+Unicode/privacy normalization                 0 passed, 4 failed
+  Ukrainian-I / Devanagari / Adlam / entity   bypassed Edge or SQL privacy checks
+all-private replay                            0 passed, 1 failed
+  empty retained text                         surfaced generic unsafe evidence, not overflow
+primary functional resource                   0 passed, 1 failed
+  submitted functional query                  was replaced by queryless display identity
+functional value parity                       0 passed, 4 failed
+  decoded secret/control/size/tracking         diverged between Edge and SQL
+root functional resource hash                 0 passed, 2 failed
+  WHATWG slash / SQL canonical bytes           produced different opaque identities
+PDF full-source contract                      0 passed, 2 failed
+  old prefix / aggregate streams              sliced late facts or lacked a cumulative bound
+finalizer fact/resource safety                0 passed, 2 failed
+  joined facts / multi-query URL               produced cross-field privacy false positives
+```
+
 Final prescribed command (the auth fixture now binds only the prescribed
 loopback capability):
 
@@ -354,7 +448,7 @@ deno test --node-modules-dir=auto --allow-env \
   --allow-net=0.0.0.0:8000 --frozen \
   supabase/functions/benefit-enrichment-batch/index_test.ts \
   supabase/functions/admin-catalog-entry/benefit_admin_test.ts
-# 204 passed, 0 failed (155 ingestion + 49 admin)
+# 213 passed, 0 failed (164 ingestion + 49 admin)
 ```
 
 Affected shared/policy suites:
@@ -368,7 +462,14 @@ deno test --node-modules-dir=auto --allow-env --frozen \
   supabase/functions/_shared/benefit_contract_test.ts \
   supabase/functions/_shared/catalog_identity_publication_test.ts \
   supabase/functions/_shared/issuer_card_crawl_test.ts
-# 133 passed, 0 failed
+# 137 passed, 0 failed
+```
+
+Changed official-fetch/PDF safety suite:
+
+```sh
+node --test test/supabase/official_issuer_fetch_rules.test.mjs
+# 49 passed, 0 failed
 ```
 
 Task 9 admin/consumer gates:
@@ -387,7 +488,7 @@ node --test test/supabase/active_benefit_read_rules.test.mjs \
   test/supabase/card_catalog_enrichment_rules.test.mjs \
   test/supabase/issuer_card_discovery_rules.test.mjs \
   test/supabase/recur_card_enrichment_jobs_migration_test.js
-# 100 passed, 0 failed
+# 103 passed, 0 failed
 ```
 
 Static verification:
@@ -402,8 +503,8 @@ deno check --node-modules-dir=auto --frozen \
   supabase/functions/admin-catalog-entry/benefit_admin.ts
 # passed
 
-deno fmt --check <seven changed TypeScript files>
-# 7 checked, 0 failed
+deno fmt --check <six changed TypeScript files>
+# 6 checked, 0 failed
 
 git diff --check
 # passed
@@ -431,8 +532,8 @@ Task 4 and Task 6 migrations were authorized for modification while still locall
 Relevant migration SHA-256 values are:
 
 ```text
-ae091272f1169cb75194e932e791df9e0aaa2e9a13cb7bcc41038fd748a9057a  supabase/migrations/20260819163046_review_card_benefit_enrichment_v2.sql
-98ae55bad6c3969f1bbc800323329445cdaf79d50f0e4c141b788406291a02c7  supabase/migrations/20260819205037_recur_card_enrichment_jobs.sql
+976e6839340d9dede1d4e98599b2e586aafae5aa702fa5dd3d49758d58531bc3  supabase/migrations/20260819163046_review_card_benefit_enrichment_v2.sql
+9c01c05ad9df4e618c14b4f2146b531ca99e95d464983cd809cd36df9ae60dac  supabase/migrations/20260819205037_recur_card_enrichment_jobs.sql
 8e0dd3ac01346d5ec7531be906bc974480e0e93c8f8d9f482b6010323e06a3a7  supabase/migrations/20260819231435_publish_reviewed_card_identity.sql
 82df4f501eb24f5e88be6080b66c5c296f95bb4d68a7cd4b5f3c1a44a015980e  supabase/migrations/20260819063836_add_admin_flag_to_public_users.sql
 ```

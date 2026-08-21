@@ -19,6 +19,9 @@ export type BenefitDocument = {
   sourceUrl: string;
   /** Redirect-resolved canonical URL used only for redacted presentation. */
   finalUrl?: string;
+  /** Exact approved functional resources used only to derive replay identity. */
+  requestedResourceUrl?: string;
+  finalResourceUrl?: string;
   /** Opaque identities retained for replay binding; never rendered as URLs. */
   requestedResourceIdentityHash?: string;
   finalResourceIdentityHash?: string;
@@ -27,8 +30,10 @@ export type BenefitDocument = {
   /** Bounded, privacy-safe classifier input retained only for pilot replay. */
   replayLinks?: Array<{
     href: string;
+    resourceUrl?: string;
     anchorText: string;
     resourceIdentityHash: string;
+    queryPolicy?: "functional_only";
   }>;
   replayLinkOverflow?: boolean;
 };
@@ -327,34 +332,75 @@ const replayBenefitSignal =
   /(?:cashback|cash\s+back|reward|points?|miles?|discount|waiver|lounge|insurance|movie|fuel|dining|travel|spend|annual\s+fee|joining\s+fee|interest|apr|valid|expires?|effective|cap(?:ped)?|maximum|minimum|threshold|per\s+(?:month|quarter|year|annum|week|day)|\b\d+(?:\.\d+)?\s*%|(?:₹|rs\.?|inr)\s*\d)/i;
 const replayDirectPii =
   /(?:[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|\+?(?:\d[()\s.-]*){10,}|\b[A-Z]{5}\d{4}[A-Z]\b|\bname\s*[:=#-]\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}|(?:customer|account|card|payment|pan|phone|mobile)\s*(?:(?:name|number|no\.?|id)\s*[:=#-]?|[:=#])\s*\S+|relationship\s+manager\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/i;
+const replayCardIdentitySignal =
+  /\b(?:amex|american\s+express|(?:credit\s+)?card|mastercard|rupay|visa)\b/i;
+const MAX_REPLAY_FACTS = 256;
+const MAX_REPLAY_FACT_BYTES = 4_096;
+const MAX_REPLAY_FACT_TOTAL_BYTES = 65_536;
+const MAX_PRIVACY_PROBE_BYTES = 1_048_576;
+const MAX_PRIVACY_DECODE_PASSES = 8;
 const commercialTitleWords = new Set([
+  "access",
+  "accelerated",
   "annual",
   "airport",
   "bank",
   "benefit",
   "benefits",
+  "bonus",
+  "cap",
   "cashback",
   "card",
   "conditions",
+  "complimentary",
   "credit",
+  "cover",
   "dining",
+  "discount",
   "domestic",
+  "earn",
+  "enjoy",
+  "exclusive",
   "fee",
   "fees",
+  "forex",
   "fuel",
+  "get",
   "international",
+  "insurance",
+  "interest",
   "lounge",
   "mastercard",
+  "markup",
+  "maximum",
+  "milestone",
+  "miles",
+  "minimum",
   "mitc",
   "most",
+  "movie",
+  "offer",
+  "offers",
   "important",
   "points",
+  "program",
+  "reward",
   "rewards",
   "rupay",
+  "spend",
+  "surcharge",
   "terms",
+  "threshold",
+  "ticket",
+  "tickets",
   "travel",
+  "unlimited",
   "visa",
   "waiver",
+  "welcome",
+  "zero",
+  "apr",
+  "renewal",
 ]);
 const publicBenefitSubjectWords = new Set([
   "applicant",
@@ -371,15 +417,190 @@ const publicBenefitSubjectWords = new Set([
   "card",
 ]);
 
+const htmlEntityCharacters: Record<string, string> = {
+  amp: "&",
+  apos: "'",
+  colon: ":",
+  commat: "@",
+  gt: ">",
+  lt: "<",
+  nbsp: " ",
+  num: "#",
+  percnt: "%",
+  quest: "?",
+  quot: '"',
+  sol: "/",
+};
+
+const asciiConfusables: Record<string, string> = {
+  Α: "A",
+  Β: "B",
+  Ε: "E",
+  Ζ: "Z",
+  Η: "H",
+  Ι: "I",
+  Κ: "K",
+  Μ: "M",
+  Ν: "N",
+  Ο: "O",
+  Ρ: "P",
+  Τ: "T",
+  Υ: "Y",
+  Χ: "X",
+  α: "a",
+  β: "b",
+  ε: "e",
+  ι: "i",
+  κ: "k",
+  ν: "v",
+  ο: "o",
+  ρ: "p",
+  τ: "t",
+  υ: "y",
+  χ: "x",
+  А: "A",
+  В: "B",
+  Е: "E",
+  І: "I",
+  К: "K",
+  М: "M",
+  Н: "H",
+  О: "O",
+  Р: "P",
+  С: "C",
+  Т: "T",
+  Х: "X",
+  У: "Y",
+  а: "a",
+  е: "e",
+  і: "i",
+  ј: "j",
+  о: "o",
+  р: "p",
+  с: "c",
+  х: "x",
+  у: "y",
+};
+
+const unicodeDigitZeroes = [
+  0x0660,
+  0x06f0,
+  0x07c0,
+  0x0966,
+  0x09e6,
+  0x0a66,
+  0x0ae6,
+  0x0b66,
+  0x0be6,
+  0x0c66,
+  0x0ce6,
+  0x0d66,
+  0x0de6,
+  0x0e50,
+  0x0ed0,
+  0x0f20,
+  0x1040,
+  0x1090,
+  0x17e0,
+  0x1810,
+  0xff10,
+];
+
+function decodeHtmlEntity(match: string, body: string): string {
+  const normalized = body.toLowerCase().replace(/;$/, "");
+  let codePoint: number | null = null;
+  if (/^#x[0-9a-f]{1,6}$/i.test(normalized)) {
+    codePoint = Number.parseInt(normalized.slice(2), 16);
+  } else if (/^#[0-9]{1,7}$/.test(normalized)) {
+    codePoint = Number.parseInt(normalized.slice(1), 10);
+  }
+  if (
+    codePoint !== null && codePoint >= 0 && codePoint <= 0x10ffff &&
+    !(codePoint >= 0xd800 && codePoint <= 0xdfff)
+  ) return String.fromCodePoint(codePoint);
+  return htmlEntityCharacters[normalized] ?? match;
+}
+
+function decodePercentRuns(value: string): string {
+  return value.replace(/(?:%[0-9a-f]{2})+/gi, (candidate) => {
+    try {
+      return decodeURIComponent(candidate);
+    } catch {
+      return candidate;
+    }
+  });
+}
+
+function normalizeUnicodeDigits(value: string): string {
+  return [...value].map((character) => {
+    const codePoint = character.codePointAt(0)!;
+    for (const zero of unicodeDigitZeroes) {
+      if (codePoint >= zero && codePoint <= zero + 9) {
+        return String(codePoint - zero);
+      }
+    }
+    return character;
+  }).join("");
+}
+
+export function normalizedBenefitPrivacyProbe(value: string): {
+  text: string;
+  overflow: boolean;
+} {
+  if (new TextEncoder().encode(value).byteLength > MAX_PRIVACY_PROBE_BYTES) {
+    return { text: "", overflow: true };
+  }
+  let decoded = value;
+  for (let pass = 0; pass < MAX_PRIVACY_DECODE_PASSES; pass += 1) {
+    const next = decodePercentRuns(decoded).replace(
+      /&(#x[0-9a-f]{1,6}|#[0-9]{1,7}|[a-z]{2,10});?/gi,
+      decodeHtmlEntity,
+    );
+    if (next === decoded) break;
+    decoded = next;
+  }
+  const decodeOverflow =
+    /(?:%25|%[0-9a-f]{2}|&(?:#x?[0-9a-f]+|amp|apos|colon|commat|gt|lt|nbsp|num|percnt|quest|quot|sol);?)/i
+      .test(decoded);
+  let normalized = decoded.normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
+    .replace(
+      /[\u00ad\u034f\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/gu,
+      "",
+    )
+    .replace(/[‐‑‒–—―−]/gu, "-")
+    .replace(/[．。｡]/gu, ".")
+    .replace(/[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/gu, " ");
+  normalized = normalizeUnicodeDigits(
+    [...normalized].map((character) => asciiConfusables[character] ?? character)
+      .join(""),
+  );
+  const namedHtmlEntityOverflow = /&[a-z][a-z0-9]{1,31};?/i.test(normalized);
+  const residualUnicodeDigitOverflow = /\p{Nd}/u.test(
+    normalized.replace(/[0-9]/g, ""),
+  );
+  return {
+    text: normalized,
+    overflow: decodeOverflow || namedHtmlEntityOverflow ||
+      residualUnicodeDigitOverflow,
+  };
+}
+
+function normalizedIdentityPhrases(
+  context: { issuer?: string; identityLabels?: readonly string[] },
+): string[] {
+  return [context.issuer ?? "", ...(context.identityLabels ?? [])]
+    .map((item) =>
+      normalizedBenefitPrivacyProbe(item).text.replace(/\s+/g, " ").trim()
+        .toLowerCase()
+    )
+    .filter((item) => item.length >= 3);
+}
+
 function hasUnknownPersonLikeSpan(
   value: string,
   identityPhrases: readonly string[],
 ): boolean {
-  const identityWords = new Set(
-    identityPhrases.flatMap((phrase) => phrase.split(/[^a-z0-9]+/)).filter(
-      (word) => word.length > 1,
-    ),
-  );
   let probe = value;
   for (const [index, phrase] of identityPhrases.entries()) {
     if (!phrase) continue;
@@ -389,20 +610,142 @@ function hasUnknownPersonLikeSpan(
     );
   }
   return [...probe.matchAll(/\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){1,3}\b/g)]
-    .some((match) =>
-      match[0].split(/\s+/).some((word) =>
-        !commercialTitleWords.has(word.toLowerCase()) &&
-        !identityWords.has(word.toLowerCase())
-      )
-    ) ||
-    [...probe.matchAll(
-      /\b([a-z]{3,})\s+(?:(?:gets?|receives?)\b|will\s+(?:call|contact)\b|is\s+the\s+(?:customer|cardholder|member)\b)/gi,
-    )]
-      .some((match) =>
-        !publicBenefitSubjectWords.has(match[1].toLowerCase()) &&
-        !commercialTitleWords.has(match[1].toLowerCase()) &&
-        !identityWords.has(match[1].toLowerCase())
+    .some((match) => {
+      // Unknown product names are deliberately retained for the real card
+      // identity classifier. A title ending in "Card" is an ambiguity fact,
+      // not a person-name exception.
+      if (replayCardIdentitySignal.test(match[0])) return false;
+      return match[0].split(/\s+/).some((word) =>
+        !commercialTitleWords.has(word.toLowerCase())
       );
+    }) ||
+    [...probe.matchAll(
+      /(?<![\p{L}\p{M}])([\p{L}][\p{L}\p{M}'-]{2,}(?:\s+[\p{L}][\p{L}\p{M}'-]{2,}){0,3})\s+(?:(?:gets?|receives?)\b|will\s+(?:call|contact)\b|is\s+the\s+(?:customer|cardholder|member)\b)/giu,
+    )]
+      .some((match) => {
+        const words = match[1].toLowerCase().split(/\s+/);
+        return words.some((word) =>
+          !publicBenefitSubjectWords.has(word) &&
+          !commercialTitleWords.has(word) &&
+          !/^knownidentity\d+$/.test(word)
+        );
+      }) ||
+    /\b(?:for|to)\s+\p{Lu}[\p{L}\p{M}'-]{2,}\b/u.test(probe) ||
+    (replayBenefitSignal.test(probe) &&
+      [...probe].some((character) =>
+        character.codePointAt(0)! > 0x7f && /\p{L}/u.test(character)
+      ));
+}
+
+export function containsPrivateBenefitData(
+  value: string,
+  context: { issuer?: string; identityLabels?: readonly string[] } = {},
+): boolean {
+  const normalized = normalizedBenefitPrivacyProbe(value);
+  if (normalized.overflow) return true;
+  const identityPhrases = normalizedIdentityPhrases(context);
+  let probe = normalized.text;
+  for (const [index, phrase] of identityPhrases.entries()) {
+    probe = probe.replaceAll(
+      new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"),
+      ` knownidentity${index} `,
+    );
+  }
+  const numericProbe = probe
+    .replace(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi,
+      "[uuid]",
+    )
+    .replace(/\b[0-9a-f]{64}\b/gi, "[digest]");
+  return /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i.test(probe) ||
+    /(?<![a-z0-9+])\+?(?:\d[()\s.-]*){10,}(?![a-z0-9])/i.test(
+      numericProbe,
+    ) ||
+    /\b[A-Z]{5}\d{4}[A-Z]\b/i.test(probe) ||
+    /\bname\s*[:=#-]\s*[a-z]{2,}(?:\s+[a-z]{2,}){0,3}\b/i.test(probe) ||
+    /(?:customer|account|card|payment|pan|phone|mobile)\s*(?:(?:name|number|no\.?|id)\s*[:=#-]|[:=#])\s*[^,;.\n]{2,128}/i
+      .test(probe) ||
+    /relationship\s+manager\s+[a-z]{2,}(?:\s+[a-z]{2,}){1,3}/i
+      .test(probe) ||
+    /\b(?:contact|call|ask)\s+[a-z]{2,}(?:\s+[a-z]{2,}){1,3}\b/i
+      .test(probe) ||
+    hasUnknownPersonLikeSpan(probe, identityPhrases);
+}
+
+export type BenefitReplayFactEnvelope = {
+  publicText: string;
+  factCount: number;
+  factOverflow: boolean;
+  privacyNormalized: true;
+};
+
+/**
+ * Scans every source fragment. Facts are never sliced or silently dropped:
+ * crossing any count/fragment/total bound sets `factOverflow`, and callers
+ * must refuse replay extraction and pilot qualification.
+ */
+export function canonicalBenefitReplayFactEnvelope(
+  value: string,
+  context: { issuer?: string; identityLabels?: readonly string[] } = {},
+): BenefitReplayFactEnvelope {
+  const identityPhrases = normalizedIdentityPhrases(context);
+  const plain = readableText(value);
+  const fragments = plain.split(/(?<=[.!?])\s+|\n+/).map((item) =>
+    item.replace(/\s+/g, " ").trim()
+  ).filter(Boolean);
+  const retained: string[] = [];
+  const seen = new Set<string>();
+  let relevantFactCount = 0;
+  let totalBytes = 0;
+  let factOverflow = false;
+  for (const rawFragment of fragments) {
+    const normalized = normalizedBenefitPrivacyProbe(rawFragment);
+    const fragment = readableText(normalized.text).replace(/\s+/g, " ").trim();
+    const lowered = fragment.toLowerCase();
+    const identityFact = identityPhrases.some((phrase) =>
+      lowered.includes(phrase)
+    );
+    const relevant = !identityFact && !replayBenefitSignal.test(fragment) &&
+        !replayCardIdentitySignal.test(fragment)
+      ? false
+      : true;
+    const rawRelevant = replayBenefitSignal.test(rawFragment) ||
+      replayCardIdentitySignal.test(rawFragment);
+    if (!relevant && !rawRelevant) continue;
+    if (normalized.overflow || !fragment) {
+      factOverflow = true;
+      continue;
+    }
+    if (
+      replayDirectPii.test(fragment) ||
+      containsPrivateBenefitData(fragment, context)
+    ) {
+      factOverflow = true;
+      continue;
+    }
+    if (seen.has(fragment)) continue;
+    seen.add(fragment);
+    relevantFactCount += 1;
+    const fragmentBytes = new TextEncoder().encode(fragment).byteLength;
+    const separatorBytes = retained.length === 0 ? 0 : 1;
+    if (
+      fragmentBytes > MAX_REPLAY_FACT_BYTES ||
+      relevantFactCount > MAX_REPLAY_FACTS ||
+      totalBytes + separatorBytes + fragmentBytes >
+        MAX_REPLAY_FACT_TOTAL_BYTES
+    ) {
+      factOverflow = true;
+      continue;
+    }
+    retained.push(fragment);
+    totalBytes += separatorBytes + fragmentBytes;
+  }
+  return {
+    publicText: retained.join("\n"),
+    factCount: Math.min(relevantFactCount, MAX_REPLAY_FACTS + 1),
+    factOverflow,
+    privacyNormalized: true,
+  };
 }
 
 /**
@@ -414,33 +757,7 @@ export function canonicalBenefitReplayText(
   value: string,
   context: { issuer?: string; identityLabels?: string[] } = {},
 ): string {
-  const plain = readableText(value);
-  const identityPhrases = [
-    context.issuer ?? "",
-    ...(context.identityLabels ?? []),
-  ]
-    .map((item) => item.replace(/\s+/g, " ").trim().toLowerCase())
-    .filter((item) => item.length >= 3);
-  const fragments = plain.split(/(?<=[.!?])\s+|\n+/).map((item) => item.trim())
-    .filter(Boolean);
-  const retained: string[] = [];
-  for (const fragment of fragments) {
-    if (
-      replayDirectPii.test(fragment) ||
-      hasUnknownPersonLikeSpan(fragment, identityPhrases)
-    ) continue;
-    const lowered = fragment.toLowerCase();
-    const identityFact = identityPhrases.some((phrase) =>
-      lowered.includes(phrase)
-    );
-    if (!identityFact && !replayBenefitSignal.test(fragment)) continue;
-    const safe = fragment.replace(/\s+/g, " ").trim().slice(0, 500);
-    if (safe && !retained.includes(safe)) retained.push(safe);
-    if (new TextEncoder().encode(retained.join("\n")).byteLength >= 1_800) {
-      break;
-    }
-  }
-  return retained.join("\n").slice(0, 1_900);
+  return canonicalBenefitReplayFactEnvelope(value, context).publicText;
 }
 
 function decimal(value: string | undefined): number | undefined {

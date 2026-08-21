@@ -62,6 +62,23 @@ function streamingResponse(options = {}) {
   };
 }
 
+async function deflateBytes(value) {
+  const stream = new Blob([new TextEncoder().encode(value)]).stream()
+    .pipeThrough(new CompressionStream("deflate"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+function joinBytes(parts) {
+  const length = parts.reduce((total, part) => total + part.length, 0);
+  const joined = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) {
+    joined.set(part, offset);
+    offset += part.length;
+  }
+  return joined;
+}
+
 async function rejectsWith(input, code) {
   await assert.rejects(
     () => fetchOfficialIssuerResource(input),
@@ -94,6 +111,54 @@ test("extracts benefit text from safely fetched PDF bytes", async () => {
   });
 
   assert.match(text, /2 complimentary lounge visits per quarter/i);
+});
+
+test("PDF extraction reports explicit overflow instead of slicing a late fact", async () => {
+  const filler = "x".repeat(1_000_100);
+  const lateFact = "Late benefit earns 17% cashback on travel.";
+  const pdf = new TextEncoder().encode(
+    `%PDF-1.4\nBT (${filler}) Tj (${lateFact}) Tj ET\n%%EOF`,
+  );
+  await assert.rejects(
+    () => officialResourceText({
+      submittedUrl: officialUrl,
+      finalUrl: officialUrl,
+      canonicalUrl: officialUrl,
+      contentType: "application/pdf",
+      bytes: pdf,
+      text: "",
+      contentHash: "pdf-hash",
+      retrievedAt: "2026-08-17T00:00:00.000Z",
+    }),
+    (error) => error instanceof Error && error.message === "oversized",
+  );
+});
+
+test("PDF extraction bounds aggregate decompressed bytes across every stream", async () => {
+  const first = await deflateBytes("x".repeat(600_000));
+  const second = await deflateBytes("y".repeat(600_000));
+  const encode = (value) => new TextEncoder().encode(value);
+  const pdf = joinBytes([
+    encode("%PDF-1.4\n<</Filter /FlateDecode>>\nstream\n"),
+    first,
+    encode("\nendstream\n<</Filter /FlateDecode>>\nstream\n"),
+    second,
+    encode("\nendstream\n%%EOF"),
+  ]);
+
+  await assert.rejects(
+    () => officialResourceText({
+      submittedUrl: officialUrl,
+      finalUrl: officialUrl,
+      canonicalUrl: officialUrl,
+      contentType: "application/pdf",
+      bytes: pdf,
+      text: "",
+      contentHash: "pdf-hash",
+      retrievedAt: "2026-08-17T00:00:00.000Z",
+    }),
+    (error) => error instanceof Error && error.message === "oversized",
+  );
 });
 
 async function rejectsWithin(input, code) {

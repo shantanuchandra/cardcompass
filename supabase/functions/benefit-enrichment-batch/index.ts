@@ -5,11 +5,13 @@ import {
   type BenefitComparisonProposal,
   type BenefitDiff,
   type BenefitDocument,
-  canonicalBenefitReplayText,
+  canonicalBenefitReplayFactEnvelope,
+  containsPrivateBenefitData,
   currentBenefitProposal,
   diffBenefits,
   extractGroundedBenefits,
   extractGroundedBenefitsV6,
+  normalizedBenefitPrivacyProbe,
 } from "../_shared/benefit_enrichment.ts";
 export { currentBenefitProposal } from "../_shared/benefit_enrichment.ts";
 import {
@@ -65,6 +67,7 @@ import {
   selectPilotCandidates,
 } from "./batch_policy.ts";
 import {
+  canonicalPilotReplayResourceUrl,
   canonicalRequiredReplayAnchorText,
   classifyRequiredReplaySourceKeys,
   collectSupportingBenefitDocuments,
@@ -1621,20 +1624,27 @@ function pilotVerificationSourceAttempts(
 type PilotReplayInputDocument = {
   requested_source_url: string;
   final_source_url: string;
+  requested_resource_url: string;
+  final_resource_url: string;
   requested_resource_identity_hash: string;
   final_resource_identity_hash: string;
   content_hash: string;
   public_text: string;
+  fact_count: number;
+  fact_overflow: boolean;
+  privacy_normalized: true;
   hyperlinks: Array<{
     href: string;
+    resource_url: string;
     anchor_text: string;
     resource_identity_hash: string;
+    query_policy: "functional_only";
   }>;
   hyperlink_overflow: boolean;
 };
 
 type PilotReplayInput = {
-  version: 2;
+  version: 3;
   context: {
     issuer: string;
     identity_labels: string[];
@@ -1645,16 +1655,18 @@ type PilotReplayInput = {
 
 function pilotReplayDocuments(input: PilotReplayInput): BenefitDocument[] {
   return input.documents.map((document) => ({
-    sourceUrl: document.requested_source_url,
-    finalUrl: document.final_source_url,
+    sourceUrl: document.requested_resource_url,
+    finalUrl: document.final_resource_url,
     requestedResourceIdentityHash: document.requested_resource_identity_hash,
     finalResourceIdentityHash: document.final_resource_identity_hash,
     contentHash: document.content_hash,
     text: document.public_text,
     replayLinks: document.hyperlinks.map((link) => ({
       href: link.href,
+      resourceUrl: link.resource_url,
       anchorText: link.anchor_text,
       resourceIdentityHash: link.resource_identity_hash,
+      queryPolicy: link.query_policy,
     })),
     replayLinkOverflow: document.hyperlink_overflow,
   }));
@@ -1665,6 +1677,10 @@ function pilotReplaySourcesAreBound(
   attempts: readonly SourceAttempt[],
 ): boolean {
   const documentsBound = input.documents.every((document) =>
+    sourceIdentityDigest(document.requested_resource_url) ===
+      document.requested_resource_identity_hash &&
+    sourceIdentityDigest(document.final_resource_url) ===
+      document.final_resource_identity_hash &&
     attempts.some((attempt) =>
       attempt.url === document.final_source_url &&
       attempt.logicalSourceKey ===
@@ -1677,14 +1693,16 @@ function pilotReplaySourcesAreBound(
   );
   const hyperlinksBound = input.documents.every((document) =>
     document.hyperlinks.every((link) =>
-      attempts.some((attempt) =>
+      sourceIdentityDigest(link.resource_url) === link.resource_identity_hash &&
+      (attempts.some((attempt) =>
         attempt.url === link.href &&
         attempt.logicalSourceKey === link.resource_identity_hash
       ) || input.documents.some((linkedDocument) =>
         linkedDocument.requested_source_url === link.href &&
+        linkedDocument.requested_resource_url === link.resource_url &&
         linkedDocument.requested_resource_identity_hash ===
           link.resource_identity_hash
-      )
+      ))
     )
   );
   return documentsBound && hyperlinksBound;
@@ -1730,7 +1748,7 @@ function parsePilotReplayInput(value: unknown): PilotReplayInput | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const input = value as Record<string, unknown>;
   if (
-    Object.keys(input).length !== 3 || input.version !== 2 ||
+    Object.keys(input).length !== 3 || input.version !== 3 ||
     !input.context || typeof input.context !== "object" ||
     Array.isArray(input.context) || !Array.isArray(input.documents) ||
     input.documents.length < 1 || input.documents.length > 9
@@ -1748,10 +1766,15 @@ function parsePilotReplayInput(value: unknown): PilotReplayInput | null {
   const documentKeys = new Set([
     "requested_source_url",
     "final_source_url",
+    "requested_resource_url",
+    "final_resource_url",
     "requested_resource_identity_hash",
     "final_resource_identity_hash",
     "content_hash",
     "public_text",
+    "fact_count",
+    "fact_overflow",
+    "privacy_normalized",
     "hyperlinks",
     "hyperlink_overflow",
   ]);
@@ -1761,6 +1784,18 @@ function parsePilotReplayInput(value: unknown): PilotReplayInput | null {
       return null;
     }
     const document = value as Record<string, unknown>;
+    let requestedResourceUrl: string;
+    let finalResourceUrl: string;
+    try {
+      requestedResourceUrl = canonicalPilotReplayResourceUrl(
+        String(document.requested_resource_url ?? ""),
+      );
+      finalResourceUrl = canonicalPilotReplayResourceUrl(
+        String(document.final_resource_url ?? ""),
+      );
+    } catch {
+      return null;
+    }
     if (
       Object.keys(document).length !== documentKeys.size ||
       !Object.keys(document).every((key) => documentKeys.has(key)) ||
@@ -1768,10 +1803,20 @@ function parsePilotReplayInput(value: unknown): PilotReplayInput | null {
         document.requested_source_url ||
       safeHttpsDisplayUrl(document.final_source_url) !==
         document.final_source_url ||
+      typeof document.requested_resource_url !== "string" ||
+      requestedResourceUrl !==
+        document.requested_resource_url ||
+      typeof document.final_resource_url !== "string" ||
+      finalResourceUrl !==
+        document.final_resource_url ||
       !lowercaseSha256.test(
         String(document.requested_resource_identity_hash),
       ) ||
       !lowercaseSha256.test(String(document.final_resource_identity_hash)) ||
+      sourceIdentityDigest(document.requested_resource_url) !==
+        document.requested_resource_identity_hash ||
+      sourceIdentityDigest(document.final_resource_url) !==
+        document.final_resource_identity_hash ||
       !lowercaseSha256.test(String(document.content_hash)) ||
       typeof document.public_text !== "string" ||
       document.public_text.length === 0 ||
@@ -1779,6 +1824,10 @@ function parsePilotReplayInput(value: unknown): PilotReplayInput | null {
         MAX_PILOT_REPLAY_TEXT_BYTES ||
       redactSensitiveUrlsInText(document.public_text) !==
         document.public_text ||
+      !Number.isInteger(document.fact_count) ||
+      Number(document.fact_count) < 1 || Number(document.fact_count) > 257 ||
+      typeof document.fact_overflow !== "boolean" ||
+      document.privacy_normalized !== true ||
       !Array.isArray(document.hyperlinks) || document.hyperlinks.length > 8 ||
       typeof document.hyperlink_overflow !== "boolean"
     ) return null;
@@ -1789,19 +1838,34 @@ function parsePilotReplayInput(value: unknown): PilotReplayInput | null {
         return null;
       }
       const link = linkValue as Record<string, unknown>;
+      let resourceUrl: string;
+      try {
+        resourceUrl = canonicalPilotReplayResourceUrl(
+          String(link.resource_url ?? ""),
+        );
+      } catch {
+        return null;
+      }
       if (
-        Object.keys(link).length !== 3 ||
+        Object.keys(link).length !== 5 ||
         safeHttpsDisplayUrl(link.href) !== link.href ||
+        typeof link.resource_url !== "string" ||
+        resourceUrl !==
+          link.resource_url ||
+        safeHttpsDisplayUrl(link.resource_url) !== link.href ||
         typeof link.anchor_text !== "string" || link.anchor_text.length > 96 ||
         canonicalRequiredReplayAnchorText(link.anchor_text) !==
           link.anchor_text ||
-        !lowercaseSha256.test(String(link.resource_identity_hash))
+        !lowercaseSha256.test(String(link.resource_identity_hash)) ||
+        sourceIdentityDigest(link.resource_url) !==
+          link.resource_identity_hash ||
+        link.query_policy !== "functional_only"
       ) return null;
     }
     documents.push(document as PilotReplayInputDocument);
   }
   const parsed: PilotReplayInput = {
-    version: 2,
+    version: 3,
     context: {
       issuer: context.issuer,
       identity_labels: [...context.identity_labels] as string[],
@@ -1810,7 +1874,10 @@ function parsePilotReplayInput(value: unknown): PilotReplayInput | null {
     documents,
   };
   try {
-    assertSafePersistedEvidence(parsed);
+    assertSafePersistedEvidence(parsed, {
+      issuer: parsed.context.issuer,
+      identityLabels: parsed.context.identity_labels,
+    });
   } catch {
     return null;
   }
@@ -1825,66 +1892,92 @@ function buildPilotReplayInput(
     primarySourceUrl: string;
   },
 ): PilotReplayInput {
+  const issuer = context.issuer.trim();
+  const identityLabels = [
+    ...new Set(
+      context.identityLabels.map((label) => label.replace(/\s+/g, " ").trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (
+    issuer.length > 128 || identityLabels.length > 8 ||
+    identityLabels.some((label) => label.length > 128)
+  ) throw new Error("pilot_evidence_unbounded");
   const value: PilotReplayInput = {
-    version: 2,
+    version: 3,
     context: {
-      issuer: context.issuer.trim().slice(0, 128),
-      identity_labels: [
-        ...new Set(
-          context.identityLabels.map((label) =>
-            label.replace(/\s+/g, " ").trim().slice(0, 128)
-          ).filter(Boolean),
-        ),
-      ].slice(0, 8),
+      issuer,
+      identity_labels: identityLabels,
       primary_source_url: safeHttpsDisplayUrl(context.primarySourceUrl) ?? "",
     },
     documents: documents.map((document) => {
-      const requestedSourceUrl = safeHttpsDisplayUrl(document.sourceUrl);
-      const finalSourceUrl = safeHttpsDisplayUrl(
-        document.finalUrl ?? document.sourceUrl,
+      const requestedResourceUrl = canonicalPilotReplayResourceUrl(
+        document.requestedResourceUrl ?? document.sourceUrl,
       );
-      const requestedResourceIdentityHash =
-        document.requestedResourceIdentityHash ??
-          sourceIdentityDigest(document.sourceUrl);
-      const finalResourceIdentityHash = document.finalResourceIdentityHash ??
-        sourceIdentityDigest(
-          document.finalUrl ?? document.sourceUrl,
-        );
+      const finalResourceUrl = canonicalPilotReplayResourceUrl(
+        document.finalResourceUrl ?? document.finalUrl ??
+          document.requestedResourceUrl ?? document.sourceUrl,
+      );
+      const requestedSourceUrl = safeHttpsDisplayUrl(requestedResourceUrl);
+      const finalSourceUrl = safeHttpsDisplayUrl(finalResourceUrl);
+      const requestedResourceIdentityHash = sourceIdentityDigest(
+        requestedResourceUrl,
+      );
+      const finalResourceIdentityHash = sourceIdentityDigest(finalResourceUrl);
       if (!requestedSourceUrl || !finalSourceUrl) {
         throw new Error("invalid_pilot_replay_input");
       }
       if ((document.replayLinks?.length ?? 0) > 8) {
         throw new Error("pilot_evidence_unbounded");
       }
+      const facts = canonicalBenefitReplayFactEnvelope(String(document.text), {
+        issuer: context.issuer,
+        identityLabels: [...context.identityLabels],
+      });
       return {
         requested_source_url: requestedSourceUrl,
         final_source_url: finalSourceUrl,
+        requested_resource_url: requestedResourceUrl,
+        final_resource_url: finalResourceUrl,
         requested_resource_identity_hash: requestedResourceIdentityHash,
         final_resource_identity_hash: finalResourceIdentityHash,
         content_hash: String(document.contentHash ?? ""),
-        public_text: canonicalBenefitReplayText(String(document.text), {
-          issuer: context.issuer,
-          identityLabels: [...context.identityLabels],
-        }),
+        public_text: facts.publicText,
+        fact_count: facts.factCount,
+        fact_overflow: facts.factOverflow,
+        privacy_normalized: facts.privacyNormalized,
         hyperlinks: (document.replayLinks ?? []).map((link) => {
-          const href = safeHttpsDisplayUrl(link.href);
-          const resourceIdentityHash = link.resourceIdentityHash ||
-            sourceIdentityDigest(link.href);
+          const resourceUrl = canonicalPilotReplayResourceUrl(
+            link.resourceUrl ?? link.href,
+          );
+          const href = safeHttpsDisplayUrl(resourceUrl);
+          const resourceIdentityHash = sourceIdentityDigest(resourceUrl);
           if (!href || !lowercaseSha256.test(resourceIdentityHash)) {
             throw new Error("invalid_pilot_replay_link");
           }
           return {
             href,
+            resource_url: resourceUrl,
             anchor_text: canonicalRequiredReplayAnchorText(
               String(link.anchorText),
             ),
             resource_identity_hash: resourceIdentityHash,
+            query_policy: "functional_only" as const,
           };
         }),
         hyperlink_overflow: document.replayLinkOverflow === true,
       };
     }),
   };
+  // An overflow envelope may intentionally contain no retained public text.
+  // Surface its decisive reason before the strict persisted-envelope parser,
+  // so overflow can never be mistaken for a generic persistence failure.
+  if (value.documents.some((document) => document.fact_overflow)) {
+    throw new Error("pilot_replay_fact_overflow");
+  }
+  if (value.documents.some((document) => document.hyperlink_overflow)) {
+    throw new Error("pilot_replay_link_overflow");
+  }
   const parsed = parsePilotReplayInput(value);
   if (!parsed) throw new Error("unsafe_persisted_evidence");
   return parsed;
@@ -1942,6 +2035,12 @@ export async function computePilotReplayEvidence(input: {
         input.attempts.find((attempt) => attempt.role === "primary")?.url ?? "",
     },
   );
+  if (replayInput.documents.some((document) => document.fact_overflow)) {
+    throw new Error("pilot_replay_fact_overflow");
+  }
+  if (replayInput.documents.some((document) => document.hyperlink_overflow)) {
+    throw new Error("pilot_replay_link_overflow");
+  }
   const classifierDocuments = pilotReplayDocuments(replayInput);
   const independentlyClassified = classifyRequiredReplaySourceKeys(
     classifierDocuments,
@@ -3245,6 +3344,18 @@ function sourceAttemptInputs(
     const terminal = index === observation.attempts.length - 1
       ? observation.result
       : undefined;
+    let finalResourceIdentityHash: string | undefined;
+    if (terminal) {
+      try {
+        finalResourceIdentityHash = sourceIdentityDigest(
+          canonicalPilotReplayResourceUrl(
+            terminal.finalResourceUrl ?? terminal.finalUrl,
+          ),
+        );
+      } catch {
+        finalResourceIdentityHash = undefined;
+      }
+    }
     return {
       requestedUrl,
       ...(terminal ? { finalUrl: terminal.finalUrl } : {}),
@@ -3257,11 +3368,7 @@ function sourceAttemptInputs(
         : "failed",
       ...(attempt.status !== undefined ? { httpStatus: attempt.status } : {}),
       ...(terminal?.contentHash ? { contentHash: terminal.contentHash } : {}),
-      ...(terminal?.finalResourceIdentityHash
-        ? {
-          finalResourceIdentityHash: terminal.finalResourceIdentityHash,
-        }
-        : {}),
+      ...(finalResourceIdentityHash ? { finalResourceIdentityHash } : {}),
       ...(terminal?.etag ? { etag: terminal.etag } : {}),
       ...(terminal?.lastModified
         ? { lastModified: terminal.lastModified }
@@ -3280,102 +3387,77 @@ function sourceAttemptInputs(
 const forbiddenStoredEvidenceKey =
   /(?:^|_)(?:raw_?body|response_?body|page_?html|document_?text|statement|customer|email|phone|last_?four|card_?number|lease_?token|access_?token|refresh_?token|password|secret|credential)(?:_|$)/i;
 
-const publicBenefitSubjectWords = new Set([
-  "applicant",
-  "applicants",
-  "cardholder",
-  "cardholders",
-  "customer",
-  "customers",
-  "member",
-  "members",
-  "user",
-  "users",
-  "cashback",
-  "card",
-]);
+type BenefitPrivacyContext = {
+  issuer?: string;
+  identityLabels?: readonly string[];
+};
 
-function containsUnknownPersonSubject(value: string): boolean {
-  return [...value.matchAll(
-    /\b([a-z]{3,})\s+(?:(?:gets?|receives?)\b|will\s+(?:call|contact)\b|is\s+the\s+(?:customer|cardholder|member)\b)/gi,
-  )]
-    .some((match) => !publicBenefitSubjectWords.has(match[1].toLowerCase()));
+function containsEncodedSecretOrPrivateData(
+  value: string,
+  context: BenefitPrivacyContext,
+): boolean {
+  const normalized = normalizedBenefitPrivacyProbe(value);
+  return normalized.overflow ||
+    /(?:authorization\s*:\s*bearer|bearer\s+[a-z0-9._~-]{8,}|(?:access[_ -]?token|refresh[_ -]?token|lease[_ -]?token|password|secret|credential|customer[_ -]?(?:name|id|email|phone)|statement[_ -]?(?:id|header)|last[_ -]?four|card[_ -]?number)\s*[:=]\s*\S+)/i
+      .test(normalized.text) ||
+    containsPrivateBenefitData(normalized.text, context);
 }
 
-function containsDirectPrivateData(value: string): boolean {
-  const numericProbe = value
-    .replace(
-      /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi,
-      "[uuid]",
-    )
-    .replace(/\b[0-9a-f]{64}\b/gi, "[digest]");
-  return /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i.test(value) ||
-    /(?<![a-z0-9+])\+?(?:\d[()\s.-]*){10,}(?![a-z0-9])/i.test(
-      numericProbe,
-    ) ||
-    /\b[A-Z]{5}\d{4}[A-Z]\b/.test(value) ||
-    /\bname\s*[:=#-]\s*[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){0,3}\b/
-      .test(value) ||
-    /(?:customer|account|card|payment|pan|phone|mobile)\s*(?:(?:name|number|no\.?|id)\s*[:=#-]|[:=#])\s*[^,;.\n]{2,128}/i
-      .test(value) ||
-    /relationship\s+manager\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}/
-      .test(value) ||
-    /\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){0,3}\s+(?:gets?|receives?|will\s+(?:call|contact)|is\s+the\s+(?:customer|cardholder|member))\b/
-      .test(value) ||
-    /\b(?:contact|call|ask)\s+[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){1,3}\b/
-      .test(value) ||
-    containsUnknownPersonSubject(value);
-}
-
-function safePilotReplayText(value: unknown): value is string {
+function safePilotReplayText(
+  value: unknown,
+  context: BenefitPrivacyContext,
+): value is string {
   if (
     typeof value !== "string" || value.length === 0 ||
     new TextEncoder().encode(value).byteLength > MAX_PILOT_REPLAY_TEXT_BYTES ||
     redactSensitiveUrlsInText(value) !== value
   ) return false;
-  let probe = value;
-  for (let pass = 0; pass < 3; pass += 1) {
-    try {
-      const decoded = decodeURIComponent(probe);
-      if (decoded === probe) break;
-      probe = decoded;
-    } catch {
-      break;
-    }
-  }
-  return !/(?:authorization\s*:\s*bearer|bearer\s+[a-z0-9._~-]{8,}|(?:access[_ -]?token|refresh[_ -]?token|lease[_ -]?token|password|secret|credential|customer[_ -]?(?:name|id|email|phone)|statement[_ -]?(?:id|header)|last[_ -]?four|card[_ -]?number)\s*[:=]\s*\S+)/i
-    .test(probe) && !containsDirectPrivateData(probe);
+  const facts = value.split("\n");
+  return facts.length <= 256 &&
+    facts.every((fact) =>
+      fact.length > 0 && new TextEncoder().encode(fact).byteLength <= 4_096 &&
+      !containsEncodedSecretOrPrivateData(fact, context)
+    );
 }
 
-function rawBodyWouldBeStored(value: unknown, depth = 0): boolean {
+function safePilotReplayResource(
+  value: unknown,
+  _context: BenefitPrivacyContext,
+): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    return canonicalPilotReplayResourceUrl(value) === value;
+  } catch {
+    return false;
+  }
+}
+
+function rawBodyWouldBeStored(
+  value: unknown,
+  depth = 0,
+  context: BenefitPrivacyContext = {},
+): boolean {
   if (depth > 12) return true;
   if (typeof value === "string") {
     if (value.length > 8_000 || redactSensitiveUrlsInText(value) !== value) {
       return true;
     }
-    let probe = value;
-    for (let pass = 0; pass < 3; pass += 1) {
-      try {
-        const decoded = decodeURIComponent(probe);
-        if (decoded === probe) break;
-        probe = decoded;
-      } catch {
-        break;
-      }
-    }
-    return /(?:authorization\s*:\s*bearer|bearer\s+[a-z0-9._~-]{8,}|(?:access[_ -]?token|refresh[_ -]?token|lease[_ -]?token|password|secret|credential|customer[_ -]?(?:name|id|email|phone)|statement[_ -]?(?:id|header)|last[_ -]?four|card[_ -]?number)\s*[:=]\s*\S+)/i
-      .test(probe) || containsDirectPrivateData(probe);
+    return containsEncodedSecretOrPrivateData(value, context);
   }
   if (Array.isArray(value)) {
     return value.length > 512 ||
-      value.some((item) => rawBodyWouldBeStored(item, depth + 1));
+      value.some((item) => rawBodyWouldBeStored(item, depth + 1, context));
   }
   if (!value || typeof value !== "object") return false;
   const entries = Object.entries(value as Record<string, unknown>);
   return entries.length > 512 ||
     entries.some(([key, item]) =>
-      key === "public_text"
-        ? !safePilotReplayText(item)
+      key === "public_text" ? !safePilotReplayText(item, context) : [
+          "requested_resource_url",
+          "final_resource_url",
+          "resource_url",
+        ].includes(key)
+        ? !safePilotReplayResource(item, context)
         : key === "anchor_text"
         ? !(typeof item === "string" &&
           canonicalRequiredReplayAnchorText(item) === item)
@@ -3384,11 +3466,14 @@ function rawBodyWouldBeStored(value: unknown, depth = 0): boolean {
           : key === "document_text_hash"
           ? !(typeof item === "string" && lowercaseSha256.test(item))
           : forbiddenStoredEvidenceKey.test(key)) ||
-          rawBodyWouldBeStored(item, depth + 1)
+          rawBodyWouldBeStored(item, depth + 1, context)
     );
 }
 
-export function assertSafePersistedEvidence(value: unknown): void {
+export function assertSafePersistedEvidence(
+  value: unknown,
+  context: BenefitPrivacyContext = {},
+): void {
   let encoded: string;
   try {
     encoded = stableCanonicalJson(value);
@@ -3397,7 +3482,7 @@ export function assertSafePersistedEvidence(value: unknown): void {
   }
   if (
     new TextEncoder().encode(encoded).byteLength > 1_048_576 ||
-    rawBodyWouldBeStored(value)
+    rawBodyWouldBeStored(value, 0, context)
   ) throw new Error("unsafe_persisted_evidence");
 }
 
@@ -3433,6 +3518,10 @@ export async function processJob(
   let pilotStagingContentHash: string | null = null;
   let pilotPreviousCanonicalBenefitHash: string | null = null;
   let metricCatalogIdentityConflictCount = -1;
+  let privacyContext: {
+    issuer: string;
+    identityLabels: string[];
+  } = { issuer: job.issuer, identityLabels: [] };
   const persistedArtifacts: unknown[] = [];
   let resultSummary: Record<string, unknown> = {
     run_id: runId,
@@ -3450,6 +3539,17 @@ export async function processJob(
       db,
       job.card_id,
     );
+    privacyContext = {
+      issuer: job.issuer,
+      identityLabels: [
+        String(card.card_name ?? ""),
+        `${String(card.card_name ?? "")} ${String(card.network ?? "")}`
+          .trim(),
+        ...aliases.filter((alias: Record<string, unknown>) =>
+          String(alias.card_id) === job.card_id
+        ).map((alias: Record<string, unknown>) => String(alias.alias ?? "")),
+      ],
+    };
     const current = await readCurrentBenefits(db, job.card_id);
     if (!networkWorkMayStart(invocationStartedAt)) {
       throw new Error("deadline_exceeded");
@@ -3924,7 +4024,10 @@ export async function processJob(
       }];
     // This is the last boundary before any proposal/evidence can enter
     // staging. The finalizer repeats the same fail-closed check below.
-    assertSafePersistedEvidence([safeExtraction, sourceEvidence]);
+    assertSafePersistedEvidence(
+      [safeExtraction, sourceEvidence],
+      privacyContext,
+    );
     persistedArtifacts.push(safeExtraction, sourceEvidence);
     const previousObservation = latestValidCrawlObservation(
       job.result_summary,
@@ -4202,7 +4305,10 @@ export async function processJob(
         operational_metrics: operationalMetrics,
       };
     }
-    assertSafePersistedEvidence([normalizedFields, resultSummary]);
+    assertSafePersistedEvidence(
+      [normalizedFields, resultSummary],
+      privacyContext,
+    );
     const { data: finalizedId, error: finalizeError } = await db.rpc(
       "finalize_card_catalog_enrichment_job",
       {

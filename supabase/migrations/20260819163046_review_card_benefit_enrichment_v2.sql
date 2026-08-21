@@ -1030,19 +1030,23 @@ BEGIN
     'card_benefit_enrichment_review:' || staging_card_id::text,
     0
   ));
-  -- Task 7 publishes mutable card identity under this exact lock. The global
-  -- order is review advisory -> benefit identity advisory -> card row ->
-  -- staging row, so neither flow can observe an identity half-transition.
-  PERFORM pg_advisory_xact_lock(hashtextextended(
-    'card_benefit_enrichment_identity:' || staging_card_id::text || ':benefits-v6',
-    0
-  ));
-  SELECT catalog.card_type INTO locked_card_type
-  FROM public.card_catalog AS catalog
-  WHERE catalog.id = staging_card_id
-    AND lower(trim(coalesce(catalog.card_type, ''))) = 'credit'
-  FOR UPDATE;
-  IF NOT FOUND THEN RAISE EXCEPTION 'card_target_not_found'; END IF;
+  -- Task 7 publishes mutable card identity under this exact lock. This
+  -- serialization belongs only to v6: the rollback v5 lane historically
+  -- approves retained staging even when later catalog/card_type authority is
+  -- absent. For v6 the order remains review advisory -> benefit identity
+  -- advisory -> card row -> staging row.
+  IF staging_parser_version = 'benefits-v6' THEN
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+      'card_benefit_enrichment_identity:' || staging_card_id::text || ':benefits-v6',
+      0
+    ));
+    SELECT catalog.card_type INTO locked_card_type
+    FROM public.card_catalog AS catalog
+    WHERE catalog.id = staging_card_id
+      AND lower(trim(coalesce(catalog.card_type, ''))) = 'credit'
+    FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'card_target_not_found'; END IF;
+  END IF;
   SELECT staging.* INTO staging_row
   FROM public.card_benefits_staging AS staging
   WHERE staging.id = _staging_id
@@ -1846,6 +1850,22 @@ BEGIN
   END IF;
 END;
 $publication_envelope_v2_assertions$;
+
+DO $review_parser_lock_scope_assertions$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM (VALUES
+      ('benefits-v5', false),
+      ('benefits-v6', true)
+    ) AS fixture(parser_version, requires_identity_lock)
+    WHERE (fixture.parser_version = 'benefits-v6')
+      IS DISTINCT FROM fixture.requires_identity_lock
+  ) THEN
+    RAISE EXCEPTION 'review parser lock scope assertion failed';
+  END IF;
+END;
+$review_parser_lock_scope_assertions$;
 
 REVOKE ALL ON FUNCTION public.canonical_json_text(jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.canonical_card_benefit_row_timestamp(timestamptz) FROM PUBLIC, anon, authenticated;

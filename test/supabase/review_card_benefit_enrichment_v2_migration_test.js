@@ -363,6 +363,35 @@ test('v6 review seals pre-mutation live state and audits exact proposal or remov
   );
 });
 
+test('v5 approval bypasses v6 identity locks while v6 preserves the shared lock order', async () => {
+  const sql = await migrationSql();
+  const approval = functionBody(sql, 'approve_card_benefit_enrichment');
+  const scoped = approval.match(
+    /IF\s+staging_parser_version\s*=\s*'benefits-v6'\s+THEN([\s\S]*?)END IF;/i,
+  );
+  assert.ok(scoped, 'v6 identity and catalog locking is not parser-scoped');
+  assert.match(scoped[1], /card_benefit_enrichment_identity:/i);
+  assert.match(
+    scoped[1],
+    /FROM public\.card_catalog[\s\S]*card_type[\s\S]*credit[\s\S]*FOR UPDATE/i,
+  );
+  assert.doesNotMatch(
+    approval.slice(0, scoped.index) + approval.slice(scoped.index + scoped[0].length),
+    /card_benefit_enrichment_identity:|FROM public\.card_catalog AS catalog[\s\S]*card_target_not_found/i,
+    'v5 can still reach the v6-only identity/card authority path',
+  );
+  assert.ok(
+    approval.indexOf('card_benefit_enrichment_review:') < scoped.index &&
+      approval.indexOf('INTO staging_row') > scoped.index + scoped[0].length,
+    'v6 parser scope broke review -> identity/card -> staging lock order',
+  );
+  assert.match(
+    sql,
+    /review_parser_lock_scope_assertions[\s\S]*\('benefits-v5', false\)[\s\S]*\('benefits-v6', true\)[\s\S]*parser_version = 'benefits-v6'/i,
+    'migration has no executable apply-time v5/v6 lock-scope regression',
+  );
+});
+
 test('Task3 Task4 Task6 and Task7 share an acyclic two-session lock order', async () => {
   const task3 = functionBody(
     await migrationBySuffix('_supersede_stale_benefit_staging.sql'),

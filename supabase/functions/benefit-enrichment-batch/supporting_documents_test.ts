@@ -1,4 +1,5 @@
 import {
+  canonicalPilotReplayResourceUrl,
   classifyRequiredReplaySourceKeys,
   collectSupportingBenefitDocuments,
 } from "./supporting_documents.ts";
@@ -30,6 +31,56 @@ function resource(
     notModified: false,
   };
 }
+
+Deno.test("pilot functional resource bytes allow safe filename escapes only", () => {
+  const safe =
+    "https://issuer.example/terms.pdf?file=most%20important%20terms.pdf&locale=en-US";
+  assert(
+    canonicalPilotReplayResourceUrl(safe) === safe,
+    "safe functional filename bytes were not preserved exactly",
+  );
+  for (
+    const unsafe of [
+      "https://issuer.example/terms.pdf?file=%61ccess_token%3Dsecret",
+      "https://issuer.example/terms.pdf?document=%E0%A4%B6%E0%A4%B0%E0%A5%8D%E0%A4%A4%E0%A5%87%E0%A4%82",
+      "https://issuer.example/terms.pdf?file=access%5Ftoken",
+      "https://issuer.example/terms.pdf?document=customer%20id",
+      "https://issuer.example/terms.pdf?file=%73ecret",
+      "https://issuer.example/terms.pdf?file=%FF",
+      "https://issuer.example/terms.pdf?file=%0A",
+      `https://issuer.example/terms.pdf?file=${"%20".repeat(400)}`,
+    ]
+  ) {
+    let rejected = false;
+    try {
+      canonicalPilotReplayResourceUrl(unsafe);
+    } catch {
+      rejected = true;
+    }
+    assert(rejected, `unsafe or non-parity query bytes survived: ${unsafe}`);
+  }
+  const tracking =
+    `${safe}&utm_source=https%3A%2F%2Ftracker.example%2Fcampaign`;
+  assert(
+    canonicalPilotReplayResourceUrl(tracking) === safe,
+    "encoded tracking was validated as functional data instead of dropped",
+  );
+});
+
+Deno.test("root functional resource has one Edge and SQL byte identity", () => {
+  const root = canonicalPilotReplayResourceUrl(
+    "https://issuer.example/?locale=en",
+  );
+  assert(
+    root === "https://issuer.example/?locale=en",
+    "root functional query lost the WHATWG slash",
+  );
+  assert(
+    sourceIdentityDigest(root) ===
+      "2b11cd567b1ddbc93697a59fe4a74f972bf7988553f3d43ca34d039e33aa28a5",
+    "root functional resource bytes changed before hashing",
+  );
+});
 
 Deno.test("supporting redirects remain bound to the expected card identity", async () => {
   const privilege = "https://www.axis.bank.in/cards/credit-card/privilege";
@@ -140,6 +191,34 @@ Deno.test("required central support links are fetched or retained as decisive fa
   );
 });
 
+Deno.test("a late required anchor hint is classified without prefix slicing", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const required = "https://www.axis.bank.in/support/document.pdf";
+  let fetchCount = 0;
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    primary: resource(
+      product,
+      `<h1>Privilege Credit Card</h1><a href="${required}">${
+        "general information ".repeat(24)
+      }Terms and Conditions</a>`,
+    ),
+    identityLabels: ["Privilege Credit Card"],
+    fetchOfficialIssuerResource: async () => {
+      fetchCount += 1;
+      return resource(required, "Privilege Credit Card terms and fees");
+    },
+  });
+  assert(fetchCount === 1, "late required anchor hint was silently sliced");
+  assert(
+    collected.attempts.some((attempt) =>
+      attempt.requestedUrl === required &&
+      attempt.role === "required_supporting" && attempt.status === "success"
+    ),
+    "late required anchor did not become decisive evidence",
+  );
+});
+
 Deno.test("supporting identity reconciles conflicting strong labels and ignores ordinary partner prose", async () => {
   const privilege = "https://www.axis.bank.in/cards/credit-card/privilege";
   const benefits = `${privilege}/benefits`;
@@ -212,9 +291,12 @@ Deno.test("supporting documents require body identity even on nested or curated 
   );
 });
 
-Deno.test("supporting functional query keys are explicitly approved without persistence", async () => {
+Deno.test("supporting functional query keys retain exact replay resources but not attempt URLs", async () => {
   const privilege = "https://www.axis.bank.in/cards/credit-card/privilege";
-  const terms = `${privilege}/terms?document=mitc`;
+  const terms =
+    `${privilege}/terms?document=mitc.pdf&locale=en&version=2&locale=hi&utm_source=campaign`;
+  const canonicalTerms =
+    `${privilege}/terms?document=mitc.pdf&locale=en&version=2&locale=hi`;
   let fetchInput: Record<string, unknown> | undefined;
   const collected = await collectSupportingBenefitDocuments({
     issuer: "Axis Bank",
@@ -225,7 +307,7 @@ Deno.test("supporting functional query keys are explicitly approved without pers
     identityLabels: ["Privilege Credit Card"],
     fetchOfficialIssuerResource: async (input) => {
       fetchInput = input as unknown as Record<string, unknown>;
-      return resource(terms, "Privilege Credit Card MITC and fees");
+      return resource(canonicalTerms, "Privilege Credit Card MITC and fees");
     },
   });
   assert(
@@ -236,26 +318,31 @@ Deno.test("supporting functional query keys are explicitly approved without pers
   );
   assert(
     collected.documents.some((document) =>
-      document.finalUrl === `${privilege}/terms`
+      document.finalUrl === `${privilege}/terms` &&
+      document.finalResourceUrl === canonicalTerms
     ),
-    "queryless display provenance was not retained",
+    "exact functional resource provenance was not retained in memory",
   );
-  const replayLink = collected.documents[0].replayLinks?.[0];
+  const replayLink = collected.documents[0].replayLinks?.[0] as
+    | Record<string, unknown>
+    | undefined;
   assert(
     replayLink?.href === `${privilege}/terms` &&
       replayLink.anchorText === "mitc" &&
-      replayLink.resourceIdentityHash === sourceIdentityDigest(terms),
-    "live collection did not retain bounded queryless classifier input and opaque query identity",
+      replayLink.resourceUrl === canonicalTerms &&
+      replayLink.resourceIdentityHash ===
+        sourceIdentityDigest(canonicalTerms) &&
+      replayLink.queryPolicy === "functional_only",
+    "live collection did not retain exact approved functional replay identity",
   );
   assert(
-    !JSON.stringify({
-      finalUrls: collected.documents.map((document) => document.finalUrl),
-      attempts: assessCrawlCompleteness(
+    !JSON.stringify(
+      assessCrawlCompleteness(
         collected.attempts,
         "2026-08-17T00:01:00.000Z",
       ).attempts,
-    }).includes("document=mitc"),
-    "functional query value entered persisted supporting evidence",
+    ).includes("document=mitc"),
+    "functional query value entered persisted source attempts",
   );
 });
 
@@ -306,7 +393,8 @@ Deno.test("linked query rejections remain bounded evidence and approved entity s
 Deno.test("supporting attempts retain opaque final resource identity", async () => {
   const product = "https://www.axis.bank.in/cards/credit-card/privilege";
   const terms = `${product}/terms?document=mitc`;
-  const finalHash = "d".repeat(64);
+  const suppliedHash = "d".repeat(64);
+  const finalHash = sourceIdentityDigest(terms);
   const collected = await collectSupportingBenefitDocuments({
     issuer: "Axis Bank",
     primary: resource(
@@ -316,7 +404,7 @@ Deno.test("supporting attempts retain opaque final resource identity", async () 
     identityLabels: ["Privilege Credit Card"],
     fetchOfficialIssuerResource: async () => ({
       ...resource(terms, "Privilege Credit Card MITC"),
-      finalResourceIdentityHash: finalHash,
+      finalResourceIdentityHash: suppliedHash,
     }),
   });
   const persisted = assessCrawlCompleteness(
@@ -326,8 +414,9 @@ Deno.test("supporting attempts retain opaque final resource identity", async () 
     item.role === "required_supporting"
   ) as unknown as Record<string, unknown>;
   assert(
-    persisted.finalResourceIdentityHash === finalHash,
-    "supporting final identity was dropped from evidence",
+    persisted.finalResourceIdentityHash === finalHash &&
+      persisted.finalResourceIdentityHash !== suppliedHash,
+    "supporting final identity was not recomputed from the exact resource",
   );
   const retained = collected.documents.find((document) =>
     document.sourceUrl === terms
@@ -448,6 +537,33 @@ Deno.test("primary logical identity uses submitted URL across redirects", async 
   assert(
     attempts[0].requestedUrl === submitted && attempts[0].finalUrl === final,
     "primary attempt did not split requested and final URLs",
+  );
+});
+
+Deno.test("primary replay identity preserves an approved functional query", async () => {
+  const display = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const resourceUrl = `${display}?document=mitc.pdf&locale=en`;
+  const primary = {
+    ...resource(display, "<p>Get 10% cashback on dining.</p>"),
+    submittedUrl: display,
+    submittedResourceUrl: resourceUrl,
+    finalResourceUrl: resourceUrl,
+  };
+  const { documents } = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    primary,
+    identityLabels: ["Privilege"],
+    maximumLinks: 0,
+  });
+
+  assert(
+    documents[0].requestedResourceUrl === resourceUrl,
+    "primary requested functional query was replaced by its display URL",
+  );
+  assert(
+    documents[0].requestedResourceIdentityHash ===
+      sourceIdentityDigest(resourceUrl),
+    "primary replay hash no longer binds the exact submitted resource",
   );
 });
 

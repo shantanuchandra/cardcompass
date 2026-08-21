@@ -1,4 +1,7 @@
-import { type BenefitDocument } from "../_shared/benefit_enrichment.ts";
+import {
+  type BenefitDocument,
+  containsPrivateBenefitData,
+} from "../_shared/benefit_enrichment.ts";
 import {
   redactSensitiveUrlsInText,
   safeHttpsDisplayUrl,
@@ -25,6 +28,13 @@ import {
 
 const MAX_SUPPORTING_LINKS = 8;
 const MAX_SUPPORTING_DEPTH = 2;
+const pilotReplayFunctionalQueryKeys = new Set([
+  "document",
+  "file",
+  "locale",
+  "version",
+]);
+const trackingQueryKey = /^(?:utm_.+|gclid|fbclid)$/i;
 const relevantPath =
   /(?:credit[-_/ ]?cards?|cards?[-_/ ]?credit|benefits?|fees?|charges?|rewards?|terms?|conditions?|mitc)(?:$|[/?=&_.-])/i;
 const unsafePath =
@@ -135,6 +145,98 @@ export function canonicalRequiredReplayAnchorText(value: string): string {
   return known?.toLowerCase().slice(0, 96) ?? "";
 }
 
+/**
+ * Canonical persisted replay resource. Functional query bytes, ordering, and
+ * duplicates are preserved exactly; tracking is discarded and every other
+ * key fails closed. The queryless display URL is stored separately.
+ */
+export function canonicalPilotReplayResourceUrl(value: string): string {
+  const exact = value.trim();
+  if (
+    exact.length < 9 || exact.length > 2_048 ||
+    /[\u0000-\u0020\u007f]/.test(exact)
+  ) {
+    throw new Error("unapproved_query");
+  }
+  const fragmentIndex = exact.indexOf("#");
+  const withoutFragment = fragmentIndex < 0
+    ? exact
+    : exact.slice(0, fragmentIndex);
+  const queryIndex = withoutFragment.indexOf("?");
+  const rawQuery = queryIndex < 0 ? "" : withoutFragment.slice(queryIndex + 1);
+  if (queryIndex >= 0 && rawQuery.length === 0) {
+    throw new Error("unapproved_query");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(withoutFragment);
+  } catch {
+    throw new Error("unapproved_query");
+  }
+  if (
+    parsed.protocol !== "https:" || !parsed.hostname || parsed.username ||
+    parsed.password
+  ) throw new Error("unapproved_query");
+  const kept: string[] = [];
+  if (rawQuery) {
+    const parts = rawQuery.split("&");
+    if (parts.length > 8 || parts.some((part) => !part)) {
+      throw new Error("unapproved_query");
+    }
+    for (const part of parts) {
+      const separator = part.indexOf("=");
+      if (separator < 1) throw new Error("unapproved_query");
+      const rawKey = part.slice(0, separator);
+      const rawValue = part.slice(separator + 1);
+      if (/%(?![0-9a-f]{2})/i.test(rawKey)) {
+        throw new Error("unapproved_query");
+      }
+      let key: string;
+      try {
+        key = decodeURIComponent(rawKey.replace(/\+/g, "%20"));
+      } catch {
+        throw new Error("unapproved_query");
+      }
+      if (trackingQueryKey.test(key)) continue;
+      if (/%(?![0-9a-f]{2})/i.test(rawValue) || rawValue.length > 512) {
+        throw new Error("unapproved_query");
+      }
+      const nonEscapedValue = rawValue.replace(
+        /%(?:20|2d|2e|2f|5f|7e)/gi,
+        "",
+      );
+      if (!/^[a-z0-9._~+/-]+$/i.test(nonEscapedValue)) {
+        throw new Error("unapproved_query");
+      }
+      let decodedValue: string;
+      try {
+        decodedValue = decodeURIComponent(
+          rawValue.replace(/\+/g, "%20"),
+        );
+      } catch {
+        throw new Error("unapproved_query");
+      }
+      if (
+        key !== rawKey || key.length > 64 || decodedValue.length > 512 ||
+        !pilotReplayFunctionalQueryKeys.has(key.toLowerCase()) ||
+        /(?:authorization|bearer|access[_ -]?token|refresh[_ -]?token|lease[_ -]?token|password|secret|credential|customer|account|phone|email|pan|card[_ -]?(?:number|no\.?))/i
+          .test(decodedValue) ||
+        containsPrivateBenefitData(decodedValue)
+      ) throw new Error("unapproved_query");
+      kept.push(part);
+    }
+  }
+  parsed.search = "";
+  parsed.hash = "";
+  parsed.port = parsed.port === "443" ? "" : parsed.port;
+  parsed.pathname = parsed.pathname.replace(/\/{2,}/g, "/");
+  const serialized = parsed.toString();
+  const base = kept.length > 0 && parsed.pathname === "/"
+    ? serialized
+    : serialized.replace(/\/$/, "");
+  return kept.length > 0 ? `${base}?${kept.join("&")}` : base;
+}
+
 function replayLinksFromClassifierInput(
   issuer: string,
   baseUrl: string,
@@ -147,8 +249,7 @@ function replayLinksFromClassifierInput(
     .map((url) => ({ url, anchorText: "curated exact source" }));
   for (const match of html.matchAll(anchorPattern)) {
     const anchorText = (match[4] ?? "").replace(/<[^>]*>/g, " ")
-      .replace(/&(?:amp|nbsp);/gi, " ").replace(/\s+/g, " ").trim()
-      .slice(0, 256);
+      .replace(/&(?:amp|nbsp);/gi, " ").replace(/\s+/g, " ").trim();
     const encodedHref = match[1] ?? match[2] ?? match[3] ?? "";
     const hrefValue = encodedHref
       .replace(/&amp;|&#0*38;|&#x0*26;/gi, "&")
@@ -167,6 +268,14 @@ function replayLinksFromClassifierInput(
       } catch {
         // The live classifier retains the raw identity for a rejected required
         // query/path. Replay must still be able to prove it was not omitted.
+        overflow = true;
+        continue;
+      }
+      try {
+        url = canonicalPilotReplayResourceUrl(url);
+      } catch {
+        overflow = true;
+        continue;
       }
       candidates.push({ url, anchorText });
     } catch {
@@ -193,8 +302,10 @@ function replayLinksFromClassifierInput(
     }
     links.push({
       href,
+      resourceUrl: candidate.url,
       anchorText: canonicalRequiredReplayAnchorText(candidate.anchorText),
       resourceIdentityHash,
+      queryPolicy: "functional_only",
     });
   }
   return { links, overflow };
@@ -209,8 +320,22 @@ export function classifyRequiredReplaySourceKeys(
   for (const document of documents) {
     overflow ||= document.replayLinkOverflow === true;
     for (const link of document.replayLinks ?? []) {
-      if (requiredSourceHint(link.href, link.anchorText)) {
-        keys.add(link.resourceIdentityHash);
+      let resourceKey: string;
+      try {
+        const resourceUrl = canonicalPilotReplayResourceUrl(
+          link.resourceUrl ?? link.href,
+        );
+        resourceKey = sourceIdentityDigest(resourceUrl);
+      } catch {
+        overflow = true;
+        continue;
+      }
+      if (
+        link.resourceIdentityHash !== resourceKey ||
+        link.queryPolicy !== "functional_only"
+      ) overflow = true;
+      if (requiredSourceHint(link.resourceUrl ?? link.href, link.anchorText)) {
+        keys.add(resourceKey);
       }
     }
   }
@@ -229,8 +354,7 @@ function linkedUrls(
   const primaryPath = new URL(primaryUrl).pathname.replace(/\/$/, "");
   for (const match of html.matchAll(anchorPattern)) {
     const anchorText = (match[4] ?? "").replace(/<[^>]*>/g, " ")
-      .replace(/&(?:amp|nbsp);/gi, " ").replace(/\s+/g, " ").trim()
-      .slice(0, 256);
+      .replace(/&(?:amp|nbsp);/gi, " ").replace(/\s+/g, " ").trim();
     const requiredHint = requiredAnchorPattern.test(anchorText);
     const encodedHref = match[1] ?? match[2] ?? match[3] ?? "";
     const href = encodedHref
@@ -312,15 +436,26 @@ async function benefitDocument(
   requestedUrl = resource.submittedUrl,
 ): Promise<BenefitDocument> {
   const body = requireOfficialFetchBody(resource);
+  const exactFinalResource = body.finalResourceUrl ?? body.finalUrl;
   return {
     sourceUrl: requestedUrl,
-    finalUrl: boundedSourceUrl(body.canonicalUrl),
+    finalUrl: safeHttpsDisplayUrl(body.finalResourceUrl ?? body.canonicalUrl) ??
+      body.canonicalUrl,
+    requestedResourceUrl: requestedUrl,
+    finalResourceUrl: body.finalResourceUrl ?? body.finalUrl,
     requestedResourceIdentityHash: sourceIdentityDigest(requestedUrl),
-    finalResourceIdentityHash: body.finalResourceIdentityHash ??
-      sourceIdentityDigest(body.canonicalUrl),
+    finalResourceIdentityHash: replayResourceIdentity(exactFinalResource),
     text: redactSensitiveUrlsInText(await officialResourceText(body)),
     contentHash: body.contentHash,
   };
+}
+
+function replayResourceIdentity(value: string): string | undefined {
+  try {
+    return sourceIdentityDigest(canonicalPilotReplayResourceUrl(value));
+  } catch {
+    return undefined;
+  }
 }
 
 export async function collectSupportingBenefitDocuments(
@@ -336,7 +471,7 @@ export async function collectSupportingBenefitDocuments(
   const primary = requireOfficialFetchBody(input.primary);
   const primaryDocument = await benefitDocument(
     primary,
-    input.primary.submittedUrl,
+    input.primary.submittedResourceUrl ?? input.primary.submittedUrl,
   );
   const documents = primaryDocument.text.trim() ? [primaryDocument] : [];
   const attempts: SourceAttemptInput[] = input.primaryAttempts
@@ -624,6 +759,9 @@ export async function collectSupportingBenefitDocuments(
       });
       continue;
     }
+    const finalResourceIdentityHash = replayResourceIdentity(
+      resource.finalResourceUrl ?? resource.finalUrl,
+    );
     try {
       resource = requireOfficialFetchBody(resource);
     } catch (error) {
@@ -633,9 +771,7 @@ export async function collectSupportingBenefitDocuments(
         role: current.role,
         status: "failed",
         ...(resource.status ? { httpStatus: resource.status } : {}),
-        ...(resource.finalResourceIdentityHash
-          ? { finalResourceIdentityHash: resource.finalResourceIdentityHash }
-          : {}),
+        ...(finalResourceIdentityHash ? { finalResourceIdentityHash } : {}),
         errorCode: sanitizedSourceErrorCode(error),
         attemptedAt: resource.retrievedAt,
       });
@@ -652,9 +788,7 @@ export async function collectSupportingBenefitDocuments(
         errorCode: resource.contentType === "application/pdf"
           ? "corrupt_pdf"
           : "empty_document",
-        ...(resource.finalResourceIdentityHash
-          ? { finalResourceIdentityHash: resource.finalResourceIdentityHash }
-          : {}),
+        ...(finalResourceIdentityHash ? { finalResourceIdentityHash } : {}),
         attemptedAt: resource.retrievedAt,
       });
       continue;
@@ -672,9 +806,7 @@ export async function collectSupportingBenefitDocuments(
         status: "failed",
         httpStatus: resource.status,
         contentHash: resource.contentHash,
-        ...(resource.finalResourceIdentityHash
-          ? { finalResourceIdentityHash: resource.finalResourceIdentityHash }
-          : {}),
+        ...(finalResourceIdentityHash ? { finalResourceIdentityHash } : {}),
         errorCode: identityAssessment.status === "ambiguous"
           ? "identity_ambiguous"
           : "identity_mismatch",
@@ -709,9 +841,7 @@ export async function collectSupportingBenefitDocuments(
         status: "success",
         httpStatus: 200,
         contentHash: resource.contentHash,
-        ...(resource.finalResourceIdentityHash
-          ? { finalResourceIdentityHash: resource.finalResourceIdentityHash }
-          : {}),
+        ...(finalResourceIdentityHash ? { finalResourceIdentityHash } : {}),
         attemptedAt: resource.retrievedAt,
       });
     } else {
@@ -724,9 +854,7 @@ export async function collectSupportingBenefitDocuments(
         errorCode: resource.contentType === "application/pdf"
           ? "corrupt_pdf"
           : "empty_document",
-        ...(resource.finalResourceIdentityHash
-          ? { finalResourceIdentityHash: resource.finalResourceIdentityHash }
-          : {}),
+        ...(finalResourceIdentityHash ? { finalResourceIdentityHash } : {}),
         attemptedAt: resource.retrievedAt,
       });
     }

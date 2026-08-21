@@ -39,7 +39,9 @@ import {
 } from "./index.ts";
 import * as batchModule from "./index.ts";
 import {
+  canonicalBenefitReplayFactEnvelope,
   canonicalBenefitReplayText,
+  containsPrivateBenefitData,
   diffBenefits,
   extractGroundedBenefits,
   extractGroundedBenefitsV6,
@@ -343,6 +345,161 @@ Deno.test("pilot replay rejects retained input overflow instead of silently trun
   );
 });
 
+Deno.test("pilot replay scans every relevant source fact and never qualifies a sliced tail", async () => {
+  const compute = task10BatchModule.computePilotReplayEvidence;
+  assert(typeof compute === "function", "computed pilot replay is missing");
+  const sourceUrl = "https://issuer.example/card";
+  const sourceKey = sourceIdentityDigest(sourceUrl);
+  const attempts = [{
+    url: sourceUrl,
+    role: "primary",
+    status: "success",
+    httpStatus: 200,
+    contentHash: "a".repeat(64),
+    finalResourceIdentityHash: sourceKey,
+    attemptedAt: "2026-08-20T00:00:00.000Z",
+    logicalSourceKey: sourceKey,
+  }];
+  const earlyFacts = Array.from(
+    { length: 30 },
+    (_, index) =>
+      `Benefit ${index}: Earn ${
+        index + 1
+      }% cashback on dining spends after a qualifying monthly purchase of INR ${
+        index + 100
+      }.`,
+  ).join(" ");
+  const lateFact = "Late benefit: Earn 17% cashback on international travel.";
+  const seenReplayText: string[] = [];
+  await compute({
+    jobId: "11111111-1111-4111-8111-111111111111",
+    cardId: "22222222-2222-4222-8222-222222222222",
+    parserVersion: "benefits-v6",
+    runMode: "pilot",
+    sourceManifestHash: await computeSourceManifestHash(attempts as never),
+    expectedRequiredSourceKeys: [],
+    requiredSourceSelectionOverflow: false,
+    attempts,
+    documents: [{
+      sourceUrl,
+      finalUrl: sourceUrl,
+      text: `${earlyFacts} ${lateFact}`,
+      contentHash: "a".repeat(64),
+    }],
+    extract: async (documents: Array<{ text: string }>) => {
+      seenReplayText.push(documents[0].text);
+      return [{ fixture: "all-facts" }];
+    },
+  });
+  assert(
+    seenReplayText.length === 2 &&
+      seenReplayText.every((text) => text.includes(lateFact)),
+    "a late benefit-relevant sentence was silently sliced from replay",
+  );
+});
+
+Deno.test("pilot replay retains late rival-card ambiguity", async () => {
+  const compute = task10BatchModule.computePilotReplayEvidence;
+  assert(typeof compute === "function", "computed pilot replay is missing");
+  const sourceUrl = "https://issuer.example/card";
+  const sourceKey = sourceIdentityDigest(sourceUrl);
+  const attempts = [{
+    url: sourceUrl,
+    role: "primary",
+    status: "success",
+    httpStatus: 200,
+    contentHash: "a".repeat(64),
+    finalResourceIdentityHash: sourceKey,
+    attemptedAt: "2026-08-20T00:00:00.000Z",
+    logicalSourceKey: sourceKey,
+  }];
+  const binding = {
+    jobId: "11111111-1111-4111-8111-111111111111",
+    cardId: "22222222-2222-4222-8222-222222222222",
+    parserVersion: "benefits-v6",
+    runMode: "pilot",
+    sourceManifestHash: await computeSourceManifestHash(attempts as never),
+    expectedRequiredSourceKeys: [],
+    requiredSourceSelectionOverflow: false,
+    issuer: "Issuer Example",
+    identityLabels: ["Issuer Example Card"],
+    primarySourceUrl: sourceUrl,
+    attempts,
+  };
+  const filler = Array.from(
+    { length: 14 },
+    (_, index) =>
+      `Issuer Example Card benefit ${index}: Earn ${
+        index + 1
+      }% cashback on qualifying dining and travel spends.`,
+  ).join(" ");
+  let ambiguityError: unknown;
+  try {
+    await compute({
+      ...binding,
+      documents: [{
+        sourceUrl,
+        text: `${filler} Rival Bank Other Card.`,
+        contentHash: "a".repeat(64),
+      }],
+      extract: async () => [{ fixture: "ambiguity" }],
+    });
+  } catch (error) {
+    ambiguityError = error;
+  }
+  assert(
+    ambiguityError instanceof Error &&
+      ambiguityError.message === "pilot_card_identity_mismatch",
+    "late rival-card ambiguity disappeared from the replay classifier",
+  );
+});
+
+Deno.test("pilot replay fails explicit fact overflow instead of slicing a relevant fragment", async () => {
+  const compute = task10BatchModule.computePilotReplayEvidence;
+  assert(typeof compute === "function", "computed pilot replay is missing");
+  const sourceUrl = "https://issuer.example/card";
+  const sourceKey = sourceIdentityDigest(sourceUrl);
+  const attempts = [{
+    url: sourceUrl,
+    role: "primary",
+    status: "success",
+    httpStatus: 200,
+    contentHash: "a".repeat(64),
+    finalResourceIdentityHash: sourceKey,
+    attemptedAt: "2026-08-20T00:00:00.000Z",
+    logicalSourceKey: sourceKey,
+  }];
+  let overflowError: unknown;
+  try {
+    await compute({
+      jobId: "11111111-1111-4111-8111-111111111111",
+      cardId: "22222222-2222-4222-8222-222222222222",
+      parserVersion: "benefits-v6",
+      runMode: "pilot",
+      sourceManifestHash: await computeSourceManifestHash(attempts as never),
+      expectedRequiredSourceKeys: [],
+      requiredSourceSelectionOverflow: false,
+      issuer: "Issuer Example",
+      identityLabels: ["Issuer Example Card"],
+      primarySourceUrl: sourceUrl,
+      attempts,
+      documents: [{
+        sourceUrl,
+        text: `Issuer Example Card. Earn 10% cashback ${"x".repeat(9_000)}.`,
+        contentHash: "a".repeat(64),
+      }],
+      extract: async () => [{ fixture: "overflow" }],
+    });
+  } catch (error) {
+    overflowError = error;
+  }
+  assert(
+    overflowError instanceof Error &&
+      overflowError.message === "pilot_replay_fact_overflow",
+    "an oversized relevant fact was sliced and qualified without overflow",
+  );
+});
+
 Deno.test("pilot replay retains only bounded privacy-safe classifier facts", async () => {
   const compute = task10BatchModule.computePilotReplayEvidence;
   assert(typeof compute === "function", "computed pilot replay is missing");
@@ -473,7 +630,7 @@ Deno.test("pilot replay reruns required-link and card-identity classifiers from 
     documents,
   });
   const replayInput = (replay as any).replayInput;
-  assert(replayInput?.version === 2, "classifier-capable replay v2 is absent");
+  assert(replayInput?.version === 3, "classifier-capable replay v3 is absent");
   assert(
     !("required_resources" in replayInput),
     "replay copied classifier output instead of retaining classifier input",
@@ -560,7 +717,10 @@ Deno.test("pilot replay reruns required-link and card-identity classifiers from 
   }
   assert(
     borrowedIdentityError instanceof Error &&
-      borrowedIdentityError.message === "pilot_replay_source_binding_mismatch",
+      [
+        "pilot_required_source_classification_mismatch",
+        "pilot_replay_source_binding_mismatch",
+      ].includes(borrowedIdentityError.message),
     "a replay hyperlink borrowed another required attempt's opaque identity",
   );
 
@@ -584,6 +744,148 @@ Deno.test("pilot replay reruns required-link and card-identity classifiers from 
       identityError.message === "pilot_card_identity_mismatch",
     "replay did not rerun the actual card identity classifier",
   );
+});
+
+Deno.test("pilot replay persists canonical functional resources and recomputes every opaque identity", async () => {
+  const compute = task10BatchModule.computePilotReplayEvidence;
+  assert(typeof compute === "function", "computed pilot replay is missing");
+  const primaryUrl = "https://issuer.example/card";
+  const rawTermsUrl =
+    "https://issuer.example/terms.pdf?document=mitc.pdf&locale=en&version=2&locale=hi&utm_source=campaign";
+  const canonicalTermsUrl =
+    "https://issuer.example/terms.pdf?document=mitc.pdf&locale=en&version=2&locale=hi";
+  const primaryKey = sourceIdentityDigest(primaryUrl);
+  const termsKey = sourceIdentityDigest(canonicalTermsUrl);
+  const attempts = [{
+    url: primaryUrl,
+    role: "primary",
+    status: "success",
+    httpStatus: 200,
+    contentHash: "a".repeat(64),
+    finalResourceIdentityHash: primaryKey,
+    attemptedAt: "2026-08-20T00:00:00.000Z",
+    logicalSourceKey: primaryKey,
+  }, {
+    url: "https://issuer.example/terms.pdf",
+    role: "required_supporting",
+    status: "success",
+    httpStatus: 200,
+    contentHash: "b".repeat(64),
+    finalResourceIdentityHash: termsKey,
+    attemptedAt: "2026-08-20T00:00:01.000Z",
+    logicalSourceKey: termsKey,
+  }];
+  const replay = await compute({
+    jobId: "11111111-1111-4111-8111-111111111111",
+    cardId: "22222222-2222-4222-8222-222222222222",
+    parserVersion: "benefits-v6",
+    runMode: "pilot",
+    sourceManifestHash: await computeSourceManifestHash(attempts as never),
+    expectedRequiredSourceKeys: [termsKey],
+    requiredSourceSelectionOverflow: false,
+    issuer: "Issuer Example",
+    identityLabels: ["Issuer Example Card"],
+    primarySourceUrl: primaryUrl,
+    attempts,
+    documents: [{
+      sourceUrl: primaryUrl,
+      requestedResourceIdentityHash: "c".repeat(64),
+      finalResourceIdentityHash: "d".repeat(64),
+      text: "Issuer Example Card. Earn 10% cashback.",
+      contentHash: "a".repeat(64),
+      replayLinks: [{
+        href: rawTermsUrl,
+        anchorText: "Terms",
+        resourceIdentityHash: "f".repeat(64),
+      }],
+    }, {
+      sourceUrl: canonicalTermsUrl,
+      finalUrl: canonicalTermsUrl,
+      requestedResourceIdentityHash: "e".repeat(64),
+      finalResourceIdentityHash: "f".repeat(64),
+      text: "Issuer Example Card terms. Earn 10% cashback.",
+      contentHash: "b".repeat(64),
+    }],
+    extract: async () => [{ fixture: "functional-query" }],
+  });
+  const replayInput = (replay as any).replayInput;
+  const link = replayInput.documents[0].hyperlinks[0];
+  const termsDocument = replayInput.documents[1];
+  assert(
+    replayInput.version === 3 &&
+      link.href === "https://issuer.example/terms.pdf" &&
+      link.resource_url === canonicalTermsUrl &&
+      link.resource_identity_hash === termsKey &&
+      link.query_policy === "functional_only" &&
+      termsDocument.requested_resource_url === canonicalTermsUrl &&
+      termsDocument.requested_resource_identity_hash === termsKey &&
+      termsDocument.final_resource_identity_hash === termsKey &&
+      termsDocument.privacy_normalized === true,
+    "replay trusted supplied digests or lost the exact approved functional resource",
+  );
+});
+
+Deno.test("pilot replay rejects sensitive or unknown functional query keys", async () => {
+  const compute = task10BatchModule.computePilotReplayEvidence;
+  assert(typeof compute === "function", "computed pilot replay is missing");
+  const primaryUrl = "https://issuer.example/card";
+  const primaryKey = sourceIdentityDigest(primaryUrl);
+  for (
+    const rejectedUrl of [
+      "https://issuer.example/terms.pdf?token=secret",
+      "https://issuer.example/terms.pdf?product=platinum",
+      "https://issuer.example/terms.pdf?variant=platinum",
+      "https://issuer.example/terms.pdf?lo%63ale=en",
+      "https://issuer.example/terms.pdf?document=secret",
+      "https://issuer.example/terms.pdf?file=access_token%3Dsecret",
+      "https://issuer.example/terms.pdf?version=1234567890123456",
+    ]
+  ) {
+    const rejectedKey = sourceIdentityDigest(rejectedUrl);
+    const attempts = [{
+      url: primaryUrl,
+      role: "primary",
+      status: "success",
+      httpStatus: 200,
+      contentHash: "a".repeat(64),
+      finalResourceIdentityHash: primaryKey,
+      attemptedAt: "2026-08-20T00:00:00.000Z",
+      logicalSourceKey: primaryKey,
+    }, {
+      url: "https://issuer.example/terms.pdf",
+      role: "required_supporting",
+      status: "failed",
+      errorCode: "unapproved_query",
+      attemptedAt: "2026-08-20T00:00:01.000Z",
+      logicalSourceKey: rejectedKey,
+    }];
+    let error: unknown;
+    try {
+      await compute({
+        jobId: "11111111-1111-4111-8111-111111111111",
+        cardId: "22222222-2222-4222-8222-222222222222",
+        parserVersion: "benefits-v6",
+        runMode: "pilot",
+        sourceManifestHash: await computeSourceManifestHash(attempts as never),
+        expectedRequiredSourceKeys: [rejectedKey],
+        requiredSourceSelectionOverflow: false,
+        attempts,
+        documents: [{
+          sourceUrl: primaryUrl,
+          text: "Issuer Example Card. Earn 10% cashback.",
+          contentHash: "a".repeat(64),
+          replayLinks: [{ href: rejectedUrl, anchorText: "Terms" }],
+        }],
+        extract: async () => [{ fixture: "unsafe-query" }],
+      });
+    } catch (caught) {
+      error = caught;
+    }
+    assert(
+      error instanceof Error && error.message === "unapproved_query",
+      `replay accepted an unapproved resource query: ${rejectedUrl}`,
+    );
+  }
 });
 
 Deno.test("canonical pilot replay text removes direct official-source PII probes", () => {
@@ -626,6 +928,180 @@ JOHN gets 10% cashback. JOhN receives rewards.`,
       "JOhN receives",
     ]
   ) assert(!safe.includes(unsafe), `official-source replay leaked ${unsafe}`);
+});
+
+Deno.test("pilot privacy normalizes nested encodings Unicode digits and confusable person spans", () => {
+  const assertSafe = task10BatchModule
+    .assertSafePersistedEvidence as unknown as (
+      value: unknown,
+      context?: { issuer?: string; identityLabels?: string[] },
+    ) => void;
+  const nested = Array.from({ length: 6 }).reduce<string>(
+    (value) => encodeURIComponent(value),
+    "ALICE gets 10% cashback",
+  );
+  for (
+    const unsafe of [
+      nested,
+      "&#x41;&#x4c;&#x49;&#x43;&#x45; gets 10% cashback",
+      "AL\u200BICE receives rewards",
+      "Ｒａｈｕｌ Ｓｈａｒｍａ gets 10% cashback",
+      "Rаhul Šarma receives rewards",
+      "Email ａｌｉｃｅ＠example.com",
+      "Phone ＋９１ ９８７６５ ４３２１０",
+      "Account ID १२३४५६७८९०१२३४५६",
+    ]
+  ) {
+    let error: unknown;
+    try {
+      assertSafe({ proposal: { description: unsafe } });
+    } catch (caught) {
+      error = caught;
+    }
+    assert(
+      error instanceof Error,
+      `normalized privacy probe survived: ${unsafe}`,
+    );
+  }
+  assertSafe(
+    {
+      proposal: {
+        description:
+          "American Express Platinum Card. American Express gets 10% cashback.",
+      },
+    },
+    {
+      issuer: "American Express",
+      identityLabels: ["American Express Platinum Card"],
+    },
+  );
+});
+
+Deno.test("replay facts fail closed on private relevant prose without dropping safe headings", () => {
+  const privateFacts = canonicalBenefitReplayFactEnvelope(
+    "Alice gets 10% cashback. Cardholders get 5% cashback.",
+    { issuer: "Issuer Example", identityLabels: ["Issuer Example Card"] },
+  );
+  assert(
+    privateFacts.factOverflow,
+    "a private benefit fact was silently omitted without blocking replay",
+  );
+  assert(
+    privateFacts.publicText.includes("Cardholders get 5% cashback"),
+    "a safe fact disappeared with the private fact",
+  );
+
+  const headings = canonicalBenefitReplayFactEnvelope(
+    [
+      "Get Complimentary Lounge Access.",
+      "Earn Reward Points on Dining.",
+      "Welcome Bonus Rewards.",
+      "Exclusive Dining Offers.",
+      "Reward Points Program.",
+      "Zero Fuel Surcharge.",
+      "Travel Insurance Cover.",
+      "Discount Miles and Movie Tickets.",
+      "APR Interest and Forex Markup.",
+      "Milestone Spend Threshold and Renewal Waiver.",
+    ].join(" "),
+  );
+  assert(!headings.factOverflow, "safe commercial headings looked private");
+  assert(
+    headings.publicText.includes("Get Complimentary Lounge Access") &&
+      headings.publicText.includes("Earn Reward Points on Dining"),
+    "safe commercial headings were silently omitted",
+  );
+
+  const footer = canonicalBenefitReplayFactEnvelope(
+    "<main>Get 10% cashback on dining.</main><footer>&copy; 2026 Issuer Example</footer>",
+  );
+  assert(!footer.factOverflow, "an irrelevant copyright footer blocked replay");
+  assert(
+    footer.publicText.includes("10% cashback"),
+    "a benign HTML footer erased the relevant benefit fact",
+  );
+});
+
+Deno.test("an all-private relevant document reports explicit replay overflow", async () => {
+  const compute = task10BatchModule.computePilotReplayEvidence;
+  assert(typeof compute === "function", "computed pilot replay is missing");
+  const sourceUrl = "https://issuer.example/card";
+  const sourceKey = sourceIdentityDigest(sourceUrl);
+  const attempts = [{
+    url: sourceUrl,
+    role: "primary",
+    status: "success",
+    httpStatus: 200,
+    contentHash: "a".repeat(64),
+    finalResourceIdentityHash: sourceKey,
+    attemptedAt: "2026-08-20T00:00:00.000Z",
+    logicalSourceKey: sourceKey,
+  }];
+  let overflowError: unknown;
+  try {
+    await compute({
+      jobId: "11111111-1111-4111-8111-111111111111",
+      cardId: "22222222-2222-4222-8222-222222222222",
+      parserVersion: "benefits-v6",
+      runMode: "pilot",
+      sourceManifestHash: await computeSourceManifestHash(attempts as never),
+      expectedRequiredSourceKeys: [],
+      requiredSourceSelectionOverflow: false,
+      issuer: "Issuer Example",
+      identityLabels: ["Issuer Example Card"],
+      primarySourceUrl: sourceUrl,
+      attempts,
+      documents: [{
+        sourceUrl,
+        text: "Alice gets 10% cashback.",
+        contentHash: "a".repeat(64),
+      }],
+      extract: async () => [],
+    });
+  } catch (error) {
+    overflowError = error;
+  }
+  assert(
+    overflowError instanceof Error &&
+      overflowError.message === "pilot_replay_fact_overflow",
+    "all-private replay failed with an unrelated persistence error",
+  );
+});
+
+Deno.test("privacy allowlists only exact issuer and product phrases", () => {
+  const context = {
+    issuer: "State Bank of India",
+    identityLabels: ["State Bank of India Card"],
+  };
+  assert(
+    !containsPrivateBenefitData(
+      "State Bank of India gets 10% cashback",
+      context,
+    ),
+    "the exact public issuer phrase was rejected",
+  );
+  assert(
+    containsPrivateBenefitData("India gets 10% cashback", context),
+    "an arbitrary identity substring was allowlisted",
+  );
+  assert(
+    containsPrivateBenefitData("АLІСЕ gets 10% cashback", context),
+    "a Ukrainian-I confusable person name bypassed privacy",
+  );
+  for (
+    const unsafe of [
+      "Rahul शर्मा gets 10% cashback",
+      "राहुल शर्मा gets 10% cashback",
+      "Cashback for Alice is 10%",
+      "Alic&eacute; gets 10% cashback",
+      "Phone \u{1E951}\u{1E952}\u{1E953}\u{1E954}\u{1E955}\u{1E956}\u{1E957}\u{1E958}\u{1E959}\u{1E950}",
+    ]
+  ) {
+    assert(
+      containsPrivateBenefitData(unsafe, context),
+      `a Unicode or contextual person span bypassed privacy: ${unsafe}`,
+    );
+  }
 });
 
 Deno.test("pilot source binding preserves exact requested and redirected resource identities", async () => {
@@ -773,7 +1249,7 @@ async function withComputedPilotEvidence<T extends Record<string, any>>(
     : null;
   const stagingContentHash = disposition === "material" ? "f".repeat(64) : null;
   const retainedText = proposalCount === 0
-    ? `${fixtureIdentityLabel}. No qualifying card benefits are listed.`
+    ? `${fixtureIdentityLabel}. No qualifying benefits are listed.`
     : `${fixtureIdentityLabel}. Get 10% cashback on dining spends.`;
   const replay = await task10BatchModule.computePilotReplayEvidence!({
     jobId: String(row.id),
@@ -905,7 +1381,8 @@ Deno.test("pilot replay identity labels are bound to authoritative catalog ident
     parser_version: "benefits-v6",
     status: "completed",
   }, {
-    replayIdentityLabel: "Rival Card",
+    proposalCount: 1,
+    replayIdentityLabel: "Issuer A Rival Card",
     authoritativeCardName: "Issuer A Example Card",
   }) as Record<string, any>;
   const projected = await project(row, {
@@ -4882,6 +5359,13 @@ Deno.test("direct official-source customer and payment probes never reach stagin
       "Phone 123.456.7890.",
       "PAN ABCDE1234F receives rewards.",
       "Reference 12345678901234567890 gets rewards.",
+      "&#x41;&#x4c;&#x49;&#x43;&#x45; gets 10% cashback.",
+      "AL\u200BICE receives rewards.",
+      "Ｒａｈｕｌ Ｓｈａｒｍａ gets 10% cashback.",
+      "Rаhul Šarma receives rewards.",
+      "Email ａｌｉｃｅ＠example.com.",
+      "Phone ＋９１ ９８７６５ ４３２１０.",
+      "Account ID १२३४५६७८९०१२३४५६.",
     ]
   ) {
     const fixture = await stableCanonicalProcessFixture(

@@ -946,6 +946,138 @@ test('pilot SQL binds replay URLs, opaque identities, and catalog labels to auth
   );
 });
 
+test('pilot SQL recomputes v3 functional resource hashes and rejects every overflow bit', async () => {
+  const sql = await migrationSql();
+  const validator = functionBody(
+    sql,
+    'card_enrichment_pilot_evidence_is_qualified',
+  );
+  const resourceHash = functionBody(
+    sql,
+    'card_enrichment_pilot_source_identity_hash',
+  );
+  assert.match(validator, /replay_input->'version' IS DISTINCT FROM '3'::jsonb/i);
+  for (const field of [
+    'requested_resource_url',
+    'final_resource_url',
+    'fact_count',
+    'fact_overflow',
+    'privacy_normalized',
+    'resource_url',
+    'query_policy',
+  ]) {
+    assert.match(validator, new RegExp(field, 'i'), `${field} is not SQL-authoritative`);
+  }
+  assert.match(
+    validator,
+    /card_enrichment_pilot_source_identity_hash\(\s*document\.value->>'requested_resource_url'\s*\)[\s\S]*requested_resource_identity_hash/i,
+    'SQL trusts a supplied requested-resource digest',
+  );
+  assert.match(
+    validator,
+    /card_enrichment_pilot_source_identity_hash\(\s*link\.value->>'resource_url'\s*\)[\s\S]*resource_identity_hash/i,
+    'SQL trusts a supplied hyperlink digest',
+  );
+  assert.match(
+    validator,
+    /fact_overflow'\s+IS DISTINCT FROM 'false'::jsonb[\s\S]*hyperlink_overflow'\s+IS DISTINCT FROM 'false'::jsonb/i,
+    'SQL qualification does not reject every replay overflow dimension',
+  );
+  assert.match(
+    resourceHash,
+    /query_key NOT IN \('document','file','locale','version'\)/i,
+  );
+  assert.doesNotMatch(
+    resourceHash,
+    /['"](?:variant|filename|language|lang)['"]/i,
+  );
+  assert.match(resourceHash, /string_to_array\([\s\S]*'&'[\s\S]*FOREACH/i);
+  assert.ok(
+    resourceHash.includes('query_value') &&
+      resourceHash.includes('decoded_query_value') &&
+      resourceHash.includes('access[_ -]?token') &&
+      /regexp_replace\(\s*query_value/i.test(resourceHash) &&
+      resourceHash.includes("'[^0-9]', '', 'g'"),
+    'SQL functional resource policy does not reject sensitive values',
+  );
+  assert.match(
+    resourceHash,
+    /length\(query_value\)\s*>\s*512/i,
+    'SQL does not enforce the exact raw functional-query byte bound',
+  );
+  assert.match(
+    sql,
+    /pilot_resource_identity_assertions[\s\S]*access%5Ftoken[\s\S]*customer%20id[\s\S]*%73ecret[\s\S]*%FF[\s\S]*%0A/i,
+    'migration lacks apply-time encoded sensitive/control URL probes',
+  );
+  assert.match(
+    resourceHash,
+    /resource_query <> ''[\s\S]*resource_path IN \('',\s*'\/'\)[\s\S]*resource_path := '\/'/i,
+    'SQL root-resource canonicalization can drift from the Edge URL serializer',
+  );
+  assert.match(
+    sql,
+    /pilot_resource_identity_assertions[\s\S]*document=mitc\.pdf&locale=en&version=2&locale=hi[\s\S]*locale=hi&version=2/i,
+    'migration lacks apply-time query ordering/duplicate/hash parity assertions',
+  );
+  assert.match(
+    sql,
+    /https:\/\/issuer\.example\/\?locale=en[\s\S]*2b11cd567b1ddbc93697a59fe4a74f972bf7988553f3d43ca34d039e33aa28a5/i,
+    'migration lacks a cross-runtime known root functional-resource hash',
+  );
+});
+
+test('pilot SQL mirrors normalized privacy and exact catalog-context allowlisting', async () => {
+  const sql = await migrationSql();
+  const validator = functionBody(
+    sql,
+    'card_enrichment_pilot_evidence_is_qualified',
+  );
+  assert.match(validator, /normalize\([\s\S]*NFKD/i);
+  assert.ok(
+    validator.includes("%(25)*[0-9a-f]{2}") &&
+      validator.includes("#x?[0-9a-f]+"),
+    'SQL does not fail closed on recursively encoded percent/HTML payloads',
+  );
+  assert.match(
+    validator,
+    /named[_ -]?html|&\[a-z\]\[a-z0-9\]/i,
+    'SQL does not fail closed on unrecognized named HTML entities',
+  );
+  assert.match(
+    validator,
+    /residual[_ -]?unicode[_ -]?digit|1e950/i,
+    'SQL does not reject residual Unicode decimal-digit scripts',
+  );
+  assert.match(validator, /200b|200c|200d|2060|feff/i);
+  assert.match(validator, /fullwidth|ff10|ff19|unicode/i);
+  assert.match(
+    validator,
+    /identity_labels[\s\S]*exact_identity_phrase[\s\S]*personal\.match\[1\]/i,
+    'known issuer/card labels are not exact-phrase allowlisted in the person-span check',
+  );
+  assert.doesNotMatch(
+    validator,
+    /position\(lower\(personal\.match\[1\]\)\s+IN\s+lower\(/i,
+    'an arbitrary issuer/card word substring is still allowlisted',
+  );
+  assert.match(
+    validator,
+    /[Іі]/,
+    'Ukrainian-I confusables are not rejected at the SQL boundary',
+  );
+  assert.match(
+    validator,
+    /\\p\{Script=Devanagari\}|Devanagari/i,
+    'SQL does not fail closed on unknown Devanagari person spans',
+  );
+  assert.match(
+    sql,
+    /pilot_privacy_assertions[\s\S]*American Express[\s\S]*State Bank of India[\s\S]*India gets[\s\S]*ALICE[\s\S]*Rahul/i,
+    'migration lacks apply-time exact-product, partial-label, and unknown-person privacy probes',
+  );
+});
+
 test('recurrence sanitizers canonicalize every valid offset timestamp to UTC microseconds', async () => {
   const sql = await migrationSql();
   const canonical = functionBody(sql, 'canonical_card_enrichment_timestamp');

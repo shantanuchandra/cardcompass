@@ -1433,6 +1433,11 @@ DECLARE
   resource_path text;
   resource_query text;
   canonical_url text;
+  query_entry text;
+  query_key text;
+  query_value text;
+  decoded_query_value text;
+  query_entries text[];
 BEGIN
   IF _url IS NULL OR length(trim(_url)) NOT BETWEEN 9 AND 2048
      OR trim(_url) ~ '[[:cntrl:][:space:]]' THEN
@@ -1448,12 +1453,111 @@ BEGIN
   authority := lower(regexp_replace(parts[1], ':443$', '', 'i'));
   resource_path := coalesce(parts[2], '');
   resource_query := coalesce(parts[3], '');
-  IF resource_path = '' THEN resource_path := '/'; END IF;
+  IF resource_query <> '' THEN
+    query_entries := string_to_array(substr(resource_query, 2), '&');
+    IF cardinality(query_entries) NOT BETWEEN 1 AND 8 THEN RETURN NULL; END IF;
+    FOREACH query_entry IN ARRAY query_entries LOOP
+      IF query_entry = '' OR position('=' IN query_entry) < 2
+         OR length(split_part(query_entry, '=', 1)) > 64
+         OR position('%' IN regexp_replace(
+              query_entry, '%[0-9A-Fa-f]{2}', '', 'g'
+            )) > 0 THEN
+        RETURN NULL;
+      END IF;
+      query_key := lower(split_part(query_entry, '=', 1));
+      query_value := substr(query_entry, position('=' IN query_entry) + 1);
+      IF length(query_value) > 512 THEN RETURN NULL; END IF;
+      IF query_key NOT IN ('document','file','locale','version') THEN
+        RETURN NULL;
+      END IF;
+      decoded_query_value := replace(query_value, '+', ' ');
+      decoded_query_value := regexp_replace(decoded_query_value, '%20', ' ', 'gi');
+      decoded_query_value := regexp_replace(decoded_query_value, '%2D', '-', 'gi');
+      decoded_query_value := regexp_replace(decoded_query_value, '%2E', '.', 'gi');
+      decoded_query_value := regexp_replace(decoded_query_value, '%2F', '/', 'gi');
+      decoded_query_value := regexp_replace(decoded_query_value, '%5F', '_', 'gi');
+      decoded_query_value := regexp_replace(decoded_query_value, '%7E', '~', 'gi');
+      IF decoded_query_value ~* '(authorization|bearer|access[_ -]?token|refresh[_ -]?token|lease[_ -]?token|password|secret|credential|customer|account|phone|email|pan|card[_ -]?(number|no\.?))'
+         OR decoded_query_value ~* '(@|%40|%(25)+|%3[ad])'
+         OR regexp_replace(
+              query_value, '%(20|2D|2E|2F|5F|7E)', '', 'gi'
+            ) !~ '^[A-Za-z0-9._~+/-]+$'
+         OR length(regexp_replace(
+              decoded_query_value, '[^0-9]', '', 'g'
+            )) >= 10 THEN
+        RETURN NULL;
+      END IF;
+    END LOOP;
+  END IF;
+  -- WHATWG URL serialization retains the root slash before a functional
+  -- query and omits it only for a queryless origin.
+  IF resource_query <> '' AND resource_path IN ('', '/') THEN
+    resource_path := '/';
+  ELSIF resource_query = '' AND resource_path IN ('', '/') THEN
+    resource_path := '';
+  END IF;
   canonical_url := 'https://' || authority || resource_path || resource_query;
   canonical_url := regexp_replace(canonical_url, '/$', '');
   RETURN encode(extensions.digest(convert_to(canonical_url, 'UTF8'), 'sha256'), 'hex');
 END;
 $$;
+
+DO $pilot_resource_identity_assertions$
+DECLARE
+  ordered text := 'https://issuer.example/terms.pdf?document=mitc.pdf&locale=en&version=2&locale=hi';
+  reordered text := 'https://issuer.example/terms.pdf?document=mitc.pdf&locale=hi&version=2&locale=en';
+BEGIN
+  IF public.card_enrichment_pilot_source_identity_hash(ordered) IS NULL
+     OR public.card_enrichment_pilot_source_identity_hash(ordered) =
+          public.card_enrichment_pilot_source_identity_hash(reordered)
+     OR public.card_enrichment_pilot_source_identity_hash(
+          'https://issuer.example/terms.pdf?locale=hi&version=2'
+        ) IS NULL
+     OR public.card_enrichment_pilot_source_identity_hash(
+          'https://issuer.example/terms.pdf?file=most%20important%20terms.pdf'
+        ) IS NULL
+     OR public.card_enrichment_pilot_source_identity_hash(
+          'https://issuer.example/terms.pdf?variant=one'
+        ) IS NOT NULL
+     OR public.card_enrichment_pilot_source_identity_hash(
+          'https://issuer.example/terms.pdf?token=secret'
+        ) IS NOT NULL
+     OR public.card_enrichment_pilot_source_identity_hash(
+          'https://issuer.example/terms.pdf?document=secret'
+        ) IS NOT NULL
+     OR public.card_enrichment_pilot_source_identity_hash(
+          'https://issuer.example/terms.pdf?file=access_token%3Dsecret'
+        ) IS NOT NULL
+     OR public.card_enrichment_pilot_source_identity_hash(
+          'https://issuer.example/terms.pdf?file=%61ccess_token%3Dsecret'
+        ) IS NOT NULL
+     OR public.card_enrichment_pilot_source_identity_hash(
+          'https://issuer.example/terms.pdf?file=access%5Ftoken'
+        ) IS NOT NULL
+     OR public.card_enrichment_pilot_source_identity_hash(
+          'https://issuer.example/terms.pdf?document=customer%20id'
+        ) IS NOT NULL
+     OR public.card_enrichment_pilot_source_identity_hash(
+          'https://issuer.example/terms.pdf?file=%73ecret'
+        ) IS NOT NULL
+     OR public.card_enrichment_pilot_source_identity_hash(
+          'https://issuer.example/terms.pdf?file=%FF'
+        ) IS NOT NULL
+     OR public.card_enrichment_pilot_source_identity_hash(
+          'https://issuer.example/terms.pdf?file=%0A'
+        ) IS NOT NULL
+     OR public.card_enrichment_pilot_source_identity_hash(
+          'https://issuer.example/terms.pdf?utm_source=campaign'
+        ) IS NOT NULL
+     OR public.card_enrichment_pilot_source_identity_hash(
+          'https://issuer.example/?locale=en'
+        ) IS DISTINCT FROM
+          '2b11cd567b1ddbc93697a59fe4a74f972bf7988553f3d43ca34d039e33aa28a5'
+     THEN
+    RAISE EXCEPTION 'pilot resource identity assertion failed';
+  END IF;
+END;
+$pilot_resource_identity_assertions$;
 
 CREATE OR REPLACE FUNCTION public.card_enrichment_pilot_source_manifest_hash(
   _attempts jsonb
@@ -1621,6 +1725,8 @@ BEGIN
             jsonb_typeof(attempt.value->'attemptHistoryOverflow') <> 'boolean')
           OR attempt.value->'attemptHistoryOverflow' = 'true'::jsonb
           OR EXISTS (
+            -- Devanagari and Latin action-subject spans must match one exact
+            -- authoritative issuer/product phrase; partial words never do.
             SELECT 1
             FROM jsonb_array_elements(CASE
               WHEN jsonb_typeof(attempt.value->'attemptHistory') = 'array'
@@ -1667,7 +1773,7 @@ BEGIN
   replay_input := evidence->'replay_input';
   IF jsonb_typeof(replay_input) <> 'object'
      OR (SELECT count(*) FROM jsonb_object_keys(replay_input)) <> 3
-     OR replay_input->'version' IS DISTINCT FROM '2'::jsonb
+     OR replay_input->'version' IS DISTINCT FROM '3'::jsonb
      OR jsonb_typeof(replay_input->'context') <> 'object'
      OR (SELECT count(*) FROM jsonb_object_keys(replay_input->'context')) <> 3
      OR replay_input->'context'->>'issuer' IS DISTINCT FROM _job.issuer
@@ -1725,20 +1831,89 @@ BEGIN
        SELECT 1
        FROM jsonb_array_elements(replay_input->'documents') AS document(value)
        WHERE jsonb_typeof(document.value) <> 'object'
-          OR (SELECT count(*) FROM jsonb_object_keys(document.value)) <> 8
+          OR (SELECT count(*) FROM jsonb_object_keys(document.value)) <> 13
           OR document.value->>'requested_source_url' !~
             '^https://[^/@?#]+(?:/[^?#]*)?$'
           OR document.value->>'final_source_url' !~
             '^https://[^/@?#]+(?:/[^?#]*)?$'
+          OR public.card_enrichment_pilot_source_identity_hash(
+               document.value->>'requested_resource_url'
+             ) IS NULL
+          OR public.card_enrichment_pilot_source_identity_hash(
+               document.value->>'final_resource_url'
+             ) IS NULL
+          OR regexp_replace(
+               document.value->>'requested_resource_url', '\?.*$', ''
+             ) IS DISTINCT FROM document.value->>'requested_source_url'
+          OR regexp_replace(
+               document.value->>'final_resource_url', '\?.*$', ''
+             ) IS DISTINCT FROM document.value->>'final_source_url'
           OR coalesce(document.value->>'requested_resource_identity_hash','')
             !~ '^[0-9a-f]{64}$'
           OR coalesce(document.value->>'final_resource_identity_hash','')
             !~ '^[0-9a-f]{64}$'
+          OR public.card_enrichment_pilot_source_identity_hash(
+               document.value->>'requested_resource_url'
+             ) IS DISTINCT FROM
+               document.value->>'requested_resource_identity_hash'
+          OR public.card_enrichment_pilot_source_identity_hash(
+               document.value->>'final_resource_url'
+             ) IS DISTINCT FROM document.value->>'final_resource_identity_hash'
           OR coalesce(document.value->>'content_hash','')
             !~ '^[0-9a-f]{64}$'
           OR jsonb_typeof(document.value->'public_text') <> 'string'
           OR octet_length(convert_to(document.value->>'public_text','UTF8'))
             NOT BETWEEN 1 AND 65536
+          OR jsonb_typeof(document.value->'fact_count') <> 'number'
+          OR coalesce(document.value->>'fact_count','') !~ '^[0-9]+$'
+          OR (document.value->>'fact_count')::integer NOT BETWEEN 1 AND 256
+          OR (document.value->>'fact_count')::integer IS DISTINCT FROM
+            cardinality(string_to_array(document.value->>'public_text', E'\n'))
+          OR EXISTS (
+            SELECT 1
+            FROM unnest(string_to_array(
+              document.value->>'public_text', E'\n'
+            )) AS fact(value)
+            WHERE octet_length(convert_to(fact.value, 'UTF8')) > 4096
+          )
+          OR document.value->'fact_overflow' IS DISTINCT FROM 'false'::jsonb
+          OR document.value->'privacy_normalized' IS DISTINCT FROM 'true'::jsonb
+          -- Edge emits NFKD-normalized facts. Fullwidth Unicode and combining
+          -- forms, digit-script variants, zero-widths, and confusables must
+          -- never survive into a forged database replay envelope. This is the
+          -- SQL fail-closed mirror for U+200B/U+200C/U+200D/U+2060/U+FEFF and
+          -- fullwidth Unicode U+FF10-U+FF19 input after bounded Edge decoding.
+          OR document.value->>'public_text' IS DISTINCT FROM
+            normalize(document.value->>'public_text', NFKD)
+          -- Residual percent or named HTML entity material is never a
+          -- privacy-safe normalized replay fact.
+          OR document.value->>'public_text' ~*
+            '%(25)*[0-9a-f]{2}|&(?:#x?[0-9a-f]+|[a-z][a-z0-9]{1,31});?'
+          OR position(chr(8203) IN document.value->>'public_text') > 0
+          OR position(chr(8204) IN document.value->>'public_text') > 0
+          OR position(chr(8205) IN document.value->>'public_text') > 0
+          OR position(chr(8288) IN document.value->>'public_text') > 0
+          OR position(chr(65279) IN document.value->>'public_text') > 0
+          OR EXISTS (
+            -- Fail closed on every residual Unicode decimal-digit range.
+            SELECT 1
+            FROM regexp_split_to_table(
+              document.value->>'public_text', ''
+            ) AS residual_unicode_digit(character)
+            CROSS JOIN unnest(ARRAY[
+              1632,1776,1984,2406,2534,2662,2790,2918,3046,3174,
+              3302,3430,3558,3664,3792,3872,4160,4240,6112,6160,
+              6470,6608,6784,6800,6992,7088,7232,7248,42528,43216,
+              43264,43472,43504,43600,44016,65296,66720,68912,69734,
+              69872,69942,70096,70384,70736,70864,71248,71360,71472,
+              71904,72016,72784,73040,73120,73552,92768,92864,93008,
+              120782,120792,120802,120812,120822,123200,123632,124144,
+              125264
+            ]) AS digit_zero(codepoint)
+            WHERE ascii(residual_unicode_digit.character)
+              BETWEEN digit_zero.codepoint AND digit_zero.codepoint + 9
+          )
+          OR document.value->>'public_text' ~ '[ΑΒΕΖΗΙΚΜΝΟΡΤΥΧαβεικνορτυχАВЕКМНОРСТХУІаеіјорсху]'
           OR document.value->>'public_text' ~*
             '[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}'
           OR document.value->>'public_text' ~
@@ -1753,13 +1928,45 @@ BEGIN
             SELECT 1
             FROM regexp_matches(
               lower(document.value->>'public_text'),
-              '\m([a-z]{3,})[[:space:]]+((gets?|receives?)\M|will[[:space:]]+(call|contact)\M|is[[:space:]]+the[[:space:]]+(customer|cardholder|member)\M)',
-              'g'
+              '^([a-zऀ-ॿ][a-zऀ-ॿ'' -]{2,127})[[:space:]]+((gets?|receives?)\M|will[[:space:]]+(call|contact)\M|is[[:space:]]+the[[:space:]]+(customer|cardholder|member)\M)',
+              'gn'
             ) AS personal(match)
-            WHERE lower(personal.match[1]) NOT IN (
+            WHERE trim(lower(personal.match[1])) NOT IN (
               'applicant','applicants','cardholder','cardholders',
               'customer','customers','member','members','user','users',
               'cashback','card'
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM (
+                  SELECT replay_input->'context'->>'issuer' AS value
+                  UNION ALL
+                  SELECT label.value
+                  FROM jsonb_array_elements_text(
+                    replay_input->'context'->'identity_labels'
+                  ) AS label(value)
+                ) AS exact_identity_phrase
+                WHERE trim(lower(exact_identity_phrase.value)) =
+                  trim(lower(personal.match[1]))
+              )
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM regexp_matches(
+              lower(document.value->>'public_text'),
+              '\m(for|to)[[:space:]]+([a-zऀ-ॿ][a-zऀ-ॿ'' -]{2,127})[[:space:]]+(is|gets?|receives?)\M',
+              'g'
+            ) AS contextual_person(match)
+            WHERE NOT EXISTS (
+              SELECT 1 FROM (
+                SELECT replay_input->'context'->>'issuer' AS value
+                UNION ALL
+                SELECT label.value
+                FROM jsonb_array_elements_text(
+                  replay_input->'context'->'identity_labels'
+                ) AS label(value)
+              ) AS exact_identity_phrase
+              WHERE trim(lower(exact_identity_phrase.value)) =
+                trim(lower(contextual_person.match[2]))
             )
           )
           OR jsonb_typeof(document.value->'hyperlinks') <> 'array'
@@ -1769,20 +1976,31 @@ BEGIN
             SELECT 1
             FROM jsonb_array_elements(document.value->'hyperlinks') AS link(value)
             WHERE jsonb_typeof(link.value) <> 'object'
-               OR (SELECT count(*) FROM jsonb_object_keys(link.value)) <> 3
+               OR (SELECT count(*) FROM jsonb_object_keys(link.value)) <> 5
                OR link.value->>'href' !~ '^https://[^/@?#]+(?:/[^?#]*)?$'
+               OR public.card_enrichment_pilot_source_identity_hash(
+                    link.value->>'resource_url'
+                  ) IS NULL
+               OR regexp_replace(link.value->>'resource_url', '\?.*$', '')
+                    IS DISTINCT FROM link.value->>'href'
                OR length(coalesce(link.value->>'anchor_text','')) > 96
                OR link.value->>'anchor_text' !~
                  '^(|curated exact source|most important terms( and conditions)?|terms?( and conditions)?|conditions?|mitc|fees?|charges?|benefits?|rewards?|supporting (material|document))$'
                OR coalesce(link.value->>'resource_identity_hash','')
                  !~ '^[0-9a-f]{64}$'
+               OR public.card_enrichment_pilot_source_identity_hash(
+                    link.value->>'resource_url'
+                  ) IS DISTINCT FROM link.value->>'resource_identity_hash'
+               OR link.value->>'query_policy' IS DISTINCT FROM 'functional_only'
           )
           OR EXISTS (
             SELECT 1 FROM jsonb_object_keys(document.value) AS key(value)
             WHERE key.value NOT IN (
               'requested_source_url','final_source_url',
+              'requested_resource_url','final_resource_url',
               'requested_resource_identity_hash','final_resource_identity_hash',
-              'content_hash','public_text','hyperlinks','hyperlink_overflow'
+              'content_hash','public_text','fact_count','fact_overflow',
+              'privacy_normalized','hyperlinks','hyperlink_overflow'
             )
           )
      )
@@ -1818,6 +2036,8 @@ BEGIN
            AS linked_document(value)
          WHERE linked_document.value->>'requested_source_url' =
                  link.value->>'href'
+           AND linked_document.value->>'requested_resource_url' =
+                 link.value->>'resource_url'
            AND linked_document.value->>'requested_resource_identity_hash' =
                  link.value->>'resource_identity_hash'
        )
@@ -1831,11 +2051,13 @@ BEGIN
   ) ORDER BY required.source_key), '[]'::jsonb)
   INTO replay_required_source_keys
   FROM (
-    SELECT DISTINCT link.value->>'resource_identity_hash' AS source_key
+    SELECT DISTINCT public.card_enrichment_pilot_source_identity_hash(
+      link.value->>'resource_url'
+    ) AS source_key
     FROM jsonb_array_elements(replay_input->'documents') AS document(value)
     CROSS JOIN LATERAL jsonb_array_elements(document.value->'hyperlinks')
       AS link(value)
-    WHERE link.value->>'href' ~*
+    WHERE link.value->>'resource_url' ~*
       '(^|[/?=&_.-])(terms?|conditions?|mitc|fees?|charges?)(?:$|[/?=&_.-])'
        OR link.value->>'anchor_text' ~*
       '\m(most[[:space:]]+important[[:space:]]+terms|terms?|conditions?|mitc|fees?|charges?|curated[[:space:]]+exact[[:space:]]+source)\M'
@@ -3376,7 +3598,7 @@ BEGIN
   SELECT pg_get_functiondef(
     'public.card_enrichment_pilot_evidence_is_qualified(public.card_catalog_enrichment_jobs,public.card_benefits_staging)'::regprocedure
   ) INTO validator_definition;
-  IF validator_definition !~* 'replay_input->''version'' IS DISTINCT FROM ''2''::jsonb'
+  IF validator_definition !~* 'replay_input->''version'' IS DISTINCT FROM ''3''::jsonb'
      OR validator_definition !~* 'replay_input->''context'''
      OR validator_definition !~* 'resource_identity_hash'
      OR validator_definition !~* 'card_catalog_aliases'
@@ -3392,9 +3614,9 @@ BEGIN
      ) IS DISTINCT FROM public.card_enrichment_pilot_source_identity_hash(
        'https://issuer.example/card'
      ) OR public.card_enrichment_pilot_source_identity_hash(
-       'https://issuer.example?variant=one'
+       'https://issuer.example?locale=en'
      ) IS DISTINCT FROM public.card_enrichment_pilot_source_identity_hash(
-       'https://issuer.example/?variant=one'
+       'https://issuer.example/?locale=en'
      ) THEN
     RAISE EXCEPTION 'pilot_source_identity_canonicalization_drift';
   END IF;
@@ -3418,6 +3640,24 @@ BEGIN
   END IF;
 END;
 $pilot_atomic_evidence_assertions$;
+
+DO $pilot_privacy_assertions$
+DECLARE
+  known_context text := lower('American Express Platinum Card');
+  known_fact text := lower('American Express Platinum Card gets 10% cashback');
+  partial_context text := lower('State Bank of India');
+  partial_fact text := lower('India gets 10% cashback');
+  alice_fact text := lower('ALICE gets 10% cashback');
+  rahul_fact text := lower('Rahul Sarma gets 10% cashback');
+BEGIN
+  IF position(known_context || ' gets' IN known_fact) = 0
+     OR position(partial_context || ' gets' IN partial_fact) > 0
+     OR position(known_context || ' gets' IN alice_fact) > 0
+     OR position(known_context || ' gets' IN rahul_fact) > 0 THEN
+    RAISE EXCEPTION 'pilot privacy assertion failed';
+  END IF;
+END;
+$pilot_privacy_assertions$;
 
 DO $pilot_cohort_assertions$
 BEGIN

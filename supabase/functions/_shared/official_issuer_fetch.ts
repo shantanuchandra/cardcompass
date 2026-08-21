@@ -139,20 +139,78 @@ function decodePdfLiteral(value: string): string {
   });
 }
 
-function textOperators(value: string): string[] {
+const MAX_EXTRACTED_PDF_TEXT_BYTES = 1_000_000;
+
+type PdfTextBudget = { bytes: number };
+type PdfInflateBudget = { bytes: number };
+
+const windows1252PdfBytes = new Map<number, number>([
+  [0x20ac, 0x80],
+  [0x201a, 0x82],
+  [0x0192, 0x83],
+  [0x201e, 0x84],
+  [0x2026, 0x85],
+  [0x2020, 0x86],
+  [0x2021, 0x87],
+  [0x02c6, 0x88],
+  [0x2030, 0x89],
+  [0x0160, 0x8a],
+  [0x2039, 0x8b],
+  [0x0152, 0x8c],
+  [0x017d, 0x8e],
+  [0x2018, 0x91],
+  [0x2019, 0x92],
+  [0x201c, 0x93],
+  [0x201d, 0x94],
+  [0x2022, 0x95],
+  [0x2013, 0x96],
+  [0x2014, 0x97],
+  [0x02dc, 0x98],
+  [0x2122, 0x99],
+  [0x0161, 0x9a],
+  [0x203a, 0x9b],
+  [0x0153, 0x9c],
+  [0x017e, 0x9e],
+  [0x0178, 0x9f],
+]);
+
+function pdfBinaryBytes(value: string): Uint8Array {
+  return new Uint8Array([...value].map((character) => {
+    const codePoint = character.codePointAt(0)!;
+    return windows1252PdfBytes.get(codePoint) ?? (codePoint & 0xff);
+  }));
+}
+
+function retainPdfTextPart(
+  parts: string[],
+  value: string,
+  budget: PdfTextBudget,
+): void {
+  const bytes = new TextEncoder().encode(value).byteLength;
+  if (budget.bytes + bytes > MAX_EXTRACTED_PDF_TEXT_BYTES) {
+    throw new OfficialFetchError("oversized");
+  }
+  budget.bytes += bytes;
+  parts.push(value);
+}
+
+function textOperators(value: string, budget: PdfTextBudget): string[] {
   const parts: string[] = [];
   for (const match of value.matchAll(/\(((?:\\.|[^\\)])*)\)\s*Tj\b/gs)) {
-    parts.push(decodePdfLiteral(match[1] ?? ""));
+    retainPdfTextPart(parts, decodePdfLiteral(match[1] ?? ""), budget);
   }
   for (const match of value.matchAll(/\[((?:.|\n|\r)*?)\]\s*TJ\b/g)) {
     for (const literal of (match[1] ?? "").matchAll(/\(((?:\\.|[^\\)])*)\)/g)) {
-      parts.push(decodePdfLiteral(literal[1] ?? ""));
+      retainPdfTextPart(parts, decodePdfLiteral(literal[1] ?? ""), budget);
     }
   }
   return parts;
 }
 
-async function inflatePdfStream(bytes: Uint8Array): Promise<string | null> {
+async function inflatePdfStream(
+  bytes: Uint8Array,
+  budget: PdfInflateBudget,
+): Promise<string | null> {
   try {
     const stream = new Blob([bytes.slice().buffer]).stream()
       .pipeThrough(new DecompressionStream("deflate"));
@@ -164,9 +222,10 @@ async function inflatePdfStream(bytes: Uint8Array): Promise<string | null> {
         const { done, value } = await reader.read();
         if (done) break;
         length += value.length;
-        if (length > 1_000_000) {
+        budget.bytes += value.length;
+        if (budget.bytes > MAX_EXTRACTED_PDF_TEXT_BYTES) {
           await reader.cancel();
-          return null;
+          throw new OfficialFetchError("oversized");
         }
         chunks.push(value);
       }
@@ -180,7 +239,8 @@ async function inflatePdfStream(bytes: Uint8Array): Promise<string | null> {
       offset += chunk.length;
     }
     return new TextDecoder("latin1").decode(inflated);
-  } catch {
+  } catch (error) {
+    if (error instanceof OfficialFetchError) throw error;
     return null;
   }
 }
@@ -188,19 +248,19 @@ async function inflatePdfStream(bytes: Uint8Array): Promise<string | null> {
 async function extractPdfText(bytes: Uint8Array): Promise<string> {
   const raw = new TextDecoder("latin1").decode(bytes);
   if (!raw.startsWith("%PDF-")) throw new Error("unsupported_content");
-  const parts = textOperators(raw);
+  const budget: PdfTextBudget = { bytes: 0 };
+  const inflateBudget: PdfInflateBudget = { bytes: 0 };
+  const parts = textOperators(raw, budget);
   for (const match of raw.matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
     const streamStart = match.index ?? 0;
     const dictionary = raw.slice(Math.max(0, streamStart - 500), streamStart);
     if (!/\/FlateDecode\b/.test(dictionary)) continue;
-    const encoded = new Uint8Array(
-      [...(match[1] ?? "")].map((character) => character.charCodeAt(0) & 0xff),
-    );
-    const inflated = await inflatePdfStream(encoded);
-    if (inflated) parts.push(...textOperators(inflated));
+    const encoded = pdfBinaryBytes(match[1] ?? "");
+    const inflated = await inflatePdfStream(encoded, inflateBudget);
+    if (inflated) parts.push(...textOperators(inflated, budget));
   }
   return parts.join(" ").replace(/[\u0000-\u001f]+/g, " ")
-    .replace(/\s+/g, " ").trim().slice(0, 1_000_000);
+    .replace(/\s+/g, " ").trim();
 }
 
 export async function officialResourceText(
@@ -210,7 +270,8 @@ export async function officialResourceText(
   if (!resource.bytes) return "";
   try {
     return await extractPdfText(resource.bytes);
-  } catch {
+  } catch (error) {
+    if (error instanceof OfficialFetchError) throw error;
     return "";
   }
 }
