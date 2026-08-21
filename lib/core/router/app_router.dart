@@ -48,6 +48,18 @@ NoTransitionPage<void> _appShellPage() => const NoTransitionPage<void>(
   child: _AppShell(),
 );
 
+class _RootAuthGate extends ConsumerWidget {
+  const _RootAuthGate();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final auth = ref.watch(authNotifierProvider);
+    return auth.valueOrNull == AuthStatus.authenticated
+        ? const _AppShell()
+        : const SplashScreen();
+  }
+}
+
 // Bridges Riverpod's authNotifierProvider to GoRouter's refreshListenable so
 // that auth-state ticks (including background token-refresh emissions from
 // Supabase's onAuthStateChange, which fire well after login/logout) only
@@ -97,10 +109,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: appLoginPath, builder: (_, s) => const LoginScreen()),
       GoRoute(
         path: '/',
-        pageBuilder: (_, s) =>
-            authStatusIsPending(ref.read(authNotifierProvider))
-            ? const NoTransitionPage(child: SplashScreen())
-            : _appShellPage(),
+        pageBuilder: (_, s) => const NoTransitionPage(child: _RootAuthGate()),
       ),
       GoRoute(
         path: '/cards',
