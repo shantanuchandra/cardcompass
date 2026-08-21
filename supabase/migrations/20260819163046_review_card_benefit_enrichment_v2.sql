@@ -268,6 +268,11 @@ SECURITY INVOKER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
+  -- Exact SQL mirror of benefit_contract.ts numericValue(): currency markers
+  -- are removed globally only for the numeric parse candidate; prose falls
+  -- back to its original normalized text when the remaining value is not numeric.
+  CURRENCY_MARKER_PATTERN constant text :=
+    '(₹|rs\.?|inr)[[:space:]]*';
   normalized_config jsonb := '{}'::jsonb;
   normalized_exclusions jsonb;
   normalized_partners jsonb;
@@ -301,7 +306,7 @@ BEGIN
           '[[:space:]]+', ' ', 'g'
         ));
         normalized_text := regexp_replace(
-          normalized_text, '^(₹|rs\.?|inr)[[:space:]]*', '', 'i'
+          normalized_text, CURRENCY_MARKER_PATTERN, '', 'g'
         );
         numeric_match := regexp_match(
           normalized_text,
@@ -337,7 +342,7 @@ BEGIN
           '[[:space:]]+', ' ', 'g'
         ));
         normalized_text := regexp_replace(
-          normalized_text, '^(₹|rs\.?|inr)[[:space:]]*', '', 'i'
+          normalized_text, CURRENCY_MARKER_PATTERN, '', 'g'
         );
         numeric_match := regexp_match(
           normalized_text,
@@ -1824,7 +1829,7 @@ DECLARE
   valid_proposal jsonb := '{
     "title":"Dining cashback","category":"cashback",
     "description":"Get 10% cashback on dining spends.",
-    "valueType":"cashback","rate":10,
+    "valueType":"cashback","rate":10,"frequency":"10",
     "benefitId":"card-benefit-v2:card:one",
     "dedupeKey":"card-benefit-v2:card:one",
     "offerSubject":"cashback:cashback:dining",
@@ -1854,7 +1859,10 @@ DECLARE
   wide_unselected boolean := false;
   composite_scalar_unselected boolean := false;
   canonical_target_unselected boolean := false;
+  numeric_text_controls_valid boolean := false;
   composite_scalar_count integer := 0;
+  currency_variant_count integer := 0;
+  canonical_currency_variant jsonb;
   invalid_composite_scalar jsonb;
   canonical_duplicate jsonb;
 BEGIN
@@ -1953,32 +1961,76 @@ BEGIN
     END;
   END LOOP;
   composite_scalar_unselected := composite_scalar_count = 2;
-  canonical_duplicate := valid_proposal || jsonb_build_object(
-    'title', 'Same dining target under another raw identity',
-    'category', ' Cashback Rewards ',
-    'benefitId', 'card-benefit-v2:card:duplicate-target',
-    'dedupeKey', 'card-benefit-v2:card:duplicate-target',
-    'offerSubject', ' CASHBACK:CASHBACK:DINING ',
-    'restrictions', jsonb_build_array(' Dining Spends ', 'dining spends'),
-    'valueConfig', (valid_proposal->'valueConfig') || jsonb_build_object(
-      'platform', NULL,
-      'base_rate', 'Rs. 5',
-      'offer_subject', ' CASHBACK:CASHBACK:DINING ',
-      'restrictions', jsonb_build_array(' Dining Spends ', 'dining spends')
+  numeric_text_controls_valid :=
+    public.canonical_locked_benefit_condition(
+      jsonb_set(
+        valid_proposal, '{valueConfig,platform}', '"first purchase"'::jsonb
+      ),
+      'benefits-v6'
+    )->'value_config'->>'platform' = 'first purchase'
+    AND public.canonical_locked_benefit_condition(
+      jsonb_set(
+        valid_proposal, '{valueConfig,platform}', '"10 INR bonus"'::jsonb
+      ),
+      'benefits-v6'
+    )->'value_config'->>'platform' = '10 inr bonus';
+  FOR canonical_currency_variant IN SELECT value FROM jsonb_array_elements(
+    jsonb_build_array(
+      jsonb_build_object('lane', 'config', 'value', 'INR 5'),
+      jsonb_build_object('lane', 'config', 'value', '5 INR'),
+      jsonb_build_object('lane', 'config', 'value', 'Rs. 5'),
+      jsonb_build_object('lane', 'config', 'value', '5 Rs.'),
+      jsonb_build_object('lane', 'config', 'value', '₹5'),
+      jsonb_build_object('lane', 'config', 'value', '5 ₹'),
+      jsonb_build_object('lane', 'flat', 'value', 'INR 10'),
+      jsonb_build_object('lane', 'flat', 'value', '10 INR'),
+      jsonb_build_object('lane', 'flat', 'value', 'Rs. 10'),
+      jsonb_build_object('lane', 'flat', 'value', '10 Rs.'),
+      jsonb_build_object('lane', 'flat', 'value', '₹10'),
+      jsonb_build_object('lane', 'flat', 'value', '10 ₹')
     )
-  );
-  BEGIN
-    PERFORM public.validate_locked_benefit_proposals(
-      jsonb_build_array(valid_proposal, canonical_duplicate), 'benefits-v6'
+  ) LOOP
+    canonical_duplicate := valid_proposal || jsonb_build_object(
+      'title', 'Same dining target under another raw identity',
+      'category', ' Cashback Rewards ',
+      'benefitId', 'card-benefit-v2:card:duplicate-target',
+      'dedupeKey', 'card-benefit-v2:card:duplicate-target',
+      'offerSubject', ' CASHBACK:CASHBACK:DINING ',
+      'restrictions', jsonb_build_array(' Dining Spends ', 'dining spends'),
+      'valueConfig', (valid_proposal->'valueConfig') || jsonb_build_object(
+        'platform', NULL,
+        'base_rate', 'Rs. 5',
+        'offer_subject', ' CASHBACK:CASHBACK:DINING ',
+        'restrictions', jsonb_build_array(' Dining Spends ', 'dining spends')
+      )
     );
-  EXCEPTION WHEN raise_exception THEN
-    canonical_target_unselected := true;
-  END;
+    IF canonical_currency_variant->>'lane' = 'config' THEN
+      canonical_duplicate := jsonb_set(
+        canonical_duplicate,
+        '{valueConfig,base_rate}',
+        to_jsonb(canonical_currency_variant->>'value')
+      );
+    ELSE
+      canonical_duplicate := jsonb_set(
+        canonical_duplicate,
+        '{frequency}',
+        to_jsonb(canonical_currency_variant->>'value')
+      );
+    END IF;
+    BEGIN
+      PERFORM public.validate_locked_benefit_proposals(
+        jsonb_build_array(valid_proposal, canonical_duplicate), 'benefits-v6'
+      );
+    EXCEPTION WHEN raise_exception THEN
+      currency_variant_count := currency_variant_count + 1;
+    END;
+  END LOOP;
+  canonical_target_unselected := currency_variant_count = 12;
   IF NOT valid_multi OR NOT oversized_unselected OR NOT unknown_unselected
      OR NOT malformed_unselected
      OR typed_unselected_count <> 6 OR NOT duplicate_unselected OR NOT deep_unselected
      OR NOT wide_unselected OR NOT composite_scalar_unselected
-     OR NOT canonical_target_unselected THEN
+     OR NOT canonical_target_unselected OR NOT numeric_text_controls_valid THEN
     RAISE EXCEPTION 'locked proposal assertion failed';
   END IF;
 END;

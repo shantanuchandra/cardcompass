@@ -4,6 +4,7 @@ import {
   currentBenefitProposal,
   diffBenefits,
 } from "./benefit_enrichment.ts";
+import { canonicalConditionObject } from "./benefit_contract.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -120,4 +121,42 @@ Deno.test("single-token contextual names fail closed while exact card identities
       `known issuer/card or public subject looked private: ${value}`,
     );
   }
+});
+
+Deno.test("canonical scalar currency parsing accepts shared prefix and suffix forms without rewriting prose", () => {
+  const condition = (value: unknown, flat = false) =>
+    canonicalConditionObject({
+      title: "Currency parity",
+      category: "cashback",
+      benefitType: "cashback",
+      ...(flat ? { rate: value as string } : { valueConfig: { rate: value } }),
+      restrictions: [],
+      exclusions: [],
+    }).value_config as Record<string, unknown>;
+
+  for (
+    const value of [
+      "INR 10",
+      "10 INR",
+      "Rs. 10",
+      "10 Rs.",
+      "₹10",
+      "10 ₹",
+    ]
+  ) {
+    assert(condition(value).rate === 10, `config currency drifted: ${value}`);
+    assert(
+      condition(value, true).rate === 10,
+      `flat currency drifted: ${value}`,
+    );
+  }
+
+  assert(
+    condition("first purchase").rate === "first purchase",
+    "embedded rs prose was rewritten",
+  );
+  assert(
+    condition("10 INR bonus").rate === "10 inr bonus",
+    "non-numeric currency prose was rewritten",
+  );
 });

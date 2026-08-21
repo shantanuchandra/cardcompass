@@ -192,6 +192,33 @@ test('locked staging card and exact proposal set govern canonical publication', 
   );
 });
 
+test('locked SQL canonical scalars share Edge prefix and suffix currency behavior', async () => {
+  const sql = await migrationSql();
+  const canonicalLocked = functionBody(
+    sql,
+    'canonical_locked_benefit_condition',
+  );
+  assert.match(
+    canonicalLocked,
+    /CURRENCY_MARKER_PATTERN constant text\s*:=\s*'\(₹\|rs\\\.\?\|inr\)\[\[:space:\]\]\*'/i,
+    'locked SQL must declare the shared global INR/Rs/₹ numeric parse contract',
+  );
+  assert.equal(
+    (
+      canonicalLocked.match(
+        /regexp_replace\(\s*normalized_text,\s*CURRENCY_MARKER_PATTERN,\s*'',\s*'g'/gi,
+      ) ?? []
+    ).length,
+    2,
+    'config and flat scalar lanes must use the same global currency contract',
+  );
+  assert.match(
+    sql,
+    /locked_proposal_v2_assertions[\s\S]*currency_variant_count[\s\S]*INR 5[\s\S]*5 INR[\s\S]*Rs\. 5[\s\S]*5 Rs\.[\s\S]*₹5[\s\S]*5 ₹[\s\S]*INR 10[\s\S]*10 INR[\s\S]*Rs\. 10[\s\S]*10 Rs\.[\s\S]*₹10[\s\S]*10 ₹[\s\S]*numeric_text_controls_valid/i,
+    'apply-time whole-array behavior must cover currency position and prose controls',
+  );
+});
+
 test('publication inserts immutable canonical rows and scopes every lifecycle mutation to one mapping', async () => {
   const approval = functionBody(
     await migrationSql(),
