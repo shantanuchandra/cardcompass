@@ -2,7 +2,9 @@
 // project. This file never calls or deploys Edge Functions and never crawls an
 // issuer. The hosted group is skipped unless every exact-target prerequisite
 // is supplied explicitly; pure safety-contract tests always run offline.
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -14,11 +16,77 @@ const _expectedProjectName = 'cardcompass';
 const _runHostedIntegration = bool.fromEnvironment(
   'RUN_HOSTED_CARD_INGESTION_INTEGRATION',
 );
+const _runHostedConcurrency = bool.fromEnvironment(
+  'RUN_HOSTED_CARD_INGESTION_CONCURRENCY',
+);
 const _supabaseUrl = String.fromEnvironment('SUPABASE_URL');
 const _projectRef = String.fromEnvironment('SUPABASE_PROJECT_REF');
 const _projectName = String.fromEnvironment('SUPABASE_PROJECT_NAME');
 const _anonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
 const _serviceRoleKey = String.fromEnvironment('SUPABASE_SERVICE_ROLE_KEY');
+const _databaseUrl = String.fromEnvironment('CARD_INGESTION_DATABASE_URL');
+
+final _pgpassFile = Platform.environment['PGPASSFILE'] ?? '';
+final _psqlPath = Platform.environment['PSQL'] ?? 'psql';
+
+class _PsqlSessionSpec {
+  const _PsqlSessionSpec({
+    required this.executable,
+    required this.arguments,
+    required this.environment,
+  });
+
+  final String executable;
+  final List<String> arguments;
+  final Map<String, String> environment;
+}
+
+List<String> _hostedConcurrencyConfigurationErrors({
+  required bool runHostedConcurrency,
+  required String databaseUrl,
+  required String pgpassFile,
+  required String psqlPath,
+}) {
+  final errors = <String>[];
+  if (!runHostedConcurrency) {
+    errors.add('RUN_HOSTED_CARD_INGESTION_CONCURRENCY=true');
+  }
+  final uri = Uri.tryParse(databaseUrl.trim());
+  if (uri == null ||
+      uri.scheme != 'postgresql' ||
+      uri.host != 'aws-1-ap-south-1.pooler.supabase.com' ||
+      uri.port != 6543 ||
+      uri.path != '/postgres' ||
+      uri.userInfo != 'postgres.$_expectedProjectRef' ||
+      uri.queryParameters.length != 1 ||
+      uri.queryParameters['sslmode'] != 'require' ||
+      uri.hasFragment) {
+    errors.add('password-free CARD_INGESTION_DATABASE_URL');
+  }
+  if (pgpassFile.trim().isEmpty) errors.add('PGPASSFILE');
+  if (psqlPath.trim().isEmpty) errors.add('PSQL');
+  return errors;
+}
+
+_PsqlSessionSpec _psqlSessionSpec({
+  required String psqlPath,
+  required String databaseUrl,
+  required String pgpassFile,
+  required String applicationName,
+}) => _PsqlSessionSpec(
+  executable: psqlPath,
+  arguments: <String>[
+    '-X',
+    '--set',
+    'ON_ERROR_STOP=1',
+    '--no-psqlrc',
+    databaseUrl,
+  ],
+  environment: <String, String>{
+    'PGPASSFILE': pgpassFile,
+    'PGAPPNAME': applicationName,
+  },
+);
 
 List<String> _hostedConfigurationErrors({
   required bool runHostedIntegration,
@@ -69,10 +137,129 @@ final _hostedConfigurationErrorList = _hostedConfigurationErrors(
   serviceRoleKey: _serviceRoleKey,
 );
 
-final _hostedIntegrationSkipReason = _hostedConfigurationErrorList.isEmpty
+final _hostedConcurrencyConfigurationErrorList = <String>[
+  ..._hostedConfigurationErrorList,
+  ..._hostedConcurrencyConfigurationErrors(
+    runHostedConcurrency: _runHostedConcurrency,
+    databaseUrl: _databaseUrl,
+    pgpassFile: _pgpassFile,
+    psqlPath: _psqlPath,
+  ),
+];
+
+final _hostedConcurrencySkipReason =
+    _hostedConcurrencyConfigurationErrorList.isEmpty
     ? null
-    : 'Requires exact guarded hosted configuration: '
-          '${_hostedConfigurationErrorList.join(', ')}.';
+    : 'Requires exact guarded hosted concurrency configuration: '
+          '${_hostedConcurrencyConfigurationErrorList.join(', ')}.';
+
+String _sqlLiteral(String value) {
+  if (!RegExp(r'^[a-zA-Z0-9:_-]{1,240}$').hasMatch(value)) {
+    throw ArgumentError.value(value, 'value', 'is not a safe lock identity');
+  }
+  return value;
+}
+
+Future<T> _runBehindRolledBackAdvisoryLock<T>({
+  required String lockIdentity,
+  required Future<T> Function() operation,
+}) async {
+  final pgpass = File(_pgpassFile);
+  final stat = await pgpass.stat();
+  if (stat.type != FileSystemEntityType.file || (stat.mode & 0x3f) != 0) {
+    throw StateError('PGPASSFILE must be a mode-0600 regular file');
+  }
+  final spec = _psqlSessionSpec(
+    psqlPath: _psqlPath,
+    databaseUrl: _databaseUrl,
+    pgpassFile: _pgpassFile,
+    applicationName: 'task11-concurrency-lock-holder',
+  );
+  final process = await Process.start(
+    spec.executable,
+    spec.arguments,
+    environment: <String, String>{...Platform.environment, ...spec.environment},
+  );
+  final stdoutLines = <String>[];
+  final stderrLines = <String>[];
+  final acquired = Completer<void>();
+  process.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen(
+    (line) {
+      stdoutLines.add(line);
+      if (line.trim() == 'TASK11_LOCK_ACQUIRED' && !acquired.isCompleted) {
+        acquired.complete();
+      }
+    },
+  );
+  process.stderr
+      .transform(utf8.decoder)
+      .transform(const LineSplitter())
+      .listen(stderrLines.add);
+  process.stdin.write('''
+BEGIN;
+SET LOCAL statement_timeout = '30s';
+SET LOCAL lock_timeout = '10s';
+SELECT pg_advisory_xact_lock(hashtextextended('${_sqlLiteral(lockIdentity)}', 0));
+\\echo TASK11_LOCK_ACQUIRED
+''');
+  await process.stdin.flush();
+  await acquired.future.timeout(const Duration(seconds: 20));
+  final pending = operation();
+  await Future<void>.delayed(const Duration(milliseconds: 250));
+  process.stdin.write('ROLLBACK;\n\\q\n');
+  await process.stdin.flush();
+  await process.stdin.close();
+  final exitCode = await process.exitCode.timeout(const Duration(seconds: 20));
+  if (exitCode != 0) {
+    throw StateError(
+      'lock-holder psql failed ($exitCode): ${stderrLines.join(' | ')}; '
+      'stdout=${stdoutLines.join(' | ')}',
+    );
+  }
+  return pending.timeout(const Duration(seconds: 30));
+}
+
+Future<void> _runCatalogPublicationRollbackProbe({
+  required String discoveryJobId,
+  required String reviewItemId,
+  required String actorId,
+}) async {
+  final spec = _psqlSessionSpec(
+    psqlPath: _psqlPath,
+    databaseUrl: _databaseUrl,
+    pgpassFile: _pgpassFile,
+    applicationName: 'task11-publication-rollback-probe',
+  );
+  final process = await Process.start(
+    spec.executable,
+    spec.arguments,
+    environment: <String, String>{...Platform.environment, ...spec.environment},
+  );
+  final stdoutFuture = process.stdout.transform(utf8.decoder).join();
+  final stderrFuture = process.stderr.transform(utf8.decoder).join();
+  process.stdin.write('''
+\\set VERBOSITY verbose
+BEGIN;
+SET LOCAL statement_timeout = '30s';
+SELECT * FROM public.publish_card_catalog_identity(
+  '${_sqlLiteral(discoveryJobId)}'::uuid,
+  '${_sqlLiteral(reviewItemId)}'::uuid,
+  '${_sqlLiteral(actorId)}'::uuid,
+  'edit_approve', '{}'::jsonb, NULL, NULL, 'benefits-v6'
+);
+ROLLBACK;
+''');
+  await process.stdin.close();
+  final exitCode = await process.exitCode.timeout(const Duration(seconds: 40));
+  final stdoutText = await stdoutFuture;
+  final stderrText = await stderrFuture;
+  if (exitCode != 0) {
+    throw StateError(
+      'publication rollback probe failed ($exitCode): $stderrText; '
+      'stdout=$stdoutText',
+    );
+  }
+}
 
 String _buildRunId(DateTime now, List<int> entropy) {
   if (entropy.length != 16 || entropy.any((byte) => byte < 0 || byte > 255)) {
@@ -105,6 +292,11 @@ enum _FixtureTable {
   cardBenefitMapping('card_benefit_mapping', 'mapping_id'),
   cardCatalogEnrichmentJobs('card_catalog_enrichment_jobs', 'id'),
   cardBenefitsStaging('card_benefits_staging', 'id'),
+  cardCatalogReviewAudit('card_catalog_review_audit', 'id'),
+  cardCatalogReviewQueue('card_catalog_review_queue', 'id'),
+  cardDiscoveryJobs('card_discovery_jobs', 'id'),
+  users('users', 'id'),
+  cardCatalogProvenance('card_catalog_provenance', 'id'),
   cardCatalogUrlKeys('card_catalog_url_keys', 'url_hash'),
   benefits('benefits', 'benefit_id'),
   cardCatalog('card_catalog', 'id');
@@ -145,6 +337,24 @@ class _CleanupException implements Exception {
   @override
   String toString() =>
       'Hosted fixture cleanup failed: ${failures.map((failure) => '${failure.label}: ${failure.error}').join('; ')}';
+}
+
+class _AsyncOutcome<T> {
+  const _AsyncOutcome.value(this.value) : error = null;
+  const _AsyncOutcome.error(this.error) : value = null;
+
+  final T? value;
+  final Object? error;
+
+  bool get succeeded => error == null;
+}
+
+Future<_AsyncOutcome<T>> _captureOutcome<T>(Future<T> operation) async {
+  try {
+    return _AsyncOutcome<T>.value(await operation);
+  } catch (error) {
+    return _AsyncOutcome<T>.error(error);
+  }
 }
 
 Future<void> _runCleanupSteps(List<_CleanupStep> steps) async {
@@ -195,11 +405,14 @@ class _FixtureLedger {
 
 class _RunFixture {
   _RunFixture(this.runId)
-    : issuer = 'Task11 Hosted Harness $runId',
-      cardName = 'Task11 hosted DB RPC $runId',
-      sourceUrl = 'https://fixtures.cardcompass.app/task11/$runId',
+    : issuer = 'Axis Bank',
+      cardName = 'Task11 hosted Visa DB RPC $runId',
+      sourceUrl = 'https://www.axis.bank.in/task11/$runId',
       benefitDedupeKey = 'task11-hosted-benefit:$runId',
       proposalDedupeKey = 'task11-hosted-proposal:$runId',
+      identityDedupeKey = 'task11-page-move:$runId',
+      quarantineAnchorDedupeKey = 'task11-quarantine-anchor:$runId',
+      quarantineReviewDedupeKey = 'task11-quarantine-review:$runId:1',
       claimParserVersion = 'task11-harness-${_sha256(runId).substring(0, 24)}',
       reviewerEmail = 'ci-${_sha256(runId).substring(0, 32)}@example.com',
       reviewerPassword = 'Aa1!$runId';
@@ -210,12 +423,26 @@ class _RunFixture {
   final String sourceUrl;
   final String benefitDedupeKey;
   final String proposalDedupeKey;
+  final String identityDedupeKey;
+  final String quarantineAnchorDedupeKey;
+  final String quarantineReviewDedupeKey;
   final String claimParserVersion;
   final String reviewerEmail;
   final String reviewerPassword;
 
   String get sourceUrlHash => _sha256(sourceUrl);
   String get contentHash => _sha256('content:$runId');
+  String get movedSourceUrl => '$sourceUrl?variant=concurrency';
+  String get movedSourceUrlHash => _sha256(movedSourceUrl);
+  String get identitySemanticHash => _sha256('page-move:$runId');
+  List<String> get discoveryDedupeKeys => <String>[
+    identityDedupeKey,
+    quarantineAnchorDedupeKey,
+    quarantineReviewDedupeKey,
+    quarantineReviewDedupeKeyFor(2),
+  ];
+  String quarantineReviewDedupeKeyFor(int episode) =>
+      'task11-quarantine-review:$runId:$episode';
 }
 
 class _AuthIdentity {
@@ -569,10 +796,16 @@ Future<void> _assertNoMarkerCollision(
           .eq('content_hash', fixture.contentHash),
     ),
     'card_catalog_url_keys': _rows(
+      await service.from('card_catalog_url_keys').select('url_hash').inFilter(
+        'url_hash',
+        <String>[fixture.sourceUrlHash, fixture.movedSourceUrlHash],
+      ),
+    ),
+    'card_discovery_jobs': _rows(
       await service
-          .from('card_catalog_url_keys')
-          .select('url_hash')
-          .eq('url_hash', fixture.sourceUrlHash),
+          .from('card_discovery_jobs')
+          .select('id')
+          .inFilter('dedupe_key', fixture.discoveryDedupeKeys),
     ),
   };
   final occupied = collisions.entries
@@ -595,6 +828,14 @@ Future<void> _recoverExactCreatedIds(
   ledger.authUserIds.addAll(
     await _hostedAuthUserIdsForEmail(service, fixture.reviewerEmail),
   );
+  for (final authUserId in ledger.authUserIds) {
+    final profileRows = _rows(
+      await service.from('users').select('id').eq('id', authUserId),
+    );
+    for (final profile in profileRows) {
+      ledger.record(_FixtureTable.users, profile['id'].toString());
+    }
+  }
   final cards = _rows(
     await service
         .from('card_catalog')
@@ -624,6 +865,23 @@ Future<void> _recoverExactCreatedIds(
       job['id'].toString(),
     );
   }
+  if (ledger.idsFor(_FixtureTable.cardCatalog).isNotEmpty) {
+    final cardJobs = _rows(
+      await service
+          .from('card_catalog_enrichment_jobs')
+          .select('id')
+          .inFilter(
+            'card_id',
+            ledger.idsFor(_FixtureTable.cardCatalog).toList(growable: false),
+          ),
+    );
+    for (final job in cardJobs) {
+      ledger.record(
+        _FixtureTable.cardCatalogEnrichmentJobs,
+        job['id'].toString(),
+      );
+    }
+  }
   final stagingRows = _rows(
     await service
         .from('card_benefits_staging')
@@ -633,6 +891,48 @@ Future<void> _recoverExactCreatedIds(
   );
   for (final staging in stagingRows) {
     ledger.record(_FixtureTable.cardBenefitsStaging, staging['id'].toString());
+  }
+  final discoveryJobs = _rows(
+    await service
+        .from('card_discovery_jobs')
+        .select('id')
+        .inFilter('dedupe_key', fixture.discoveryDedupeKeys),
+  );
+  for (final job in discoveryJobs) {
+    ledger.record(_FixtureTable.cardDiscoveryJobs, job['id'].toString());
+  }
+  final discoveryJobIds = ledger.idsFor(_FixtureTable.cardDiscoveryJobs);
+  if (discoveryJobIds.isNotEmpty) {
+    final reviews = _rows(
+      await service
+          .from('card_catalog_review_queue')
+          .select('id')
+          .inFilter(
+            'discovery_job_id',
+            discoveryJobIds.toList(growable: false),
+          ),
+    );
+    for (final review in reviews) {
+      ledger.record(
+        _FixtureTable.cardCatalogReviewQueue,
+        review['id'].toString(),
+      );
+    }
+  }
+  final reviewIds = ledger.idsFor(_FixtureTable.cardCatalogReviewQueue);
+  if (reviewIds.isNotEmpty) {
+    final audits = _rows(
+      await service
+          .from('card_catalog_review_audit')
+          .select('id')
+          .inFilter('review_item_id', reviewIds.toList(growable: false)),
+    );
+    for (final audit in audits) {
+      ledger.record(
+        _FixtureTable.cardCatalogReviewAudit,
+        audit['id'].toString(),
+      );
+    }
   }
   final cardIds = ledger.idsFor(_FixtureTable.cardCatalog);
   if (cardIds.isNotEmpty) {
@@ -648,12 +948,24 @@ Future<void> _recoverExactCreatedIds(
         mapping['mapping_id'].toString(),
       );
     }
+    final provenance = _rows(
+      await service
+          .from('card_catalog_provenance')
+          .select('id')
+          .inFilter('card_id', cardIds.toList(growable: false)),
+    );
+    for (final row in provenance) {
+      ledger.record(_FixtureTable.cardCatalogProvenance, row['id'].toString());
+    }
   }
   final urlKeys = _rows(
     await service
         .from('card_catalog_url_keys')
         .select('url_hash,card_id')
-        .eq('url_hash', fixture.sourceUrlHash),
+        .inFilter('url_hash', <String>[
+          fixture.sourceUrlHash,
+          fixture.movedSourceUrlHash,
+        ]),
   );
   for (final urlKey in urlKeys) {
     if (!cardIds.contains(urlKey['card_id'].toString())) {
@@ -722,10 +1034,17 @@ Future<void> _verifyZeroResidualRows(
     isEmpty,
   );
   expect(
+    await service.from('card_catalog_url_keys').select('url_hash').inFilter(
+      'url_hash',
+      <String>[fixture.sourceUrlHash, fixture.movedSourceUrlHash],
+    ),
+    isEmpty,
+  );
+  expect(
     await service
-        .from('card_catalog_url_keys')
-        .select('url_hash')
-        .eq('url_hash', fixture.sourceUrlHash),
+        .from('card_discovery_jobs')
+        .select('id')
+        .inFilter('dedupe_key', fixture.discoveryDedupeKeys),
     isEmpty,
   );
   for (final authUserId in ledger.authUserIds) {
@@ -768,6 +1087,56 @@ Map<String, dynamic> _proposal(_RunFixture fixture) => <String, dynamic>{
   'confidence': <String, dynamic>{'overall': 0.99},
   'evidence': <String, dynamic>{'run_id': fixture.runId},
   'warnings': <dynamic>[],
+};
+
+Map<String, dynamic> _pageMoveProposal({
+  required _RunFixture fixture,
+  required String cardId,
+  required String updatedAt,
+}) => <String, dynamic>{
+  'issuer': fixture.issuer,
+  'cardName': fixture.cardName,
+  'network': 'Visa',
+  'official_url': fixture.movedSourceUrl,
+  'submitted_url': fixture.movedSourceUrl,
+  'final_url': fixture.movedSourceUrl,
+  'submitted_url_hash': fixture.movedSourceUrlHash,
+  'final_url_hash': fixture.movedSourceUrlHash,
+  'submitted_resource_identity_hash': fixture.movedSourceUrlHash,
+  'final_resource_identity_hash': fixture.movedSourceUrlHash,
+  'content_hash': fixture.contentHash,
+  'retrieved_at': updatedAt,
+  'source_status': 200,
+  'source_type': 'official_html',
+  'confidence': 0.99,
+  'validation_version': 'card-identity-v3',
+  'card_id': cardId,
+  'catalog_baseline': <String, dynamic>{
+    'card_id': cardId,
+    'card_name': fixture.cardName,
+    'network': 'Visa',
+    'annual_fee': null,
+    'joining_fee': null,
+    'apr': null,
+    'card_url': fixture.sourceUrl,
+    'is_discontinued': false,
+    'updated_at': updatedAt,
+  },
+};
+
+Map<String, dynamic> _quarantineSourceObservation({
+  required String anchorJobId,
+  required String issuer,
+  required int episode,
+}) => <String, dynamic>{
+  'anchor_job_id': anchorJobId,
+  'classification': 'issuer_discovery_quarantine',
+  'episode_identity': 'issuer-discovery-quarantine-v1:$anchorJobId:$episode',
+  'issuer': issuer,
+  'kind': 'issuer_discovery_quarantine',
+  'reason': 'resume_attempts_exhausted',
+  'retryable': true,
+  'retryability_reason': 'attempt_budget_reset_allowed',
 };
 
 void main() {
@@ -821,6 +1190,94 @@ void main() {
         'SUPABASE_PROJECT_NAME=cardcompass',
         'distinct anon and service-role keys',
       ]),
+    );
+  });
+
+  test('hosted concurrency configuration requires password-free exact pooler', () {
+    expect(
+      _hostedConcurrencyConfigurationErrors(
+        runHostedConcurrency: false,
+        databaseUrl:
+            'postgresql://postgres.prbcoxqobhjnnfnxevxf@aws-1-ap-south-1.pooler.supabase.com:6543/postgres?sslmode=require',
+        pgpassFile: '/tmp/task11.pgpass',
+        psqlPath: '/opt/homebrew/opt/postgresql@17/bin/psql',
+      ),
+      contains('RUN_HOSTED_CARD_INGESTION_CONCURRENCY=true'),
+    );
+    expect(
+      _hostedConcurrencyConfigurationErrors(
+        runHostedConcurrency: true,
+        databaseUrl:
+            'postgresql://postgres.prbcoxqobhjnnfnxevxf:secret@aws-1-ap-south-1.pooler.supabase.com:6543/postgres?sslmode=require',
+        pgpassFile: '/tmp/task11.pgpass',
+        psqlPath: '/opt/homebrew/opt/postgresql@17/bin/psql',
+      ),
+      contains('password-free CARD_INGESTION_DATABASE_URL'),
+    );
+    expect(
+      _hostedConcurrencyConfigurationErrors(
+        runHostedConcurrency: true,
+        databaseUrl:
+            'postgresql://postgres.prbcoxqobhjnnfnxevxf@aws-1-ap-south-1.pooler.supabase.com:6543/postgres?sslmode=require',
+        pgpassFile: '/tmp/task11.pgpass',
+        psqlPath: '/opt/homebrew/opt/postgresql@17/bin/psql',
+      ),
+      isEmpty,
+    );
+  });
+
+  test('two-session psql spec keeps credentials out of process arguments', () {
+    final spec = _psqlSessionSpec(
+      psqlPath: '/opt/homebrew/opt/postgresql@17/bin/psql',
+      databaseUrl:
+          'postgresql://postgres.prbcoxqobhjnnfnxevxf@aws-1-ap-south-1.pooler.supabase.com:6543/postgres?sslmode=require',
+      pgpassFile: '/tmp/task11.pgpass',
+      applicationName: 'task11-concurrency-lock-holder',
+    );
+    expect(spec.executable, '/opt/homebrew/opt/postgresql@17/bin/psql');
+    expect(spec.arguments.join(' '), isNot(contains('secret')));
+    expect(spec.arguments, contains('-X'));
+    expect(spec.environment, <String, String>{
+      'PGPASSFILE': '/tmp/task11.pgpass',
+      'PGAPPNAME': 'task11-concurrency-lock-holder',
+    });
+  });
+
+  test(
+    'page-move proposal binds the exact old catalog snapshot and new URL',
+    () {
+      final fixture = _RunFixture(
+        '20260821t010203456789z-000102030405060708090a0b0c0d0e0f',
+      );
+      final proposal = _pageMoveProposal(
+        fixture: fixture,
+        cardId: '00000000-0000-4000-8000-000000000001',
+        updatedAt: '2026-08-21T01:02:03.000Z',
+      );
+      expect(proposal['official_url'], fixture.movedSourceUrl);
+      expect(proposal['submitted_url_hash'], fixture.movedSourceUrlHash);
+      expect(proposal['final_url_hash'], fixture.movedSourceUrlHash);
+      expect(proposal['card_id'], '00000000-0000-4000-8000-000000000001');
+      expect(
+        Map<String, dynamic>.from(proposal['catalog_baseline'] as Map),
+        containsPair('card_url', fixture.sourceUrl),
+      );
+    },
+  );
+
+  test('quarantine episode binds one anchor and one immutable episode', () {
+    final observation = _quarantineSourceObservation(
+      anchorJobId: '00000000-0000-4000-8000-000000000002',
+      issuer: 'Axis Bank',
+      episode: 1,
+    );
+    expect(observation['classification'], 'issuer_discovery_quarantine');
+    expect(observation['reason'], 'resume_attempts_exhausted');
+    expect(observation['retryable'], isTrue);
+    expect(
+      observation['episode_identity'],
+      'issuer-discovery-quarantine-v1:'
+      '00000000-0000-4000-8000-000000000002:1',
     );
   });
 
@@ -1082,7 +1539,7 @@ void main() {
   });
 
   group(
-    'guarded hosted benefit-enrichment DB integration',
+    'guarded hosted benefit-enrichment DB concurrency integration',
     () {
       test(
         'validates exact RLS/RPC staging and removes only run-owned rows',
@@ -1115,6 +1572,19 @@ void main() {
             );
             final reviewerId = createdReviewer.user!.id;
             ledger.authUserIds.add(reviewerId);
+            final reviewerProfile = _row(
+              await service
+                  .from('users')
+                  .upsert(<String, dynamic>{
+                    'id': reviewerId,
+                    'email': fixture.reviewerEmail,
+                    'is_admin': true,
+                  }, onConflict: 'id')
+                  .select('id,is_admin')
+                  .single(),
+            );
+            expect(reviewerProfile['is_admin'], isTrue);
+            ledger.record(_FixtureTable.users, reviewerId);
             await authenticated.auth.signInWithPassword(
               email: fixture.reviewerEmail,
               password: fixture.reviewerPassword,
@@ -1126,11 +1596,15 @@ void main() {
                   .insert(<String, dynamic>{
                     'bank': fixture.issuer,
                     'card_name': fixture.cardName,
+                    'network': 'Visa',
                     'card_type': 'credit',
                     'card_url': fixture.sourceUrl,
                     'is_discontinued': false,
                   })
-                  .select('id')
+                  .select(
+                    'id,card_name,network,annual_fee,joining_fee,apr,'
+                    'card_url,is_discontinued,updated_at',
+                  )
                   .single(),
             );
             final cardId = card['id'].toString();
@@ -1295,43 +1769,470 @@ void main() {
             final stagingId = staged.single['staging_id'].toString();
             ledger.record(_FixtureTable.cardBenefitsStaging, stagingId);
 
+            final finalizationParams = <String, dynamic>{
+              '_job_id': jobId,
+              '_lease_token': leaseToken,
+              '_status': 'staged',
+              '_staging_id': stagingId,
+              '_content_hash': fixture.contentHash,
+              '_normalized_fields': <String, dynamic>{'proposed_count': 1},
+              '_result_summary': <String, dynamic>{
+                'run_id': fixture.runId,
+                'proposal_disposition': 'material',
+              },
+              '_failure_category': null,
+              '_next_retry_at': null,
+            };
+            final finalizations =
+                await _runBehindRolledBackAdvisoryLock<
+                  List<_AsyncOutcome<dynamic>>
+                >(
+                  lockIdentity: 'card_benefit_enrichment_review:$cardId',
+                  operation: () => Future.wait(<Future<_AsyncOutcome<dynamic>>>[
+                    _captureOutcome(
+                      service.rpc(
+                        'finalize_card_catalog_enrichment_job',
+                        params: finalizationParams,
+                      ),
+                    ),
+                    _captureOutcome(
+                      service.rpc(
+                        'finalize_card_catalog_enrichment_job',
+                        params: finalizationParams,
+                      ),
+                    ),
+                  ]),
+                );
+            expect(finalizations.where((item) => item.succeeded), hasLength(1));
             expect(
-              await service.rpc(
-                'finalize_card_catalog_enrichment_job',
-                params: <String, dynamic>{
-                  '_job_id': jobId,
-                  '_lease_token': leaseToken,
-                  '_status': 'staged',
-                  '_staging_id': stagingId,
-                  '_content_hash': fixture.contentHash,
-                  '_normalized_fields': <String, dynamic>{'proposed_count': 1},
-                  '_result_summary': <String, dynamic>{
-                    'run_id': fixture.runId,
-                    'proposal_disposition': 'material',
-                  },
-                  '_failure_category': null,
-                  '_next_retry_at': null,
-                },
-              ),
+              finalizations.singleWhere((item) => item.succeeded).value,
               jobId,
             );
-
-            final rejection = _rows(
-              await service.rpc(
-                'approve_card_benefit_enrichment',
-                params: <String, dynamic>{
-                  '_staging_id': stagingId,
-                  '_reviewed_by': reviewerId,
-                  '_decisions': <dynamic>[
-                    <String, dynamic>{
-                      'action': 'reject',
-                      'reason': 'hosted harness ${fixture.runId}',
-                    },
-                  ],
-                },
+            expect(
+              finalizations.singleWhere((item) => !item.succeeded).error,
+              isA<PostgrestException>().having(
+                (error) => error.message,
+                'lease error',
+                contains('stale_enrichment_lease'),
               ),
             );
-            expect(rejection.single['resulting_status'], 'rejected');
+
+            final rejectionParams = <String, dynamic>{
+              '_staging_id': stagingId,
+              '_reviewed_by': reviewerId,
+              '_decisions': <dynamic>[
+                <String, dynamic>{
+                  'action': 'reject',
+                  'reason': 'hosted harness ${fixture.runId}',
+                },
+              ],
+            };
+            final rejections =
+                await _runBehindRolledBackAdvisoryLock<
+                  List<_AsyncOutcome<dynamic>>
+                >(
+                  lockIdentity: 'card_benefit_enrichment_review:$cardId',
+                  operation: () => Future.wait(<Future<_AsyncOutcome<dynamic>>>[
+                    _captureOutcome(
+                      service.rpc(
+                        'approve_card_benefit_enrichment',
+                        params: rejectionParams,
+                      ),
+                    ),
+                    _captureOutcome(
+                      service.rpc(
+                        'approve_card_benefit_enrichment',
+                        params: rejectionParams,
+                      ),
+                    ),
+                  ]),
+                );
+            expect(rejections.every((item) => item.succeeded), isTrue);
+            for (final rejection in rejections) {
+              expect(
+                _rows(rejection.value).single['resulting_status'],
+                'rejected',
+              );
+            }
+            final reviewedStaging = _row(
+              await service
+                  .from('card_benefits_staging')
+                  .select('status,benefit_decisions')
+                  .eq('id', stagingId)
+                  .single(),
+            );
+            expect(reviewedStaging['status'], 'rejected');
+            expect(reviewedStaging['benefit_decisions'], hasLength(1));
+
+            final cardUpdatedAt = card['updated_at'].toString();
+            final pageMoveProposal = _pageMoveProposal(
+              fixture: fixture,
+              cardId: cardId,
+              updatedAt: cardUpdatedAt,
+            );
+            final pageMoveEvidence = <String, dynamic>{
+              'run_id': fixture.runId,
+              'content_hash': fixture.contentHash,
+              'submitted_url_hash': fixture.movedSourceUrlHash,
+              'final_url_hash': fixture.movedSourceUrlHash,
+              'source_status': 200,
+              'source_type': 'official_html',
+              'retrieved_at': cardUpdatedAt,
+              'semantic_product_hash': fixture.identitySemanticHash,
+            };
+            final stagedIdentity = _rows(
+              await service.rpc(
+                'stage_card_catalog_identity_review',
+                params: <String, dynamic>{
+                  '_discovery_job_id': null,
+                  '_discovery_source': 'issuer_crawl',
+                  '_user_id': null,
+                  '_issuer': fixture.issuer,
+                  '_proposed_product': fixture.cardName,
+                  '_dedupe_key': fixture.identityDedupeKey,
+                  '_semantic_hash': fixture.identitySemanticHash,
+                  '_proposed_fields': pageMoveProposal,
+                  '_source_evidence': pageMoveEvidence,
+                  '_existing_candidates': <dynamic>[
+                    <String, dynamic>{'card_id': cardId},
+                  ],
+                  '_validation_warnings': <dynamic>[],
+                  '_confidence': 0.99,
+                  '_expected_job_status': null,
+                  '_expected_job_updated_at': null,
+                },
+              ),
+            ).single;
+            expect(stagedIdentity['resulting_status'], 'review_required');
+            final discoveryJobId = stagedIdentity['job_id'].toString();
+            final reviewItemId = stagedIdentity['review_item_id'].toString();
+            ledger.record(_FixtureTable.cardDiscoveryJobs, discoveryJobId);
+            ledger.record(_FixtureTable.cardCatalogReviewQueue, reviewItemId);
+
+            final publicationParams = <String, dynamic>{
+              '_discovery_job_id': discoveryJobId,
+              '_review_item_id': reviewItemId,
+              '_actor_id': reviewerId,
+              '_action': 'edit_approve',
+              '_reviewed_fields': <String, dynamic>{},
+              '_merge_card_id': null,
+              '_reason': null,
+              '_parser_version': 'benefits-v6',
+            };
+            await _runCatalogPublicationRollbackProbe(
+              discoveryJobId: discoveryJobId,
+              reviewItemId: reviewItemId,
+              actorId: reviewerId,
+            );
+            final publications =
+                await _runBehindRolledBackAdvisoryLock<
+                  List<_AsyncOutcome<dynamic>>
+                >(
+                  lockIdentity: 'card_catalog_publication:job:$discoveryJobId',
+                  operation: () => Future.wait(<Future<_AsyncOutcome<dynamic>>>[
+                    _captureOutcome(
+                      service.rpc(
+                        'publish_card_catalog_identity',
+                        params: publicationParams,
+                      ),
+                    ),
+                    _captureOutcome(
+                      service.rpc(
+                        'publish_card_catalog_identity',
+                        params: publicationParams,
+                      ),
+                    ),
+                  ]),
+                );
+            expect(
+              publications.every((item) => item.succeeded),
+              isTrue,
+              reason: publications
+                  .map((item) => item.error?.toString() ?? 'success')
+                  .join(' | '),
+            );
+            for (final publication in publications) {
+              final published = _rows(publication.value).single;
+              expect(published['card_id'], cardId);
+              expect(published['resulting_status'], 'approved');
+            }
+            expect(
+              _row(
+                await service
+                    .from('card_catalog')
+                    .select('card_url')
+                    .eq('id', cardId)
+                    .single(),
+              )['card_url'],
+              fixture.movedSourceUrl,
+            );
+            final publishedUrlKeys = _rows(
+              await service
+                  .from('card_catalog_url_keys')
+                  .select('url_hash,card_id')
+                  .inFilter('url_hash', <String>[
+                    fixture.sourceUrlHash,
+                    fixture.movedSourceUrlHash,
+                  ]),
+            );
+            expect(publishedUrlKeys, hasLength(2));
+            expect(
+              publishedUrlKeys.every((row) => row['card_id'] == cardId),
+              isTrue,
+            );
+            for (final row in publishedUrlKeys) {
+              ledger.record(
+                _FixtureTable.cardCatalogUrlKeys,
+                row['url_hash'].toString(),
+              );
+            }
+            final provenanceRows = _rows(
+              await service
+                  .from('card_catalog_provenance')
+                  .select('id')
+                  .eq('card_id', cardId),
+            );
+            expect(provenanceRows, hasLength(2));
+            for (final row in provenanceRows) {
+              ledger.record(
+                _FixtureTable.cardCatalogProvenance,
+                row['id'].toString(),
+              );
+            }
+            final publicationAudits = _rows(
+              await service
+                  .from('card_catalog_review_audit')
+                  .select('id,action')
+                  .eq('review_item_id', reviewItemId),
+            );
+            expect(publicationAudits, hasLength(1));
+            expect(publicationAudits.single['action'], 'edit_approve');
+            ledger.record(
+              _FixtureTable.cardCatalogReviewAudit,
+              publicationAudits.single['id'].toString(),
+            );
+            final v6Jobs = _rows(
+              await service
+                  .from('card_catalog_enrichment_jobs')
+                  .select('id')
+                  .eq('card_id', cardId)
+                  .eq('parser_version', 'benefits-v6'),
+            );
+            expect(v6Jobs, hasLength(1));
+            ledger.record(
+              _FixtureTable.cardCatalogEnrichmentJobs,
+              v6Jobs.single['id'].toString(),
+            );
+
+            final anchor = _row(
+              await service
+                  .from('card_discovery_jobs')
+                  .insert(<String, dynamic>{
+                    'user_id': null,
+                    'issuer': fixture.issuer,
+                    'proposed_product': null,
+                    'evidence': <String, dynamic>{
+                      'kind': 'issuer_directory_run',
+                      'issuer': fixture.issuer,
+                      'canonical_url': fixture.sourceUrl,
+                      'run_date': DateTime.now()
+                          .toUtc()
+                          .toIso8601String()
+                          .substring(0, 10),
+                    },
+                    'dedupe_key': fixture.quarantineAnchorDedupeKey,
+                    'status': 'failed',
+                    'attempt_count': 5,
+                    'next_retry_at': null,
+                    'failure_category': 'issuer_discovery_quarantined',
+                    'discovery_source': 'issuer_crawl',
+                  })
+                  .select('id,evidence')
+                  .single(),
+            );
+            final anchorJobId = anchor['id'].toString();
+            ledger.record(_FixtureTable.cardDiscoveryJobs, anchorJobId);
+
+            Future<List<String>> createQuarantineReview(int episode) async {
+              final observation = _quarantineSourceObservation(
+                anchorJobId: anchorJobId,
+                issuer: fixture.issuer,
+                episode: episode,
+              );
+              final fence = <String, dynamic>{
+                'version': 1,
+                'classification': 'issuer_discovery_quarantine',
+                'anchor_job_id': anchorJobId,
+                'reason': 'resume_attempts_exhausted',
+                'retryable': true,
+                'retryability_reason': 'attempt_budget_reset_allowed',
+                'issuer': fixture.issuer,
+                'episode': episode,
+                'semantic_identity': observation['episode_identity'],
+              };
+              await service
+                  .from('card_discovery_jobs')
+                  .update(<String, dynamic>{
+                    'status': 'failed',
+                    'attempt_count': 5,
+                    'next_retry_at': null,
+                    'failure_category': 'issuer_discovery_quarantined',
+                    'evidence': <String, dynamic>{
+                      'kind': 'issuer_directory_run',
+                      'issuer': fixture.issuer,
+                      'canonical_url': fixture.sourceUrl,
+                      'run_date': DateTime.now()
+                          .toUtc()
+                          .toIso8601String()
+                          .substring(0, 10),
+                      'quarantine_fence': fence,
+                    },
+                  })
+                  .eq('id', anchorJobId);
+              final reviewJob = _row(
+                await service
+                    .from('card_discovery_jobs')
+                    .insert(<String, dynamic>{
+                      'user_id': null,
+                      'issuer': fixture.issuer,
+                      'proposed_product': 'Issuer discovery quarantine',
+                      'evidence': <String, dynamic>{
+                        'kind': 'issuer_discovery_quarantine_review',
+                        'run_id': fixture.runId,
+                        'episode': episode,
+                      },
+                      'dedupe_key': fixture.quarantineReviewDedupeKeyFor(
+                        episode,
+                      ),
+                      'status': 'review_required',
+                      'attempt_count': 0,
+                      'discovery_source': 'issuer_crawl',
+                    })
+                    .select('id')
+                    .single(),
+              );
+              final reviewJobId = reviewJob['id'].toString();
+              ledger.record(_FixtureTable.cardDiscoveryJobs, reviewJobId);
+              final review = _row(
+                await service
+                    .from('card_catalog_review_queue')
+                    .insert(<String, dynamic>{
+                      'discovery_job_id': reviewJobId,
+                      'proposed_fields': <String, dynamic>{
+                        'source_observation': observation,
+                      },
+                      'source_evidence': <String, dynamic>{
+                        'source_observation': observation,
+                      },
+                      'existing_candidates': <dynamic>[],
+                      'validation_warnings': <dynamic>[],
+                      'confidence': 1,
+                      'status': 'pending',
+                    })
+                    .select('id')
+                    .single(),
+              );
+              final quarantineReviewId = review['id'].toString();
+              ledger.record(
+                _FixtureTable.cardCatalogReviewQueue,
+                quarantineReviewId,
+              );
+              await service
+                  .from('card_discovery_jobs')
+                  .update(<String, dynamic>{
+                    'review_item_id': quarantineReviewId,
+                  })
+                  .eq('id', reviewJobId);
+              return <String>[reviewJobId, quarantineReviewId];
+            }
+
+            for (final episode in <int>[1, 2]) {
+              final quarantineIds = await createQuarantineReview(episode);
+              final reviewJobId = quarantineIds[0];
+              final quarantineReviewId = quarantineIds[1];
+              final retryParams = <String, dynamic>{
+                '_discovery_job_id': reviewJobId,
+                '_review_item_id': quarantineReviewId,
+                '_actor_id': reviewerId,
+                '_action': 'retry',
+                '_reviewed_fields': <String, dynamic>{},
+                '_merge_card_id': null,
+                '_reason': 'Task11 concurrency retry episode $episode',
+                '_parser_version': 'benefits-v6',
+              };
+              final retries =
+                  await _runBehindRolledBackAdvisoryLock<
+                    List<_AsyncOutcome<dynamic>>
+                  >(
+                    lockIdentity: 'card_catalog_publication:job:$reviewJobId',
+                    operation: () =>
+                        Future.wait(<Future<_AsyncOutcome<dynamic>>>[
+                          _captureOutcome(
+                            service.rpc(
+                              'publish_card_catalog_identity',
+                              params: retryParams,
+                            ),
+                          ),
+                          _captureOutcome(
+                            service.rpc(
+                              'publish_card_catalog_identity',
+                              params: retryParams,
+                            ),
+                          ),
+                        ]),
+                  );
+              expect(
+                retries.every((item) => item.succeeded),
+                isTrue,
+                reason: retries
+                    .map((item) => item.error?.toString() ?? 'success')
+                    .join(' | '),
+              );
+              for (final retry in retries) {
+                expect(
+                  _rows(retry.value).single['resulting_status'],
+                  'resolved',
+                );
+              }
+              final retryAudits = _rows(
+                await service
+                    .from('card_catalog_review_audit')
+                    .select('id,action')
+                    .eq('review_item_id', quarantineReviewId),
+              );
+              expect(retryAudits, hasLength(1));
+              expect(retryAudits.single['action'], 'retry');
+              ledger.record(
+                _FixtureTable.cardCatalogReviewAudit,
+                retryAudits.single['id'].toString(),
+              );
+            }
+            final retriedAnchor = _row(
+              await service
+                  .from('card_discovery_jobs')
+                  .select(
+                    'status,attempt_count,next_retry_at,failure_category,'
+                    'evidence',
+                  )
+                  .eq('id', anchorJobId)
+                  .single(),
+            );
+            expect(retriedAnchor['status'], 'failed');
+            expect(retriedAnchor['attempt_count'], 0);
+            expect(retriedAnchor['next_retry_at'], isNotNull);
+            expect(
+              retriedAnchor['failure_category'],
+              'issuer_discovery_operator_retry',
+            );
+            expect(
+              Map<String, dynamic>.from(
+                Map<String, dynamic>.from(
+                      retriedAnchor['evidence'] as Map,
+                    )['quarantine_fence']
+                    as Map,
+              )['episode'],
+              2,
+            );
             expect(
               await service
                   .from('card_catalog_enrichment_jobs')
@@ -1372,6 +2273,6 @@ void main() {
         timeout: const Timeout(Duration(minutes: 2)),
       );
     },
-    skip: _hostedIntegrationSkipReason,
+    skip: _hostedConcurrencySkipReason,
   );
 }

@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict ll6MZjhMAf84oGBGwhgVVbhp3f6Qh7gXe94XBtiklgle4FobDVKmYRVqzNkfBKg
+\restrict 4Owfr1PwyekUUStowpeqKL4w97bvTHD1pRvTsCUBSH4Iu2UR16EQqqgI6NFwx3y
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.10 (Homebrew)
@@ -4702,13 +4702,18 @@ CREATE FUNCTION public.normalize_card_catalog_network(_value text) RETURNS text
     SET search_path TO 'public', 'extensions', 'pg_temp'
     AS $$
   SELECT CASE
-    WHEN lower(regexp_replace(trim(coalesce(_value, '')), '[^a-z0-9]+', '', 'g'))
+    WHEN regexp_replace(lower(trim(coalesce(_value, ''))), '[^a-z0-9]+', '', 'g')
       IN ('mastercard', 'master') THEN 'mastercard'
-    WHEN lower(regexp_replace(trim(coalesce(_value, '')), '[^a-z0-9]+', '', 'g'))
+    WHEN regexp_replace(lower(trim(coalesce(_value, ''))), '[^a-z0-9]+', '', 'g')
       IN ('americanexpress', 'amex') THEN 'americanexpress'
-    WHEN lower(regexp_replace(trim(coalesce(_value, '')), '[^a-z0-9]+', '', 'g')) = 'visa' THEN 'visa'
-    WHEN lower(regexp_replace(trim(coalesce(_value, '')), '[^a-z0-9]+', '', 'g')) = 'rupay' THEN 'rupay'
-    ELSE nullif(lower(regexp_replace(trim(coalesce(_value, '')), '[^a-z0-9]+', '', 'g')), '')
+    WHEN regexp_replace(lower(trim(coalesce(_value, ''))), '[^a-z0-9]+', '', 'g') = 'visa'
+      THEN 'visa'
+    WHEN regexp_replace(lower(trim(coalesce(_value, ''))), '[^a-z0-9]+', '', 'g') = 'rupay'
+      THEN 'rupay'
+    ELSE nullif(
+      regexp_replace(lower(trim(coalesce(_value, ''))), '[^a-z0-9]+', '', 'g'),
+      ''
+    )
   END;
 $$;
 
@@ -5345,6 +5350,22 @@ BEGIN
       RAISE EXCEPTION 'existing_observation_requires_review';
     END IF;
     observed_job := job_row;
+  ELSIF _review_item_id IS NOT NULL
+     AND _action NOT IN ('retry', 'reject') THEN
+    -- post_advisory_publication_replay_refresh: another publication may have
+    -- completed while this request waited for the job advisory. Refresh the
+    -- immutable replay snapshot without taking row locks before the shared
+    -- URL/identity/card lock order.
+    SELECT job.* INTO observed_job
+    FROM public.card_discovery_jobs AS job
+    WHERE job.id = _discovery_job_id;
+    IF NOT FOUND THEN RAISE EXCEPTION 'discovery_job_not_found'; END IF;
+    SELECT review.* INTO observed_review
+    FROM public.card_catalog_review_queue AS review
+    WHERE review.id = _review_item_id
+      AND review.discovery_job_id = observed_job.id;
+    IF NOT FOUND THEN RAISE EXCEPTION 'review_item_not_found'; END IF;
+    review_row := observed_review;
   END IF;
 
   IF _review_item_id IS NOT NULL
@@ -5945,26 +5966,35 @@ BEGIN
         PERFORM pg_advisory_xact_lock(hashtextextended(
           greatest(edit_old_identity_lock, edit_new_identity_lock), 0
         ));
+
+WITH family_candidates AS MATERIALIZED (
+          SELECT conflict.id, conflict.bank, conflict.card_name, conflict.network
+          FROM public.card_catalog AS conflict
+          WHERE conflict.id <> edit_target_card_id
+            AND lower(trim(conflict.bank)) = lower(trim(issuer))
+            AND lower(trim(coalesce(conflict.card_type, ''))) = 'credit'
+            AND coalesce(
+              nullif(public.normalize_card_catalog_family(conflict.card_name), ''),
+              public.normalize_card_catalog_product(conflict.card_name)
+            ) = coalesce(
+              nullif(public.normalize_card_catalog_family(reviewed_name), ''),
+              public.normalize_card_catalog_product(reviewed_name)
+            )
+        ), compatible_candidates AS MATERIALIZED (
+          SELECT conflict.id
+          FROM family_candidates AS conflict
+          WHERE public.card_catalog_effective_network(
+              conflict.network, conflict.card_name, conflict.bank
+            ) IS NOT DISTINCT FROM reviewed_network
+            AND public.normalize_card_catalog_tier(conflict.card_name)
+              IS NOT DISTINCT FROM reviewed_tier
+        )
         SELECT conflict.id INTO new_family_conflict
         FROM public.card_catalog AS conflict
-        WHERE conflict.id <> edit_target_card_id
-          AND lower(trim(conflict.bank)) = lower(trim(issuer))
-          AND lower(trim(coalesce(conflict.card_type, ''))) = 'credit'
-          AND coalesce(
-            nullif(public.normalize_card_catalog_family(conflict.card_name), ''),
-            public.normalize_card_catalog_product(conflict.card_name)
-          ) = coalesce(
-            nullif(public.normalize_card_catalog_family(reviewed_name), ''),
-            public.normalize_card_catalog_product(reviewed_name)
-          )
-          AND public.card_catalog_effective_network(
-            conflict.network, conflict.card_name, conflict.bank
-          ) IS NOT DISTINCT FROM reviewed_network
-          AND public.normalize_card_catalog_tier(conflict.card_name)
-            IS NOT DISTINCT FROM reviewed_tier
+        JOIN compatible_candidates AS candidate ON candidate.id = conflict.id
         ORDER BY conflict.id
         LIMIT 1
-        FOR UPDATE;
+        FOR UPDATE OF conflict;
         IF new_family_conflict IS NOT NULL THEN
           RAISE EXCEPTION 'edit_target_conflict';
         END IF;
@@ -11926,4 +11956,4 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON T
 -- PostgreSQL database dump complete
 --
 
-\unrestrict ll6MZjhMAf84oGBGwhgVVbhp3f6Qh7gXe94XBtiklgle4FobDVKmYRVqzNkfBKg
+\unrestrict 4Owfr1PwyekUUStowpeqKL4w97bvTHD1pRvTsCUBSH4Iu2UR16EQqqgI6NFwx3y

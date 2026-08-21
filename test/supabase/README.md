@@ -10,9 +10,10 @@ separate in release reports:
 
 `benefit_enrichment_integration_test.dart` is the only guarded hosted
 card-ingestion harness. It validates the already-applied PostgreSQL, REST, RPC,
-RLS, active-view, staging, finalization, and rejection behavior. It does not
-apply migrations, invoke or deploy an Edge Function, crawl an issuer, seed
-reference data, reset a database, or run the production pilot.
+RLS, active-view, staging, finalization, publication, page-move, retry, and
+two-session locking behavior. It does not apply migrations, invoke or deploy
+an Edge Function, crawl an issuer, seed reference data, reset a database, or
+run the production pilot.
 
 ## Credential-free checks
 
@@ -72,11 +73,13 @@ keys in shell history and never commit this file:
 ```json
 {
   "RUN_HOSTED_CARD_INGESTION_INTEGRATION": true,
+  "RUN_HOSTED_CARD_INGESTION_CONCURRENCY": true,
   "SUPABASE_URL": "https://prbcoxqobhjnnfnxevxf.supabase.co",
   "SUPABASE_PROJECT_REF": "prbcoxqobhjnnfnxevxf",
   "SUPABASE_PROJECT_NAME": "cardcompass",
   "SUPABASE_ANON_KEY": "<cardcompass anon or publishable key>",
-  "SUPABASE_SERVICE_ROLE_KEY": "<cardcompass service-role or secret key>"
+  "SUPABASE_SERVICE_ROLE_KEY": "<cardcompass service-role or secret key>",
+  "CARD_INGESTION_DATABASE_URL": "postgresql://postgres.prbcoxqobhjnnfnxevxf@aws-1-ap-south-1.pooler.supabase.com:6543/postgres?sslmode=require"
 }
 ```
 
@@ -84,16 +87,30 @@ The anon and service credentials must be distinct. The service credential is
 used only inside this test process to create and remove exact fixtures and must
 never be exposed to an app client.
 
-Run exactly the one hosted harness:
+Create a mode-`0600` libpq password file for the exact transaction-pooler
+endpoint. Keep the database password out of the define file and process
+arguments. Then run exactly the one hosted harness:
 
 ```bash
+export PGPASSFILE=/absolute/private/path/cardcompass.pgpass
+export PSQL=/opt/homebrew/opt/postgresql@17/bin/psql
 flutter test --no-pub \
-  test/supabase/benefit_enrichment_integration_test.dart \
-  --dart-define-from-file=/absolute/private/path/cardcompass-hosted-test.json
+  --dart-define-from-file=/absolute/private/path/cardcompass-hosted-test.json \
+  test/supabase/benefit_enrichment_integration_test.dart
+unset PGPASSFILE PSQL
 ```
 
 Capture the generated run ID from failures and retain the full command result.
 Do not run a broader `flutter test test/supabase/` with hosted credentials.
+
+The harness starts an isolated PostgreSQL lock-holder session, takes the exact
+transaction-scoped advisory lock for the operation under test, starts two
+competing RPC requests, and rolls the lock-holder transaction back. Bounded
+timeouts turn a hang or deadlock into a failure. The matrix covers the Task 4
+lease finalizer, Task 4 reviewed decision, Task 7 page-move publication and
+enqueue, and two immutable quarantine Retry episodes. It asserts one effective
+mutation/audit/enqueue at every idempotent boundary and reuses the exact-ID
+cleanup contract below.
 
 ### Safety and cleanup contract
 
@@ -104,16 +121,17 @@ The harness first proves those markers are absent, querying the active-benefit
 and staged-proposal dedupe keys independently. Marker recovery is disabled
 until that collision preflight succeeds.
 
-Every returned card, benefit, mapping, enrichment-job, staging, URL-key, and
-auth-user identity is recorded. If a database response is lost after a commit,
-recovery queries use only the exact unique run markers, convert the results
-into exact IDs, and then delete by those IDs. Both benefit dedupe keys are
-recovered independently into the same exact-ID ledger. Auth recovery uses
+Every returned card, benefit, mapping, enrichment job, staging row, URL key,
+provenance row, discovery job, catalog-review row, catalog-review audit, public
+user, and Auth-user identity is recorded. If a database response is lost after
+a commit, recovery queries use only the exact unique run markers, convert the
+results into exact IDs, and then delete by those IDs. Both benefit dedupe keys
+are recovered independently into the same exact-ID ledger. Auth recovery uses
 bounded admin pagination, retains only the exact randomized email match, and
-deletes only its returned ID. Dependency cleanup order is mapping, job,
-staging, URL key, benefit, card, then the exact auth user. The final assertions
-require zero rows for every recorded ID, both benefit dedupe keys, every other
-unique database marker, and the randomized Auth email.
+deletes only its returned ID. Dependency cleanup follows the recorded foreign
+keys and removes only exact IDs. The final assertions require zero rows for
+every recorded ID, both benefit dedupe keys, every other unique database
+marker, and the randomized Auth email.
 
 Claiming never uses the shared `benefits-v5` or `benefits-v6` lane. A
 collision-checked randomized parser marker isolates the queue-wide claim RPC;

@@ -1,21 +1,20 @@
-# Task 11 Report — Hosted Migration Complete; Concurrency Gate Pending
+# Task 11 Report — Hosted Migration and Concurrency Gate Complete
 
 Date: 2026-08-21
 
 ## Outcome
 
-The guarded database migration and reproducibility work is complete. The exact
-hosted project `cardcompass` (`prbcoxqobhjnnfnxevxf`) now contains every local
-migration through `20260821140000`, the final dry run reports `Remote database
-is up to date`, the guarded hosted harness passes with zero fixture residue,
-and `schema.sql` is a fresh schema-only PostgreSQL 17 dump of `public`.
+Task 11 is **complete**. The exact hosted project `cardcompass`
+(`prbcoxqobhjnnfnxevxf`) contains every local migration through
+`20260821153000`; the final dry run reports `Remote database is up to date`.
+The guarded hosted harness passed the required isolated two-session
+publication/enqueue, review locking, retry/quarantine, lease/finalizer,
+rollback, and deadlock matrix with zero fixture residue. `schema.sql` is a
+fresh schema-only PostgreSQL 17 dump of `public`.
 
-Task 11 as a whole remains **incomplete**: its brief requires dedicated
-two-session publication/enqueue, review locking, retry/quarantine,
-lease/finalizer, rollback, and deadlock behavioral gates. Those production
-interleavings were not run. Static lock-order coverage and the sequential hosted
-harness do not substitute for them. Task 12 is blocked until the isolated
-two-session suite and rollback rehearsal pass.
+Task 12 is no longer blocked by the database concurrency gate. Task 12 itself
+has not started: no Edge function, client, workflow, schedule, or pilot traffic
+was deployed or enabled by this work.
 
 No Docker/local Supabase, reset, seed, migration-history repair, broad cleanup,
 Edge deployment, issuer crawl, secret mutation, workflow dispatch, pilot
@@ -87,6 +86,31 @@ Security advisors then found policies on two tables whose RLS flag was disabled.
 owner policies and enabled RLS on `user_cards` and
 `statement_milestone_cache`.
 
+The isolated concurrency rehearsal then found three defects that sequential
+and static lock-order checks could not expose:
+
+- title-cased strong networks were stripped before lowercasing (`Visa` became
+  `isa`);
+- the page-move conflict check evaluated effective-network logic on unrelated
+  same-issuer rows before narrowing to the destination product family;
+- a publication waiter acquired the advisory lock but evaluated replay against
+  its pre-lock job/review snapshot.
+
+Each defect was repaired with an additive forward migration. The migrations
+normalize case before filtering, materialize the exact product-family candidate
+set before evaluating strong identity, and refresh immutable publication replay
+state immediately after the advisory lock:
+
+- `20260821150000_fix_card_catalog_network_case_normalization.sql`
+- `20260821151500_fix_catalog_identity_conflict_candidate_scope.sql`
+- `20260821153000_fix_catalog_publication_post_lock_replay.sql`
+
+Each migration passed a rollback-only PostgreSQL preflight and was applied as
+one transaction together with its exact migration-history row. The transaction
+pooler rejected one CLI prepared-statement attempt before SQL execution; the
+ledger confirmed no partial migration, and the established simple-query psql
+path completed the atomic apply.
+
 Final migration history contains one matching local/remote entry for every
 migration. The final CLI dry run through the transaction pooler returned:
 
@@ -100,23 +124,36 @@ Remote database is up to date.
 The final guarded harness was run after all forward fixes and RLS enablement:
 
 ```text
-13 passed, 0 failed
+17 passed, 0 failed
 ```
 
 It proved the exact project guard, collision-free randomized fixtures, Auth and
 table RLS, queue claim/staging/finalization RPCs, v5 compatibility, approval,
 rejection, active benefit reads, exact benefit/mapping identity, and aggregate
-best-effort cleanup. Final assertions found no rows for any run-owned ID, unique
-marker, either benefit dedupe key, or randomized Auth email.
+best-effort cleanup. It also ran real isolated two-session interleavings behind
+a transaction-scoped advisory-lock holder that was deliberately rolled back:
+
+- two Task 4 finalizer calls produced exactly one terminal mutation and one
+  stale-lease result;
+- two identical Task 4 reviewed decisions produced one retained decision;
+- a rolled-back Task 7 publication probe left no mutation, and two identical
+  page-move publications produced one review audit, both old and new URL keys,
+  append-only provenance, and exactly one v6 job;
+- two competing Retry calls for each of two immutable quarantine episodes
+  produced one audit per episode and the expected final producer fence.
+
+Every waiter completed inside a bounded timeout; no deadlock or orphaned lock
+holder remained. Final assertions found no rows for any run-owned card, benefit,
+mapping, enrichment job, staging row, URL key, provenance row, discovery job,
+catalog review, catalog-review audit, public user, Auth user, unique marker, or
+either benefit dedupe key.
 
 The authenticated RLS matrix was also checked directly with an existing JWT
 subject: anon saw zero rows, authenticated saw six own `user_cards`, and saw
 zero cross-user rows. No customer identifier was printed.
 
-The repository's executable migration contract proves the Task 3/4/6/7 lock
-order is acyclic. It is supporting evidence only. The mandatory isolated
-two-session hosted interleavings and rollback/deadlock rehearsal remain open
-Task 11 gates.
+The repository's executable migration contract and the hosted two-session
+matrix now agree on the Task 3/4/6/7 lock order and idempotency boundaries.
 
 ## Audit, lint, advisors, and query plan
 
@@ -152,8 +189,8 @@ current retained history size.
 PostgreSQL 17.6 `public` schema using `--schema-only --no-owner`.
 
 ```text
-11,929 lines
-493,561 bytes
+11,959 lines
+494,849 bytes
 0 COPY statements
 0 INSERT statements
 0 credential/JWT literals
@@ -163,15 +200,15 @@ The snapshot intentionally contains effective functions, tables, views,
 constraints, indexes, triggers, policies, RLS flags, grants, and default ACLs.
 Migrations remain the source of truth.
 
-## Final credential-free verification
+## Final verification
 
 ```text
-Node Supabase/GTM contracts:       314 passed, 0 failed
+Node Supabase/GTM contracts:       317 passed, 0 failed
 Deno shared/batch/admin/catalog:   380 passed, 0 failed
 Flutter admin:                      54 passed, 0 failed
 Flutter movie repository:           15 passed, 0 failed
 Dart DB-source static contracts:      5 passed, 0 failed
-Guarded hosted harness:              13 passed, 0 failed
+Guarded hosted harness:              17 passed, 0 failed
 Deno production checks:               5 passed
 Flutter analyze --no-fatal-infos: exit 0; 12 pre-existing info lints
 git diff --check:                 passed
@@ -196,13 +233,15 @@ storage.
 20260821133000  48e2c1c7c2d2e4fbfc1bba5be69f4668622cb1f0c4ffd98c4b060a79105a3708
 20260821134500  0a01aac1a62a911965e9485af224e868ef96604ebd0e5e1347ba840e71dd547e
 20260821140000  5d2a5ad5226ef804036e0f72efbc36da33cb9993ccec9eb4ce2098960e3263ad
+20260821150000  d3bab7b7758f28e50f7536e70444271b3f427eee835ceeef94e940bcbe375bf9
+20260821151500  84bc7fdaa34a359bea65d558f28866d9a07314a68a80c1e1c65f2f1edaec12ec
+20260821153000  ddfcae4d6fef835741c947c12bb63206aa7dcbef2fe48534dc395e97ac32029e
 ```
 
 ## Rollout boundary
 
-Task 11 does not deploy code or enable schedules. Before Task 12, complete the
-isolated two-session publication/enqueue, locking, retry/quarantine, and
-lease/finalizer matrix plus rollback/deadlock rehearsal, using unique fixtures
-and exact-ID cleanup. Only after that gate is recorded may Task 12 dark-deploy
-the already-reviewed Edge code with schedules disabled and run its manual
-allowlisted smoke test.
+Task 11 did not deploy code or enable schedules. Its required database gate is
+now recorded as passed. Task 12 may dark-deploy the already-reviewed Edge code
+with schedules disabled and run the manual allowlisted smoke test, following
+its separate rollout/approval boundary for secrets, workflows, schedules,
+pilot traffic, and ramp decisions.
