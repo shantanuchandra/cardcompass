@@ -253,6 +253,106 @@ Deno.test("global navigation terms do not crowd out product-scoped required sour
   );
 });
 
+Deno.test("primary product scope excludes global header navigation from links and benefits", async () => {
+  const product = "https://www.axis.bank.in/credit-cards/ace-credit-card";
+  const productTerms = `${product}/terms-and-conditions`;
+  const unrelatedTerms =
+    "https://www.axis.bank.in/credit-cards/airtel-credit-card/terms-and-conditions";
+  const fetched: string[] = [];
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    primary: resource(
+      product,
+      `<header>
+        <h2>Airtel Axis Bank Credit Card</h2>
+        <p>Get 25% cashback on Airtel spends.</p>
+        <a href="${unrelatedTerms}">Terms and Conditions</a>
+      </header>
+      <main>
+        <h1>ACE Credit Card</h1>
+        <p>Get 5% cashback on utility bill payments.</p>
+        <a href="${productTerms}">Card terms and conditions</a>
+      </main>
+      <footer>Magnus Credit Card offers unlimited lounge visits.</footer>`,
+    ),
+    identityLabels: ["ACE Credit Card"],
+    fetchOfficialIssuerResource: async (input) => {
+      fetched.push(input.url);
+      return resource(
+        input.url,
+        "ACE Credit Card terms and conditions. Get 5% cashback on utility bill payments.",
+      );
+    },
+  });
+
+  const retainedPrimary = collected.documents[0]?.text ?? "";
+  assert(
+    retainedPrimary.includes("ACE Credit Card") &&
+      retainedPrimary.includes("5% cashback"),
+    "target product content was not retained",
+  );
+  assert(
+    !retainedPrimary.includes("Airtel") &&
+      !retainedPrimary.includes("25% cashback") &&
+      !retainedPrimary.includes("Magnus"),
+    "global header/footer content leaked into the product evidence",
+  );
+  assert(
+    JSON.stringify(fetched) === JSON.stringify([productTerms]),
+    `global navigation link was fetched: ${fetched.join(",")}`,
+  );
+
+  const proposals = await extractGroundedBenefitsV6(
+    collected.documents,
+    "benefits-v6",
+    "00000000-0000-4000-8000-000000000001",
+  );
+  assert(
+    proposals.some((proposal) => JSON.stringify(proposal).includes("5%")),
+    "target product benefit was not extracted",
+  );
+  assert(
+    proposals.every((proposal) =>
+      !JSON.stringify(proposal).includes("25%") &&
+      !JSON.stringify(proposal).includes("Airtel") &&
+      !JSON.stringify(proposal).includes("Magnus")
+    ),
+    "global navigation benefit was extracted for the target card",
+  );
+});
+
+Deno.test("a title-only main shell does not hide product sections outside main", async () => {
+  const product =
+    "https://www.sbicard.com/en/personal/credit-cards/air-india-sbi-platinum-card.html";
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "SBI Card",
+    primary: resource(
+      product,
+      `<header><p>SimplySAVE SBI Card earns 10X reward points.</p></header>
+       <main><h1>Air India SBI Platinum Credit Card</h1></main>
+       <section><h2>Card benefits</h2>
+         <p>Earn 2 reward points for every Rs. 100 spent.</p>
+         <p>Get 5 reward points for every Rs. 100 spent on Air India tickets.</p>
+       </section>
+       <footer>Explore more SBI cards.</footer>`,
+    ),
+    identityLabels: ["Air India SBI Platinum Credit Card"],
+    maximumLinks: 0,
+  });
+
+  const retainedPrimary = collected.documents[0]?.text ?? "";
+  assert(
+    retainedPrimary.includes("Earn 2 reward points") &&
+      retainedPrimary.includes("Air India tickets"),
+    "product sections outside the title-only main shell were discarded",
+  );
+  assert(
+    !retainedPrimary.includes("SimplySAVE") &&
+      !retainedPrimary.includes("Explore more SBI cards"),
+    "fallback product scope reintroduced global chrome",
+  );
+});
+
 Deno.test("large primary pages stop before supporting fetches once required evidence is invalid", async () => {
   const product = "https://www.idfcfirst.bank.in/credit-card/wealth";
   const ownTerms = `${product}/terms-and-conditions`;

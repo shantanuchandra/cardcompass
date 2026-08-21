@@ -51,6 +51,11 @@ const relevantAnchorPattern =
 const centralCardRequiredPath =
   /(?:^|[/_.-])(?:credit[-_ ]?cards?|cards?[-_ ]?credit|card[-_ ]?(?:terms?|conditions?|fees?|charges?|mitc)|(?:terms?|conditions?|fees?|charges?|mitc)[-_ ]?card)(?:$|[/_.-])/i;
 const centralSupportPath = /(?:^|\/)(?:support|help)(?:\/|$)/i;
+const semanticChromePattern =
+  /<(header|nav|footer|aside)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+const semanticChromeRolePattern =
+  /<([a-z][a-z0-9:-]*)\b[^>]*\brole\s*=\s*(?:"(?:banner|navigation|contentinfo|complementary)"|'(?:banner|navigation|contentinfo|complementary)'|(?:banner|navigation|contentinfo|complementary))[^>]*>[\s\S]*?<\/\1\s*>/gi;
+const mainContentPattern = /<main\b[^>]*>[\s\S]*?<\/main\s*>/gi;
 
 const exactSupportingSources: Record<string, Record<string, string[]>> = {
   "SBI Card": {
@@ -101,6 +106,61 @@ function identityTokens(labels: string[]): string[] {
       ),
     ),
   ];
+}
+
+function searchableHtmlText(value: string): string {
+  return value.replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(
+      /&(?:amp|nbsp|quot|apos);|&#(?:0*38|0*160|0*34|0*39);|&#x(?:0*26|0*a0|0*22|0*27);/gi,
+      " ",
+    )
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function containsTargetProductIdentity(
+  html: string,
+  labels: readonly string[],
+): boolean {
+  const searchable = ` ${searchableHtmlText(html)} `;
+  return labels.some((label) => {
+    const normalized = searchableHtmlText(label);
+    if (!normalized) return false;
+    return searchable.includes(` ${normalized} `);
+  });
+}
+
+/**
+ * Removes site-wide navigation before any product evidence is retained or
+ * classified. When an explicit target-bearing <main> exists it is the only
+ * admissible HTML scope; otherwise the chrome-free document remains available
+ * for older issuer pages that do not use semantic main markup.
+ */
+function productScopedBenefitHtml(
+  html: string,
+  identityLabels: readonly string[],
+): string {
+  if (!html.trim() || !/<[a-z][\s\S]*>/i.test(html)) return html;
+  let cleaned = html;
+  for (let pass = 0; pass < 4; pass += 1) {
+    const next = cleaned.replace(semanticChromePattern, " ")
+      .replace(semanticChromeRolePattern, " ");
+    if (next === cleaned) break;
+    cleaned = next;
+  }
+  const mainSections = [...cleaned.matchAll(mainContentPattern)].map((match) =>
+    match[0]
+  );
+  const targetMain = mainSections.find((section) =>
+    containsTargetProductIdentity(section, identityLabels) &&
+    searchableHtmlText(section).length >= 80
+  );
+  return targetMain ?? cleaned;
 }
 
 function exactSupportingUrls(issuer: string, labels: string[]): string[] {
@@ -430,6 +490,7 @@ function linkedUrls(
 async function benefitDocument(
   resource: OfficialFetchResult,
   requestedUrl = resource.submittedUrl,
+  scopedText?: string,
 ): Promise<BenefitDocument> {
   const body = requireOfficialFetchBody(resource);
   const exactFinalResource = body.finalResourceUrl ?? body.finalUrl;
@@ -441,7 +502,9 @@ async function benefitDocument(
     finalResourceUrl: body.finalResourceUrl ?? body.finalUrl,
     requestedResourceIdentityHash: sourceIdentityDigest(requestedUrl),
     finalResourceIdentityHash: replayResourceIdentity(exactFinalResource),
-    text: redactSensitiveUrlsInText(await officialResourceText(body)),
+    text: redactSensitiveUrlsInText(
+      scopedText ?? await officialResourceText(body),
+    ),
     contentHash: body.contentHash,
   };
 }
@@ -465,9 +528,16 @@ export async function collectSupportingBenefitDocuments(
     Math.max(0, Math.trunc(input.maximumLinks ?? MAX_SUPPORTING_LINKS)),
   );
   const primary = requireOfficialFetchBody(input.primary);
+  const primarySourceText = input.primary.contentType === "application/pdf"
+    ? await officialResourceText(primary)
+    : productScopedBenefitHtml(
+      input.primary.text ?? await officialResourceText(primary),
+      input.identityLabels,
+    );
   const primaryDocument = await benefitDocument(
     primary,
     input.primary.submittedResourceUrl ?? input.primary.submittedUrl,
+    primarySourceText,
   );
   const documents = primaryDocument.text.trim() ? [primaryDocument] : [];
   const attempts: SourceAttemptInput[] = input.primaryAttempts
@@ -566,7 +636,7 @@ export async function collectSupportingBenefitDocuments(
     ...linkedUrls(
       input.issuer,
       input.primary.canonicalUrl,
-      input.primary.text ?? "",
+      primarySourceText,
       input.identityLabels,
       input.primary.canonicalUrl,
     ),
@@ -574,7 +644,7 @@ export async function collectSupportingBenefitDocuments(
   const primaryReplayLinks = replayLinksFromClassifierInput(
     input.issuer,
     input.primary.canonicalUrl,
-    input.primary.text ?? "",
+    primarySourceText,
     input.identityLabels,
     input.primary.canonicalUrl,
     [...exactSet],
@@ -837,16 +907,23 @@ export async function collectSupportingBenefitDocuments(
       ? linkedUrls(
         input.issuer,
         resource.canonicalUrl,
-        resource.text ?? "",
+        productScopedBenefitHtml(resourceText, input.identityLabels),
         input.identityLabels,
         input.primary.canonicalUrl,
       )
       : [];
-    const document = await benefitDocument(resource, current.url);
+    const scopedResourceText = resource.contentType === "application/pdf"
+      ? resourceText
+      : productScopedBenefitHtml(resourceText, input.identityLabels);
+    const document = await benefitDocument(
+      resource,
+      current.url,
+      scopedResourceText,
+    );
     const documentReplayLinks = replayLinksFromClassifierInput(
       input.issuer,
       resource.canonicalUrl,
-      resource.text ?? "",
+      scopedResourceText,
       input.identityLabels,
       input.primary.canonicalUrl,
     );

@@ -708,7 +708,7 @@ Deno.test("pilot replay retains only bounded privacy-safe classifier facts", asy
     logicalSourceKey: sourceIdentityDigest("https://issuer.example/card"),
   }];
   const longPublicText = `${"Unrelated issuer boilerplate. ".repeat(400)}
-Issuer Example Card. Get 10% cashback on dining spends.
+Issuer Example Rewards Card. Get 10% cashback on dining spends.
 Email john.doe@example.com. Pay with 4111 1111 1111 1111.
 Call +91 98765 43210. Customer ID: 1234567890123456.
 Relationship manager Amit Kumar Sharma will call.`;
@@ -721,7 +721,7 @@ Relationship manager Amit Kumar Sharma will call.`;
     expectedRequiredSourceKeys: [],
     requiredSourceSelectionOverflow: false,
     issuer: "Issuer Example",
-    identityLabels: ["Issuer Example Card"],
+    identityLabels: ["Issuer Example Rewards Card"],
     primarySourceUrl: "https://issuer.example/card",
     attempts,
     documents: [{
@@ -757,7 +757,7 @@ Relationship manager Amit Kumar Sharma will call.`;
     );
   }
   assert(
-    retained.includes("Issuer Example Card") &&
+    retained.includes("Issuer Example Rewards Card") &&
       retained.includes("10% cashback"),
     "privacy minimization removed known card identity or benefit facts",
   );
@@ -792,7 +792,7 @@ Deno.test("pilot replay reruns required-link and card-identity classifiers from 
   const documents = [{
     sourceUrl: primaryUrl,
     finalUrl: primaryUrl,
-    text: "Issuer Example Card. Get 10% cashback on dining spends.",
+    text: "Issuer Example Rewards Card. Get 10% cashback on dining spends.",
     contentHash: "a".repeat(64),
     replayLinks: [{
       href: termsUrl,
@@ -801,7 +801,7 @@ Deno.test("pilot replay reruns required-link and card-identity classifiers from 
   }, {
     sourceUrl: termsUrl,
     finalUrl: termsUrl,
-    text: "Issuer Example Card MITC. Dining cashback is 10%.",
+    text: "Issuer Example Rewards Card MITC. Dining cashback is 10%.",
     contentHash: "b".repeat(64),
   }];
   const binding = {
@@ -810,7 +810,7 @@ Deno.test("pilot replay reruns required-link and card-identity classifiers from 
     parserVersion: "benefits-v6",
     runMode: "pilot",
     issuer: "Issuer Example",
-    identityLabels: ["Issuer Example Card"],
+    identityLabels: ["Issuer Example Rewards Card"],
     primarySourceUrl: primaryUrl,
     requiredSourceSelectionOverflow: false,
   };
@@ -829,7 +829,8 @@ Deno.test("pilot replay reruns required-link and card-identity classifiers from 
   );
   assert(
     replayInput.context?.issuer === "Issuer Example" &&
-      replayInput.context?.identity_labels?.[0] === "Issuer Example Card",
+      replayInput.context?.identity_labels?.[0] ===
+        "Issuer Example Rewards Card",
     "replay lost known issuer/card identity context",
   );
   const retainedLink = replayInput.documents[0].hyperlinks[0];
@@ -976,14 +977,14 @@ Deno.test("pilot replay persists canonical functional resources and recomputes e
     expectedRequiredSourceKeys: [termsKey],
     requiredSourceSelectionOverflow: false,
     issuer: "Issuer Example",
-    identityLabels: ["Issuer Example Card"],
+    identityLabels: ["Issuer Example Rewards Card"],
     primarySourceUrl: primaryUrl,
     attempts,
     documents: [{
       sourceUrl: primaryUrl,
       requestedResourceIdentityHash: "c".repeat(64),
       finalResourceIdentityHash: "d".repeat(64),
-      text: "Issuer Example Card. Earn 10% cashback.",
+      text: "Issuer Example Rewards Card. Earn 10% cashback.",
       contentHash: "a".repeat(64),
       replayLinks: [{
         href: rawTermsUrl,
@@ -995,7 +996,7 @@ Deno.test("pilot replay persists canonical functional resources and recomputes e
       finalUrl: canonicalTermsUrl,
       requestedResourceIdentityHash: "e".repeat(64),
       finalResourceIdentityHash: "f".repeat(64),
-      text: "Issuer Example Card terms. Earn 10% cashback.",
+      text: "Issuer Example Rewards Card terms. Earn 10% cashback.",
       contentHash: "b".repeat(64),
     }],
     extract: async () => [{ fixture: "functional-query" }],
@@ -1419,13 +1420,13 @@ Deno.test("pilot source binding preserves exact requested and redirected resourc
     expectedRequiredSourceKeys: [requestedTermsKey],
     requiredSourceSelectionOverflow: false,
     issuer: "Issuer Example",
-    identityLabels: ["Issuer Example Card"],
+    identityLabels: ["Issuer Example Rewards Card"],
     primarySourceUrl: primaryUrl,
     attempts,
     documents: [{
       sourceUrl: primaryUrl,
       finalUrl: primaryUrl,
-      text: "Issuer Example Card. Get 10% cashback.",
+      text: "Issuer Example Rewards Card. Get 10% cashback.",
       contentHash: "a".repeat(64),
       replayLinks: [{
         href: requestedTermsUrl,
@@ -1437,7 +1438,7 @@ Deno.test("pilot source binding preserves exact requested and redirected resourc
       finalUrl: finalTermsUrl,
       requestedResourceIdentityHash: requestedTermsKey,
       finalResourceIdentityHash: sourceIdentityDigest(finalTermsUrl),
-      text: "Issuer Example Card terms. Get 10% cashback.",
+      text: "Issuer Example Rewards Card terms. Get 10% cashback.",
       contentHash: "b".repeat(64),
     }],
   });

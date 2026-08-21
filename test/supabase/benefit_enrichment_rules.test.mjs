@@ -471,6 +471,31 @@ test("keeps one concrete official-language benefit lane for every supported issu
   }
 });
 
+test("extracts quantified PNB reward wording without a marketing verb", async () => {
+  const proposals = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: SOURCE,
+      text:
+        "300+ reward points on 1st usage. 2X rewards points on retail merchandise.",
+    }],
+    "benefits-v6",
+    "00000000-0000-4000-8000-000000000123",
+  );
+
+  assert(
+    proposals.some((proposal) =>
+      proposal.valueType === "welcome_bonus" && proposal.value === 300
+    ),
+    "PNB first-usage welcome points were dropped",
+  );
+  assert(
+    proposals.some((proposal) =>
+      proposal.valueType === "reward_multiplier" && proposal.rate === 2
+    ),
+    "PNB rewards-points multiplier was dropped",
+  );
+});
+
 test("extracts fixed-value movie discounts without mistaking the discount for a cap", () => {
   // Covers issuer wording such as Kotak's monthly PVR ticket discount. The
   // approved contract must retain the discount amount and booking partner.

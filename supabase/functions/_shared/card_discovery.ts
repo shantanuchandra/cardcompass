@@ -203,6 +203,8 @@ export function isAdminEmail(
 
 function words(value: string): string[] {
   return value
+    .normalize("NFKC")
+    .replace(/\+(?!\s*plus\b)/gi, " plus ")
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
@@ -349,6 +351,7 @@ function stripTitleMarketing(value: string, issuer: string): string {
       /\s*[-–—:]\s*(?:best\s+entertainment(?:\s+credit\s+card)?|[0-9]+%\s+fuel\s+cashback|exclusive\s+rewards?\s*(?:&|and)\s*benefits?|benefits?\s*(?:&|and)\s*features?(?:\s*[-–—]\s*apply\s+now)?)\s*$/i,
       "",
     )
+    .replace(/(\b(?:credit\s+)?card)\s*[-–—:][\s\S]*$/i, "$1")
     .replace(/\s*[-–—:]\s*apply\s+for\b[\s\S]*$/i, "")
     .replace(/\s+with\s+unlimited\s+benefits\s*$/i, "")
     .trim();
@@ -449,7 +452,7 @@ function networkVariantMatches(
 function strongExpectedIdentity(value: string, issuer: string): boolean {
   const key = identityKey(value, issuer);
   const variant = networkVariantKey(value);
-  return key.length >= 4 &&
+  return key.length >= 3 &&
     (!weakIdentityAliases.has(key) ||
       (variant !== null && !variant.startsWith("tier:")) ||
       issuer === "American Express");
@@ -496,7 +499,7 @@ function identityFromLabel(
     .replace(/\s+/g, " ").trim();
   if (
     !/\bcard\b/i.test(rawProduct) || /\bdebit\b/i.test(rawProduct) ||
-    identityKey(rawProduct, issuer).length < 4
+    identityKey(rawProduct, issuer).length < 3
   ) return null;
   const withoutNetworkVariant = rawProduct.replace(
     /\b(?:visa|master\s*card|rupay|american\s+express|amex)\b/gi,
@@ -618,37 +621,76 @@ const bodyIdentityPrefixTokens = new Set([
 function targetBodyIdentityLabels(
   content: string,
   issuer: string,
+  expectedProducts: readonly string[] = [],
 ): string[] {
-  const visible = decodeHtmlText(
-    content.slice(0, 120_000)
-      .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
-      .replace(/<nav\b[\s\S]*?<\/nav>/gi, " ")
-      .replace(/<(?:title|h[1-2])\b[\s\S]*?<\/(?:title|h[1-2])>/gi, " "),
-  );
+  const expectedKeys = expectedProducts.map((product) =>
+    normalizedProduct(product, issuer)
+  ).filter(Boolean);
+  let bodyStart = 0;
+  if (expectedKeys.length > 0) {
+    for (
+      const match of content.matchAll(
+        /<(?:title|h1)\b[^>]*>([\s\S]*?)<\/(?:title|h1)>/gi,
+      )
+    ) {
+      const headingKey = normalizedProduct(
+        decodeHtmlText(match[1] ?? ""),
+        issuer,
+      );
+      if (
+        headingKey &&
+        expectedKeys.some((key) =>
+          headingKey === key || headingKey.includes(key) || key.includes(
+            headingKey,
+          )
+        )
+      ) {
+        bodyStart = match.index ?? 0;
+        break;
+      }
+    }
+  }
+  const visibleBlocks = content.slice(bodyStart, bodyStart + 120_000)
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<(?:nav|header|footer)\b[\s\S]*?<\/(?:nav|header|footer)>/gi, " ")
+    .replace(/<(?:title|h[1-2])\b[\s\S]*?<\/(?:title|h[1-2])>/gi, " ")
+    .replace(/<\/(?:a|article|aside|dd|div|dt|li|p|section|td|th|tr)>/gi, "\n")
+    .split(/\n+/)
+    .map((block) => decodeHtmlText(block))
+    .filter(Boolean);
   const labels: string[] = [];
-  for (
-    const match of visible.matchAll(
-      /\b((?:(?!card\b)[a-z0-9&'-]+\s+){0,6})(?:credit\s+)?card\b/gi,
-    )
-  ) {
-    const candidateWords = words(match[1] ?? "").slice(-7);
-    while (
-      candidateWords.length > 0 &&
-      bodyIdentityPrefixTokens.has(candidateWords[0])
-    ) candidateWords.shift();
-    if (
-      candidateWords.length === 0 ||
-      candidateWords.some((word) => relationshipCardLabels.has(word))
-    ) continue;
-    const label = `${candidateWords.join(" ")} Card`;
-    const key = identityKey(label, issuer);
-    if (
-      !key || relationshipCardLabels.has(key) ||
-      !strongExpectedIdentity(label, issuer)
-    ) continue;
-    labels.push(label);
-    if (labels.length === 16) break;
+  for (const visible of visibleBlocks) {
+    for (
+      const match of visible.matchAll(
+        /\b((?:(?!card\b)[a-z0-9&'-]+\s+){0,6})(?:credit\s+)?card\b/gi,
+      )
+    ) {
+      const trailing = visible.slice(
+        (match.index ?? 0) + String(match[0] ?? "").length,
+      ).slice(0, 160);
+      if (
+        !/\b(?:product|terms?|conditions?|fees?|charges?)\b/i
+          .test(trailing)
+      ) continue;
+      const candidateWords = words(match[1] ?? "").slice(-7);
+      while (
+        candidateWords.length > 0 &&
+        bodyIdentityPrefixTokens.has(candidateWords[0])
+      ) candidateWords.shift();
+      if (
+        candidateWords.length === 0 ||
+        candidateWords.some((word) => relationshipCardLabels.has(word))
+      ) continue;
+      const label = `${candidateWords.join(" ")} Card`;
+      const key = identityKey(label, issuer);
+      if (
+        !key || relationshipCardLabels.has(key) ||
+        !strongExpectedIdentity(label, issuer)
+      ) continue;
+      labels.push(label);
+      if (labels.length === 16) return labels;
+    }
   }
   return labels;
 }
@@ -661,15 +703,17 @@ export function assessOfficialCardIdentity(
 ): OfficialCardIdentityAssessment {
   const labels = strongIdentityLabels(content, issuer, contextUrl);
   if (expectedProducts.length > 0) {
-    labels.push(...targetBodyIdentityLabels(content, issuer));
+    labels.push(...targetBodyIdentityLabels(content, issuer, expectedProducts));
   }
-  const candidates = labels.map((label) => {
-    const identity = identityFromLabel(label, issuer)!;
-    return {
-      identity,
-      key: identityKey(identity.cardName, issuer),
-      networkKey: networkVariantKey(label),
-    };
+  const candidates = labels.flatMap((label) => {
+    const identity = identityFromLabel(label, issuer);
+    return identity
+      ? [{
+        identity,
+        key: identityKey(identity.cardName, issuer),
+        networkKey: networkVariantKey(label),
+      }]
+      : [];
   });
   for (const expected of expectedProducts) {
     if (!containsExpectedIdentityPhrase(content, expected, issuer)) continue;

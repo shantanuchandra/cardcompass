@@ -160,6 +160,100 @@ test("requires the official page title to match the exact statement variant", ()
   );
 });
 
+test("expected credit-card assessment ignores unrelated debit-card body labels", () => {
+  const assessment = cardDiscovery.assessOfficialCardIdentity(
+    "<h1>Zenith+ Credit Card</h1><p>Explore our Debit Card options.</p>",
+    "AU Small Finance Bank",
+    ["Zenith+"],
+    "https://www.au.bank.in/premium-banking/credit-cards/zenith-plus-credit-card",
+  );
+
+  assert.equal(assessment.status, "match");
+  assert.equal(assessment.identity?.cardName, "Zenith Plus");
+});
+
+test("superscript plus and written Plus identify one Zenith+ product", () => {
+  const assessment = cardDiscovery.assessOfficialCardIdentity(
+    `<title>Apply for Zenith⁺ Plus Metal Credit Card | AU Small Finance Bank</title>
+     <h1>Zenith⁺ Credit Card</h1>
+     <main><p>Earn reward points and enjoy lounge benefits.</p></main>`,
+    "AU Small Finance Bank",
+    ["Zenith+"],
+    "https://www.au.bank.in/premium-banking/credit-cards/zenith-plus-credit-card",
+  );
+
+  assert.equal(assessment.status, "match");
+  assert.equal(assessment.identity?.cardName, "Zenith Plus");
+  assert.deepEqual(assessment.candidateKeys, ["zenithplus"]);
+  assert.equal(
+    cardDiscovery.normalizedProduct("Zenith Credit Card", "AU Small Finance Bank"),
+    "zenith",
+  );
+  assert.equal(
+    cardDiscovery.normalizedProduct("Zenith+ Credit Card", "AU Small Finance Bank"),
+    "zenithplus",
+  );
+});
+
+test("target body identity does not join unrelated block text into a product", () => {
+  const assessment = cardDiscovery.assessOfficialCardIdentity(
+    `<h1>Amazon Pay ICICI Bank Credit Card</h1>
+     <p>Financial journey now</p><p>Finances with a Credit Card</p>
+     <p>Payments back</p><p>Payments close</p><p>Money transfer</p>
+     <p>Credit Card</p><p>Airtel Credit Card benefits</p>`,
+    "ICICI Bank",
+    ["Amazon Pay"],
+    "https://www.icici.bank.in/personal-banking/cards/credit-card/amazon-pay-credit-card",
+  );
+
+  assert.equal(assessment.status, "match");
+  assert.equal(assessment.identity?.cardName, "Amazon Pay");
+});
+
+test("expected product headings strip post-card marketing and apply calls", () => {
+  const cases = [
+    {
+      issuer: "Axis Bank",
+      product: "Ace",
+      html: "<h1>ACE Credit Card: 5% Cashback on Bills, Lounge Access & Dining Offers</h1>",
+      url: "https://www.axis.bank.in/cards/credit-card/axis-bank-ace-credit-card",
+      expected: "Ace",
+    },
+    {
+      issuer: "SBI Card",
+      product: "Air India Sbi Platinum Card",
+      html: "<h1>Air India SBI Platinum Card - Apply Now</h1>",
+      url: "https://www.sbicard.com/en/personal/credit-cards/air-india-sbi-platinum-card.html",
+      expected: "Air India Platinum",
+    },
+  ];
+
+  for (const item of cases) {
+    const assessment = cardDiscovery.assessOfficialCardIdentity(
+      item.html,
+      item.issuer,
+      [item.product],
+      item.url,
+    );
+    assert.equal(assessment.status, "match", item.html);
+    assert.equal(assessment.identity?.cardName, item.expected, item.html);
+  }
+});
+
+test("expected identity scans body conflicts from the target heading instead of global navigation", () => {
+  const globalNavigation =
+    "<p>Airtel Credit Card terms and fees navigation link.</p>".repeat(3_000);
+  const assessment = cardDiscovery.assessOfficialCardIdentity(
+    `${globalNavigation}<h1>ACE Credit Card</h1><p>ACE Credit Card terms and fees.</p>`,
+    "Axis Bank",
+    ["Ace"],
+    "https://www.axis.bank.in/cards/credit-card/axis-bank-ace-credit-card",
+  );
+
+  assert.equal(assessment.status, "match");
+  assert.equal(assessment.identity?.cardName, "Ace");
+});
+
 test("reconciles all strong product identities before accepting an exact card", () => {
   const headingConflict =
     "<title>Privilege Credit Card | Axis Bank</title><h1>Regalia Credit Card</h1>";

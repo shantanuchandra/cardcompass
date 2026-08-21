@@ -1037,7 +1037,7 @@ function parseRewards(text: string): ParsedFields | null {
 
 function parseRewardMultiplier(text: string): ParsedFields | null {
   const matched = text.match(
-    /\bearn\s+([0-9]+(?:\.\d+)?)\s*[x×]\s+reward\s+points?\b/i,
+    /\b(?:earn\s+)?([0-9]+(?:\.\d+)?)\s*[x×]\s+rewards?\s+points?\b/i,
   );
   if (!matched) return null;
   const multiplier = decimal(matched[1]);
@@ -1047,7 +1047,7 @@ function parseRewardMultiplier(text: string): ParsedFields | null {
     )?.[1],
   );
   const restriction = text.match(
-    /\breward\s+points?\s+on\s+(.+?)(?=\s*,?\s*(?:capp?ed|maximum|excluding|valid|until|per\b)|[.;]|$)/i,
+    /\brewards?\s+points?\s+on\s+(.+?)(?=\s*,?\s*(?:capp?ed|maximum|excluding|valid|until|per\b)|[.;]|$)/i,
   )?.[1];
   return {
     category: "points",
@@ -1067,32 +1067,34 @@ function parseRewardMultiplier(text: string): ParsedFields | null {
 
 function parseWelcomeBonus(text: string): ParsedFields | null {
   if (
-    !/\b(?:within\s+[0-9]+\s+days?|card\s+issuance|welcome|joining)\b/i.test(
-      text,
-    )
+    !/\b(?:within\s+[0-9]+\s+days?|card\s+issuance|welcome|joining|(?:1st|first)\s+usage)\b/i
+      .test(
+        text,
+      )
   ) {
     return null;
   }
   const matched = text.match(
-    /\b(?:get|earn|receive)\s+([0-9][0-9,]*(?:\.\d+)?)\s+(?:bonus\s+|welcome\s+)?reward\s+points?\b/i,
+    /\b(?:(?:get|earn|receive)\s+)?([0-9][0-9,]*(?:\.\d+)?)\+?\s+(?:bonus\s+|welcome\s+)?rewards?\s+points?\b/i,
   );
   if (!matched) return null;
   const thresholdText = text.match(
     /\bspends?\s+(?:of|above|over)\s+((?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d+)?\s*(?:lakh|lac|lacs|crore|crores)?)/i,
   )?.[1];
   const threshold = money(thresholdText ?? "");
-  if (threshold === undefined) return null;
+  const firstUsage = /\b(?:1st|first)\s+usage\b/i.test(text);
+  if (threshold === undefined && !firstUsage) return null;
   const value = decimal(matched[1]);
   const days = decimal(text.match(/\bwithin\s+([0-9]+)\s+days?\b/i)?.[1]);
   return {
     category: "points",
     valueType: "welcome_bonus",
     value,
-    threshold,
+    ...(threshold === undefined ? {} : { threshold }),
     valueConfig: {
       reward_type: "points",
       reward_points: value,
-      threshold_amount: threshold,
+      ...(threshold === undefined ? {} : { threshold_amount: threshold }),
       milestone_type: "welcome",
       ...(days === undefined ? {} : { qualification_days: days }),
     },
@@ -1885,7 +1887,9 @@ function parsedGroundedBenefits(
   return documents.flatMap((source) => {
     const document = { ...source, text: readableText(source.text) };
     const lines = document.text
-      .split(/(?:\r?\n|(?<=[!?])\s+|(?<=\.)\s+(?=[A-Z]))/)
+      .split(
+        /(?:\r?\n|(?<=[!?])\s+|(?<=\.)\s+(?=[A-Z])|(?<=\.)(?<!\brs\.)\s+(?=[0-9₹]))/i,
+      )
       .map((line) => line.trim())
       .filter(Boolean);
     return lines.flatMap((line, index) => {
