@@ -38,6 +38,26 @@ type EvalSchedulerDependencies = Readonly<{
   serviceRoleKey: string;
 }>;
 
+export function createAdminOperatorAuthClient(
+  request: Request,
+  supabaseUrl: string,
+  fallbackKey: string,
+  factory: (...args: any[]) => any = createClient,
+) {
+  return factory(
+    supabaseUrl,
+    request.headers.get("apikey") ?? fallbackKey,
+    {
+      global: {
+        headers: {
+          Authorization: request.headers.get("Authorization") ?? "",
+        },
+      },
+      auth: { autoRefreshToken: false, persistSession: false },
+    },
+  );
+}
+
 export function createEvalScheduler(deps: EvalSchedulerDependencies) {
   return async (runId: string): Promise<void> => {
     const task = (async () => {
@@ -106,17 +126,10 @@ export async function handleAdminOperator(
       ? await provided.authorize(request)
       : await requireAdmin(
         request,
-        (provided?.authDb ?? createClient(
+        (provided?.authDb ?? createAdminOperatorAuthClient(
+          request,
           Deno.env.get("SUPABASE_URL") ?? "",
-          request.headers.get("apikey") ?? Deno.env.get("SUPABASE_ANON_KEY") ??
-            "",
-          {
-            global: {
-              headers: {
-                Authorization: request.headers.get("Authorization") ?? "",
-              },
-            },
-          },
+          Deno.env.get("SUPABASE_ANON_KEY") ?? "",
         )) as AdminAuthClient,
         db as never,
       );
