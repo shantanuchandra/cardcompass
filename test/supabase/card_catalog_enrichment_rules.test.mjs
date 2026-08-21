@@ -149,6 +149,29 @@ test("catalog normalization remains bound to the exact target card after redirec
   }
 });
 
+test("catalog identity uses the fetched product URL to ignore unrelated header products", () => {
+  const html = `
+    <header>
+      <h1>Control Center Credit Card</h1>
+      <h2>Dining Credit Card</h2>
+      <h2>Travel Credit Card</h2>
+    </header>
+    <main>
+      <h1>IndianOil Axis Bank Credit Card</h1>
+      <p>Get 4% value back on fuel purchases.</p>
+    </main>
+  `;
+  assert.equal(
+    requireCatalogPageIdentity(
+      html,
+      "Axis Bank",
+      "IndianOil",
+      "https://www.axis.bank.in/cards/credit-card/indianoil-axis-bank-credit-card",
+    ).cardName,
+    "Indian Oil",
+  );
+});
+
 test("catalog enrichment passes an invocation deadline to its official fetch", async () => {
   const source = await readFile(catalogEntrypoint, "utf8");
   const call = source.match(

@@ -27,8 +27,37 @@ import {
 type UntypedSupabaseClient = any;
 const CATALOG_FETCH_DEADLINE_MS = 25_000;
 
+type ServiceTokenValidator = (token: string) => Promise<boolean>;
+
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
+}
+
+async function validateHostedServiceToken(token: string): Promise<boolean> {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  if (!supabaseUrl || !token) return false;
+  const callerDb = createClient(supabaseUrl, token, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data, error } = await callerDb.from("admin_runtime_controls")
+    .select("control_key")
+    .eq("control_key", "benefit_enrichment_scheduled")
+    .limit(1);
+  return !error && Array.isArray(data) && data.length === 1;
+}
+
+export async function catalogServiceAuthorized(
+  request: Request,
+  environmentServiceKey: string,
+  validateToken: ServiceTokenValidator = validateHostedServiceToken,
+): Promise<boolean> {
+  const authorization = request.headers.get("Authorization") ?? "";
+  const token = authorization.startsWith("Bearer ")
+    ? authorization.slice("Bearer ".length).trim()
+    : "";
+  if (!token) return false;
+  if (environmentServiceKey && token === environmentServiceKey) return true;
+  return await validateToken(token);
 }
 
 async function sha256Hex(value: string): Promise<string> {
@@ -212,6 +241,7 @@ export async function processCatalogEnrichmentJob(
       page.text,
       claimed.issuer,
       String(catalog.card_name ?? ""),
+      page.finalUrl,
     );
     const normalized = normalizeOfficialCatalogPage(page.text, page.finalUrl);
     const publicationEvidence = {
@@ -424,10 +454,7 @@ if (import.meta.main) {
       return json({ error: "method_not_allowed" }, 405);
     }
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-    if (
-      !serviceKey ||
-      request.headers.get("Authorization") !== `Bearer ${serviceKey}`
-    ) {
+    if (!await catalogServiceAuthorized(request, serviceKey)) {
       return json({ error: "authentication_required" }, 401);
     }
     try {

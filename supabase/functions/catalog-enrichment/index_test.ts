@@ -1,8 +1,38 @@
-import { processCatalogEnrichmentJob, queueConflictReview } from "./index.ts";
+import {
+  catalogServiceAuthorized,
+  processCatalogEnrichmentJob,
+  queueConflictReview,
+} from "./index.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
+
+Deno.test("catalog service authorization accepts a rotated service token but rejects user tokens", async () => {
+  const rotated = new Request("https://example.test/catalog", {
+    headers: { authorization: "Bearer rotated-service-token" },
+  });
+  assert(
+    await catalogServiceAuthorized(
+      rotated,
+      "environment-service-token",
+      async (token: string) => token === "rotated-service-token",
+    ),
+    "valid rotated service token was rejected",
+  );
+
+  const user = new Request("https://example.test/catalog", {
+    headers: { authorization: "Bearer authenticated-user-token" },
+  });
+  assert(
+    !await catalogServiceAuthorized(
+      user,
+      "environment-service-token",
+      async () => false,
+    ),
+    "authenticated user token was accepted as service-role authority",
+  );
+});
 
 function terminalJobDb(job: Record<string, unknown>) {
   let updates = 0;

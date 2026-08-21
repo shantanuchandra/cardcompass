@@ -792,11 +792,13 @@ export function exactOfficialPageIdentity(
   html: string,
   issuer: string,
   expectedProduct: string,
+  contextUrl?: string,
 ): CanonicalCardIdentity | null {
   const assessment = assessOfficialCardIdentity(
     html,
     issuer,
     [expectedProduct],
+    contextUrl,
   );
   return assessment.status === "match" ? assessment.identity : null;
 }

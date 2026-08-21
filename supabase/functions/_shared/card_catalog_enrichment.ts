@@ -37,8 +37,14 @@ export function requireCatalogPageIdentity(
   html: string,
   issuer: string,
   expectedCardName: string,
+  sourceUrl?: string,
 ): CanonicalCardIdentity {
-  const identity = exactOfficialPageIdentity(html, issuer, expectedCardName);
+  const identity = exactOfficialPageIdentity(
+    html,
+    issuer,
+    expectedCardName,
+    sourceUrl,
+  );
   if (!identity) throw new Error("identity_mismatch");
   return identity;
 }
