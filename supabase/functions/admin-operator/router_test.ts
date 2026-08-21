@@ -1,8 +1,38 @@
 import { assertEquals } from "@std/assert";
-import { handleAdminOperator } from "./index.ts";
+import { createAdminOperatorAuthClient, handleAdminOperator } from "./index.ts";
 import { AdminHttpError } from "./types.ts";
 
 const utf8 = new TextEncoder();
+
+Deno.test("gateway auth client is stateless inside Edge", () => {
+  let invocation: unknown[] = [];
+  const request = new Request("http://local", {
+    headers: {
+      authorization: "Bearer user-jwt",
+      apikey: "request-anon-key",
+    },
+  });
+
+  const client = createAdminOperatorAuthClient(
+    request,
+    "https://project.supabase.co",
+    "fallback-anon-key",
+    (...args: unknown[]) => {
+      invocation = args;
+      return { marker: "client" };
+    },
+  );
+
+  assertEquals(client, { marker: "client" });
+  assertEquals(invocation, [
+    "https://project.supabase.co",
+    "request-anon-key",
+    {
+      global: { headers: { Authorization: "Bearer user-jwt" } },
+      auth: { autoRefreshToken: false, persistSession: false },
+    },
+  ]);
+});
 
 function dependencies(overrides: Record<string, unknown> = {}) {
   return {

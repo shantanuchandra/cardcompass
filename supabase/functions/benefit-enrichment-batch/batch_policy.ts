@@ -1,6 +1,9 @@
-export const MAX_BATCH_SIZE = 5;
-export const LEASE_SECONDS = 15 * 60;
+import { BENEFIT_PUBLICATION_LIMITS } from "../_shared/benefit_publication_limits.ts";
+
+export const MAX_BATCH_SIZE = 1;
+export const LEASE_SECONDS = 5 * 60;
 export const RETRY_SCHEDULE_MINUTES = [15, 60, 240] as const;
+export const MAX_PILOT_REVIEW_COUNT = BENEFIT_PUBLICATION_LIMITS.MAX_DECISIONS;
 
 export type RunMode = "pilot" | "scheduled" | "manual";
 export type PilotStatus = "not_started" | "running" | "blocked" | "passed";
@@ -47,13 +50,32 @@ export type PilotCandidate = {
 
 export type PilotJob = {
   id: string;
+  issuer?: string;
+  pilotProfile?: string;
   runMode: RunMode;
+  pilotQualified: boolean;
   status: string;
   quarantineReason: string | null;
+  safetyMetadataValid: boolean;
   unsafeMutationCount: number;
   idempotencyPassed: boolean;
   evidencePassed: boolean;
   rawBodyStored: boolean;
+  successfulNoChange: boolean;
+  reviewMetadataPresent: boolean;
+  reviewMetadataMalformed: boolean;
+  reviewStatus: "approved" | "rejected" | null;
+  approvedCount: number | null;
+  retainedCount: number | null;
+  retiredCount: number | null;
+  rejectedCount: number | null;
+  computedEvidenceValid?: boolean;
+  deterministicReplayPassed?: boolean;
+  sideEffectProofPassed?: boolean;
+  crawlComplete?: boolean;
+  suppressedRemovalCount?: number;
+  sourceBindingValid?: boolean;
+  conflictCount?: number;
 };
 
 function issuerKey(issuer: string): string {
@@ -72,12 +94,22 @@ export type BenefitEnrichmentQueueInput = {
 };
 
 type EnrichmentQueueClient = {
-  from(table: string): {
+  from?(table: string): {
     upsert(
-      row: Record<string, unknown> | Record<string, unknown>[],
+      rows: Record<string, unknown> | Record<string, unknown>[],
       options: { onConflict: string; ignoreDuplicates: boolean },
-    ): PromiseLike<{ error: unknown }>;
+    ): {
+      select(
+        columns: string,
+      ): PromiseLike<
+        { data: Array<Record<string, unknown>> | null; error: unknown }
+      >;
+    };
   };
+  rpc?(
+    name: string,
+    args: Record<string, unknown>,
+  ): PromiseLike<{ data?: unknown; error: unknown }>;
 };
 
 export function buildJobKey(
@@ -97,15 +129,15 @@ export function assertBenefitParserVersion(parserVersion: string): void {
 export async function enqueueBenefitEnrichmentJob(
   db: EnrichmentQueueClient,
   input: BenefitEnrichmentQueueInput,
-): Promise<void> {
-  await enqueueBenefitEnrichmentJobs(db, [input]);
+): Promise<number> {
+  return await enqueueBenefitEnrichmentJobs(db, [input]);
 }
 
 export async function enqueueBenefitEnrichmentJobs(
   db: EnrichmentQueueClient,
   inputs: readonly BenefitEnrichmentQueueInput[],
-): Promise<void> {
-  if (inputs.length === 0) return;
+): Promise<number> {
+  if (inputs.length === 0) return 0;
   const updatedAt = new Date().toISOString();
   const rows = inputs.map((input) => {
     assertBenefitParserVersion(input.parserVersion);
@@ -127,11 +159,35 @@ export async function enqueueBenefitEnrichmentJobs(
       updated_at: updatedAt,
     };
   });
-  const { error } = await db.from("card_catalog_enrichment_jobs").upsert(
-    rows,
-    { onConflict: "job_key", ignoreDuplicates: true },
-  );
+  const v6Count =
+    inputs.filter((input) =>
+      input.parserVersion.trim().toLowerCase() === "benefits-v6"
+    ).length;
+  if (v6Count !== 0 && v6Count !== inputs.length) {
+    throw new Error("mixed_enrichment_enqueue");
+  }
+  if (v6Count === 0) {
+    if (!db.from) throw new Error("legacy_enrichment_enqueue_unavailable");
+    const { data, error } = await db.from("card_catalog_enrichment_jobs")
+      .upsert(rows, { onConflict: "job_key", ignoreDuplicates: true })
+      .select("id");
+    if (error) throw error;
+    if (!Array.isArray(data) || data.length > inputs.length) {
+      throw new Error("invalid_enrichment_enqueue_count");
+    }
+    return data.length;
+  }
+  if (!db.rpc) throw new Error("v6_enrichment_enqueue_unavailable");
+  const { data, error } = await db.rpc("enqueue_card_benefit_enrichment_jobs", {
+    _jobs: rows,
+  });
   if (error) throw error;
+  if (
+    !Number.isInteger(data) || Number(data) < 0 || Number(data) > inputs.length
+  ) {
+    throw new Error("invalid_enrichment_enqueue_count");
+  }
+  return Number(data);
 }
 
 export async function runSequentially<T, R>(
@@ -295,12 +351,46 @@ export function selectPilotCandidates<T extends PilotCandidate>(
     : [];
 }
 
+function completedPilotReviewBlocker(job: PilotJob): string | null {
+  const reviewCounts = [
+    job.approvedCount,
+    job.retainedCount,
+    job.retiredCount,
+    job.rejectedCount,
+  ];
+  const hasValidCounts = reviewCounts.every((count) =>
+    Number.isInteger(count) && Number(count) >= 0 &&
+    Number(count) <= MAX_PILOT_REVIEW_COUNT
+  );
+  const positiveReviewActions = Number(job.approvedCount) +
+    Number(job.retainedCount) + Number(job.retiredCount);
+  const totalReviewActions = positiveReviewActions + Number(job.rejectedCount);
+  if (job.successfulNoChange && !job.reviewMetadataPresent) return null;
+  if (
+    job.reviewMetadataMalformed || !hasValidCounts ||
+    !Number.isSafeInteger(positiveReviewActions) ||
+    !Number.isSafeInteger(totalReviewActions) ||
+    totalReviewActions > MAX_PILOT_REVIEW_COUNT || job.reviewStatus === null
+  ) {
+    return "pilot_review_metadata_invalid";
+  }
+  if (job.reviewStatus === "rejected") return "pilot_review_rejected";
+  if (Number(job.rejectedCount) > 0) {
+    return "pilot_review_partially_rejected";
+  }
+  return positiveReviewActions < 1 ? "pilot_review_metadata_invalid" : null;
+}
+
 export function evaluatePilotGate(jobs: readonly PilotJob[]): {
   status: PilotStatus;
   scheduledClaimAllowed: boolean;
   blockers: string[];
 } {
-  const pilot = jobs.filter((job) => job.runMode === "pilot");
+  const activePilot = jobs.filter((job) => job.runMode === "pilot");
+  const promotedPilot = jobs.filter((job) =>
+    job.runMode === "scheduled" && job.pilotQualified
+  );
+  const pilot = [...activePilot, ...promotedPilot];
   if (pilot.length === 0) {
     return {
       status: "not_started",
@@ -315,24 +405,116 @@ export function evaluatePilotGate(jobs: readonly PilotJob[]): {
       blockers: ["pilot_incomplete"],
     };
   }
-  const blockers: string[] = [];
+  const requiredProfiles = new Set([
+    "straightforward",
+    "redirect_or_js",
+    "terms_linked",
+    "known_invalid",
+    "additional_valid",
+  ]);
+  const pilotProfiles = pilot.map((job) => job.pilotProfile);
+  const cohortBlockers = [
+    ...(pilotProfiles.length === requiredProfiles.size &&
+        pilotProfiles.every((profile) =>
+          typeof profile === "string" && requiredProfiles.has(profile)
+        ) && new Set(pilotProfiles).size === requiredProfiles.size
+      ? []
+      : ["pilot_profile_coverage"]),
+    ...(new Set(
+        pilot.map((job) => issuerKey(String(job.issuer ?? ""))).filter(
+          Boolean,
+        ),
+      ).size >= 3
+      ? []
+      : ["pilot_issuer_diversity"]),
+  ];
+  if (promotedPilot.length > 0) {
+    const exactAtomicHandoff = promotedPilot.length === 5 &&
+      activePilot.length === 0;
+    if (!exactAtomicHandoff) {
+      return {
+        status: "blocked",
+        scheduledClaimAllowed: false,
+        blockers: ["pilot_job_count"],
+      };
+    }
+    const reviewBlockers = promotedPilot.flatMap((job) => {
+      const blocker = !job.safetyMetadataValid
+        ? "pilot_safety_metadata_invalid"
+        : completedPilotReviewBlocker(job);
+      return [
+        ...(blocker ? [blocker] : []),
+        ...(job.computedEvidenceValid !== true
+          ? ["pilot_computed_evidence_invalid"]
+          : []),
+        ...(job.deterministicReplayPassed !== true
+          ? ["deterministic_replay_failed"]
+          : []),
+        ...(job.sideEffectProofPassed !== true
+          ? ["side_effect_proof_failed"]
+          : []),
+        ...(job.crawlComplete !== true ? ["pilot_crawl_incomplete"] : []),
+        ...(job.suppressedRemovalCount !== 0
+          ? ["pilot_suppressed_removals"]
+          : []),
+        ...(job.sourceBindingValid !== true ? ["pilot_source_mismatch"] : []),
+        ...(job.conflictCount !== 0 ? ["pilot_conflict_unresolved"] : []),
+        ...(job.unsafeMutationCount !== 0 ? ["unsafe_mutation"] : []),
+        ...(job.rawBodyStored ? ["raw_body_stored"] : []),
+      ];
+    });
+    const blockers = [...new Set([...cohortBlockers, ...reviewBlockers])];
+    return blockers.length === 0
+      ? { status: "passed", scheduledClaimAllowed: true, blockers: [] }
+      : { status: "blocked", scheduledClaimAllowed: false, blockers };
+  }
+  const blockers: string[] = [...cohortBlockers];
   if (pilot.length !== 5) blockers.push("pilot_job_count");
   const hasNonTerminal = pilot.some((job) =>
-    job.status !== "staged" && job.status !== "quarantined"
+    job.status !== "completed" && job.status !== "quarantined"
   );
   for (const job of pilot) {
-    const terminal = job.status === "staged" || job.status === "quarantined";
+    const terminal = job.status === "staged" || job.status === "completed" ||
+      job.status === "quarantined";
     if (job.status === "quarantined" && !job.quarantineReason) {
       blockers.push("unjustified_quarantine");
+    }
+    if (job.status === "quarantined") {
+      blockers.push("pilot_negative_fixture");
     }
     if (job.status === "failed") blockers.push("pilot_failed");
     if (job.status === "review_required") {
       blockers.push("pilot_review_required");
     }
+    if (!job.safetyMetadataValid) {
+      blockers.push("pilot_safety_metadata_invalid");
+    }
+    if (job.computedEvidenceValid !== true) {
+      blockers.push("pilot_computed_evidence_invalid");
+    }
+    if (job.deterministicReplayPassed !== true) {
+      blockers.push("deterministic_replay_failed");
+    }
+    if (job.sideEffectProofPassed !== true) {
+      blockers.push("side_effect_proof_failed");
+    }
+    if (job.crawlComplete !== true) blockers.push("pilot_crawl_incomplete");
+    if (job.suppressedRemovalCount !== 0) {
+      blockers.push("pilot_suppressed_removals");
+    }
+    if (job.sourceBindingValid !== true) blockers.push("pilot_source_mismatch");
+    if (job.conflictCount !== 0) blockers.push("pilot_conflict_unresolved");
     if (job.unsafeMutationCount !== 0) blockers.push("unsafe_mutation");
     if (terminal && !job.idempotencyPassed) blockers.push("idempotency_failed");
-    if (job.status === "staged" && !job.evidencePassed) {
+    if (
+      (job.status === "staged" || job.status === "completed") &&
+      !job.evidencePassed
+    ) {
       blockers.push("evidence_failed");
+    }
+    if (job.status === "completed") {
+      const reviewBlocker = completedPilotReviewBlocker(job);
+      if (reviewBlocker) blockers.push(reviewBlocker);
     }
     if (job.rawBodyStored) blockers.push("raw_body_stored");
   }

@@ -376,11 +376,21 @@ void main() {
             targetId: identityId,
             observedUpdatedAt: observed,
             payload: const {
-              'proposed_fields': {'card_name': 'Corrected'},
+              'proposed_fields': {
+                'card_name': 'Corrected',
+                'joining_fee': 500,
+                'annual_fee': 500,
+                'apr': 42,
+              },
             },
           ),
           extras: const {
-            'proposed_fields': {'card_name': 'Corrected'},
+            'proposed_fields': {
+              'card_name': 'Corrected',
+              'joining_fee': 500,
+              'annual_fee': 500,
+              'apr': 42,
+            },
           },
         ),
         (
@@ -537,6 +547,15 @@ void main() {
       targetId: identityId,
       observedUpdatedAt: observed,
       payload: const {'merge_card_id': identityId},
+    ),
+    CardReviewAction(
+      lane: CardReviewLane.identity,
+      operation: CardReviewOperation.editApprove,
+      targetId: identityId,
+      observedUpdatedAt: observed,
+      payload: const {
+        'proposed_fields': {'official_url': 'https://issuer.example/card'},
+      },
     ),
     CardReviewAction(
       lane: CardReviewLane.identity,

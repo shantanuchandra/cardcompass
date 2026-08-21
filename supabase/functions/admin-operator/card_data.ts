@@ -69,10 +69,20 @@ const proposedFieldNames = [
   "name",
   "network",
   "card_type",
+  "joining_fee",
   "annual_fee",
+  "apr",
   "currency",
   "official_url",
   "image_url",
+] as const;
+const editableProposedFieldNames = [
+  "cardName",
+  "card_name",
+  "network",
+  "joining_fee",
+  "annual_fee",
+  "apr",
 ] as const;
 
 function invalidRequest(): never {
@@ -151,16 +161,22 @@ function statusFilter(value: unknown): string | null {
 
 function safeProposedFields(value: unknown, strict = false): JsonRecord {
   const row = asRecord(value) ?? {};
+  const accepted = strict ? editableProposedFieldNames : proposedFieldNames;
   if (
     strict &&
     Object.keys(row).some((key) =>
-      !proposedFieldNames.includes(key as typeof proposedFieldNames[number])
+      !editableProposedFieldNames.includes(
+        key as typeof editableProposedFieldNames[number],
+      )
     )
   ) {
     invalidRequest();
   }
   const output: JsonRecord = {};
-  for (const field of proposedFieldNames) {
+  if (!strict && typeof row.cardName === "string") {
+    output.card_name = row.cardName.slice(0, 500);
+  }
+  for (const field of accepted) {
     const item = row[field];
     if (field.endsWith("_url")) {
       const url = safeUrl(item);
@@ -314,8 +330,10 @@ function safeEvidence(value: unknown): JsonRecord {
 function presentCandidate(value: unknown): JsonRecord {
   const row = asRecord(value) ?? {};
   const output: JsonRecord = {};
+  const id = safeText(row.id ?? row.card_id, 100);
+  if (id !== null) output.id = id;
   for (
-    const field of ["id", "bank", "issuer", "card_name", "network"] as const
+    const field of ["bank", "issuer", "card_name", "network"] as const
   ) {
     const text = safeText(row[field], field === "card_name" ? 300 : 200);
     if (text !== null) output[field] = text;
@@ -325,21 +343,35 @@ function presentCandidate(value: unknown): JsonRecord {
   return output;
 }
 
+function validationCode(value: unknown): JsonRecord | null {
+  const code = typeof value === "string"
+    ? safeText(value, 100)
+    : safeText(asRecord(value)?.code, 100);
+  return code === null ? null : { code };
+}
+
 function presentIdentityRow(value: unknown) {
   const row = asRecord(value) ?? {};
   const discovery = asRecord(row.card_discovery_jobs) ?? {};
+  const proposed = safeProposedFields(row.proposed_fields);
   return {
     id: safeText(row.id, 100),
     status: safeText(row.status, 50),
-    proposed_fields: safeProposedFields(row.proposed_fields),
+    proposed_fields: proposed,
+    card: {
+      bank: safeText(proposed.bank ?? proposed.issuer ?? discovery.issuer, 200),
+      card_name: safeText(
+        proposed.card_name ?? proposed.name ?? discovery.proposed_product,
+        300,
+      ),
+    },
     source_evidence: safeEvidence(row.source_evidence),
     existing_candidates: Array.isArray(row.existing_candidates)
       ? row.existing_candidates.slice(0, MAX_LIST_ITEMS).map(presentCandidate)
       : [],
     validation_warnings: Array.isArray(row.validation_warnings)
-      ? row.validation_warnings.slice(0, MAX_LIST_ITEMS).map((warning) => ({
-        code: safeText(asRecord(warning)?.code, 100),
-      }))
+      ? row.validation_warnings.slice(0, MAX_LIST_ITEMS)
+        .map(validationCode).filter((warning) => warning !== null)
       : [],
     confidence: safeNumber(row.confidence),
     review_reason: safeText(row.review_reason, 500),
@@ -462,7 +494,7 @@ function presentBenefitDiff(value: unknown): JsonRecord {
 
 function validationCodes(value: unknown): JsonRecord[] {
   return (Array.isArray(value) ? value : []).slice(0, MAX_LIST_ITEMS)
-    .map((item) => ({ code: safeText(asRecord(item)?.code, 100) }));
+    .map(validationCode).filter((item) => item !== null);
 }
 
 function presentAdminBenefitJob(value: unknown): JsonRecord {

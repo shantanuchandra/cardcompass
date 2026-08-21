@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:cardcompass/core/router/app_router.dart';
+import 'package:cardcompass/core/providers/supabase_provider.dart';
 import 'package:cardcompass/features/admin2/card_data/card_data_section.dart';
 import 'package:cardcompass/features/admin2/data/admin_operator_api.dart';
 import 'package:cardcompass/features/admin2/data/admin_operator_repository.dart';
@@ -6,6 +9,8 @@ import 'package:cardcompass/features/admin2/inbox/action_inbox_section.dart';
 import 'package:cardcompass/features/admin2/models/admin_access.dart';
 import 'package:cardcompass/features/admin2/providers/admin_access_provider.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
+import 'package:cardcompass/features/auth/screens/splash_screen.dart';
+import 'package:cardcompass/features/dashboard/providers/gmail_sync_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,6 +19,21 @@ import 'package:go_router/go_router.dart';
 class _AuthenticatedAuthNotifier extends AuthNotifier {
   @override
   Future<AuthStatus> build() async => AuthStatus.authenticated;
+}
+
+late Completer<AuthStatus> _deferredAuthStatus;
+
+class _DeferredAuthNotifier extends AuthNotifier {
+  @override
+  Future<AuthStatus> build() => _deferredAuthStatus.future;
+}
+
+class _IdleGmailSyncNotifier extends GmailSyncNotifier {
+  @override
+  Future<GmailSyncResult?> build() async => null;
+
+  @override
+  Future<void> initializeQueuedRecovery() async {}
 }
 
 class _RouterAdminApi implements AdminOperatorApi {
@@ -66,6 +86,45 @@ Future<(ProviderContainer, GoRouter)> _pumpRouter(
 }
 
 void main() {
+  testWidgets(
+    'root replaces its initial splash after authentication resolves',
+    (tester) async {
+      _deferredAuthStatus = Completer<AuthStatus>();
+      final container = ProviderContainer(
+        overrides: [
+          authNotifierProvider.overrideWith(_DeferredAuthNotifier.new),
+          currentUserProvider.overrideWithValue(null),
+          adminEntryVisibilityProvider.overrideWithValue(
+            const AsyncValue.data(false),
+          ),
+          gmailSyncProvider.overrideWith(_IdleGmailSyncNotifier.new),
+        ],
+      );
+      final router = container.read(routerProvider);
+      addTearDown(router.dispose);
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pump();
+      expect(find.byType(SplashScreen), findsOneWidget);
+
+      _deferredAuthStatus.complete(AuthStatus.authenticated);
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(SplashScreen), findsNothing);
+      expect(find.byType(AppBottomNav), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 2));
+    },
+  );
+
   testWidgets('legacy catalog route opens the selected Card Data workspace', (
     tester,
   ) async {

@@ -1,22 +1,39 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.110.2";
 import {
   allowedOfficialUrl,
   canonicalCardIdentity,
-  canonicalOfficialUrl,
+  discoveryObservationVersionKey,
   evaluateAutomaticCatalogGate,
   exactOfficialPageIdentity,
   normalizedProduct,
+  officialCardIdentityFromHtml,
   officialDomainsForIssuer,
   publicDiscoveryResult,
   publicReasonCode,
   rankOfficialUrls,
-  reviewRequiredJobPatch,
+  sanitizeDiscoveryEvidence,
   sanitizeEvidence,
+  selectBoundCatalogResourceIdentity,
   selectSubmittedUrlIdentity,
+  terminalDiscoveryStatus,
 } from "../_shared/card_discovery.ts";
-import { fetchOfficialIssuerResource } from "../_shared/official_issuer_fetch.ts";
-import { enqueueBenefitEnrichmentJob } from "../benefit-enrichment-batch/batch_policy.ts";
+import {
+  approvedStoredQueryParameters,
+  createOfficialRobotsCache,
+  fetchOfficialIssuerResource,
+  type OfficialFetchResult,
+  type OfficialRobotsCache,
+  requireOfficialFetchBody,
+} from "../_shared/official_issuer_fetch.ts";
+import {
+  canonicalPublicationResource,
+  cardDiscontinuationEvidence,
+  publicationFieldsFromFetch,
+  publishReviewedCardIdentity,
+  semanticProductEnvelopeHash,
+  stageCatalogIdentityReview,
+} from "../_shared/catalog_identity_publication.ts";
 import {
   ActiveProfileError,
   requireActiveProfile,
@@ -24,6 +41,13 @@ import {
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 type UntypedSupabaseClient = any;
+const DISCOVERY_FETCH_DEADLINE_MS = 25_000;
+const DISCOVERY_MUTABLE_STATUSES = [
+  "queued",
+  "discovering",
+  "failed",
+  "review_required",
+];
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -91,7 +115,7 @@ function safeEvidence(raw: unknown): SafeEvidence {
     short("filename_product"),
     short("pdf_header_product"),
   ].filter((item): item is string => Boolean(item));
-  return {
+  return sanitizeDiscoveryEvidence({
     issuer,
     subject_product: short("subject_product"),
     filename_product: short("filename_product"),
@@ -114,7 +138,7 @@ function safeEvidence(raw: unknown): SafeEvidence {
     confidence: typeof value.confidence === "number"
       ? Math.max(0, Math.min(1, value.confidence))
       : 0,
-  };
+  }) as SafeEvidence;
 }
 
 async function sha256(value: string): Promise<string> {
@@ -131,96 +155,450 @@ async function sha256Bytes(value: Uint8Array): Promise<string> {
     .join("");
 }
 
-async function findCatalogCardByUrlHashes(
+async function findCatalogCardsByUrlHash(
   db: UntypedSupabaseClient,
-  hashes: string[],
-): Promise<string | null> {
-  const unique = [...new Set(hashes.filter(Boolean))];
-  if (unique.length === 0) return null;
-  const { data: key, error: keyError } = await db.from("card_catalog_url_keys")
+  hash: string,
+): Promise<string[]> {
+  if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error("identity_conflict");
+  const { data: keys, error: keyError } = await db.from("card_catalog_url_keys")
     .select("card_id")
-    .in("url_hash", unique)
-    .limit(1)
-    .maybeSingle();
+    .eq("url_hash", hash);
   if (keyError) throw keyError;
-  if (key?.card_id) return key.card_id;
-  const filter = unique.flatMap((hash) => [
-    `submitted_url_hash.eq.${hash}`,
-    `final_url_hash.eq.${hash}`,
-  ]).join(",");
   const { data, error } = await db.from("card_catalog_provenance")
     .select("card_id")
-    .or(filter)
-    .limit(1)
-    .maybeSingle();
+    .or(`submitted_url_hash.eq.${hash},final_url_hash.eq.${hash}`);
   if (error) throw error;
-  return data?.card_id ?? null;
+  return [
+    ...new Set(
+      [
+        ...((keys ?? []) as Array<{ card_id?: string }>),
+        ...((data ?? []) as Array<{ card_id?: string }>),
+      ].map((row) => row.card_id).filter((id): id is string => Boolean(id)),
+    ),
+  ];
+}
+
+async function loadCatalogUrlIdentityCandidates(
+  db: UntypedSupabaseClient,
+  cardIds: string[],
+): Promise<
+  Array<{
+    cardId: string;
+    issuer: string;
+    cardName: string;
+    network: string | null;
+    aliases: string[];
+    cardType: string;
+  }>
+> {
+  if (cardIds.length === 0) return [];
+  const { data: cards, error: cardError } = await db.from("card_catalog")
+    .select("id, bank, card_name, network, card_type")
+    .in("id", cardIds);
+  if (cardError) throw cardError;
+  const { data: aliases, error: aliasError } = await db.from(
+    "card_catalog_aliases",
+  )
+    .select("card_id, alias")
+    .in("card_id", cardIds);
+  if (aliasError) throw aliasError;
+  return ((cards ?? []) as Array<{
+    id: string;
+    bank: string;
+    card_name: string;
+    network: string | null;
+    card_type: string;
+  }>).map(
+    (card) => ({
+      cardId: card.id,
+      issuer: card.bank,
+      cardName: card.card_name,
+      network: card.network,
+      cardType: card.card_type,
+      aliases: ((aliases ?? []) as Array<{ card_id: string; alias: string }>)
+        .filter((alias) => alias.card_id === card.id)
+        .map((alias) => alias.alias),
+    }),
+  );
 }
 
 async function upsertDiscoveryJob(
   db: UntypedSupabaseClient,
   userId: string,
   evidence: SafeEvidence,
+  submittedUrl?: string,
 ) {
   const product = evidence.product_signals?.[0] ?? "unknown";
+  const submittedResource = submittedUrl
+    ? await canonicalPublicationResource(evidence.issuer, submittedUrl)
+    : null;
   const dedupeKey = await sha256(
     `${evidence.issuer}:${
       normalizedProduct(product, evidence.issuer) || "unknown"
-    }`,
+    }:${submittedResource?.urlHash ?? "product-discovery"}`,
   );
-  const { data, error } = await db.from("card_discovery_jobs").upsert({
+  const { data: existing, error: existingError } = await db
+    .from("card_discovery_jobs")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("dedupe_key", dedupeKey)
+    .maybeSingle();
+  if (existingError) throw existingError;
+  if (existing && terminalDiscoveryStatus(existing.status)) return existing;
+  if (existing) return existing;
+  const payload = {
     user_id: userId,
     issuer: evidence.issuer,
     proposed_product: product === "unknown" ? null : product,
-    evidence,
+    evidence: submittedResource
+      ? {
+        ...evidence,
+        submitted_url: submittedResource.canonicalUrl,
+        submitted_url_hash: submittedResource.urlHash,
+      }
+      : evidence,
     dedupe_key: dedupeKey,
     updated_at: new Date().toISOString(),
-  }, { onConflict: "user_id,dedupe_key", ignoreDuplicates: false })
+  };
+  const { data, error } = await db.from("card_discovery_jobs").insert(payload)
     .select("*")
-    .single();
-  if (error) throw error;
+    .maybeSingle();
+  if (error && error.code !== "23505") throw error;
+  if (!data) {
+    const { data: raced, error: racedError } = await db
+      .from("card_discovery_jobs").select("*")
+      .eq("user_id", userId).eq("dedupe_key", dedupeKey).single();
+    if (racedError || !raced) throw racedError ?? error;
+    return raced;
+  }
   return data;
 }
 
-async function markResolved(
+async function submittedRequestAnchor(
+  evidence: SafeEvidence,
+  submittedUrl: string,
+): Promise<{ key: string; canonicalUrl: string; urlHash: string }> {
+  const product = evidence.product_signals?.[0] ?? "unknown";
+  const resource = await canonicalPublicationResource(
+    evidence.issuer,
+    submittedUrl,
+  );
+  return {
+    key: await sha256(
+      `${evidence.issuer}:${
+        normalizedProduct(product, evidence.issuer) || "unknown"
+      }:${resource.urlHash}`,
+    ),
+    canonicalUrl: resource.canonicalUrl,
+    urlHash: resource.urlHash,
+  };
+}
+
+export async function findPriorSubmittedRequestJob(
   db: UntypedSupabaseClient,
-  jobId: string,
-  cardId: string,
-) {
-  const { data, error } = await db.from("card_discovery_jobs").update({
-    status: "resolved",
-    resolved_card_id: cardId,
-    failure_category: null,
-    next_retry_at: null,
-    updated_at: new Date().toISOString(),
-  }).eq("id", jobId).select("*").single();
-  if (error) throw error;
-  return data;
+  userId: string,
+  anchorKey: string,
+): Promise<Record<string, any> | null> {
+  const terminal = await db.from("card_discovery_jobs").select("*")
+    .eq("user_id", userId)
+    .contains("evidence", { request_anchor_key: anchorKey })
+    .in("status", ["resolved", "rejected"])
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (terminal.error) throw terminal.error;
+  if (terminal.data) return terminal.data;
+  const latest = await db.from("card_discovery_jobs").select("*")
+    .eq("user_id", userId)
+    .contains("evidence", { request_anchor_key: anchorKey })
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (latest.error) throw latest.error;
+  if (latest.data) return latest.data;
+  // Compatibility with pre-round-four stable anchors whose dedupe key was
+  // later rewritten by versioning.
+  const legacyTerminal = await db.from("card_discovery_jobs").select("*")
+    .eq("user_id", userId).eq("dedupe_key", anchorKey)
+    .in("status", ["resolved", "rejected"]).maybeSingle();
+  if (legacyTerminal.error) throw legacyTerminal.error;
+  if (legacyTerminal.data) return legacyTerminal.data;
+  const legacy = await db.from("card_discovery_jobs").select("*")
+    .eq("user_id", userId).eq("dedupe_key", anchorKey).maybeSingle();
+  if (legacy.error) throw legacy.error;
+  return legacy.data ?? null;
 }
 
-async function processSubmittedUrl(
+async function observeExistingCard(
   db: UntypedSupabaseClient,
   job: Record<string, any>,
+  cardId: string,
+  publicationEvidence: Record<string, unknown>,
+  sourceKind: string,
+) {
+  if (job.review_item_id || job.status === "review_required") {
+    throw new Error("existing_observation_requires_review");
+  }
+  const { data: card, error: cardError } = await db.from("card_catalog")
+    .select("id, bank, card_name, network, card_type")
+    .eq("id", cardId)
+    .single();
+  if (
+    cardError || !card ||
+    String(card.card_type ?? "").trim().toLowerCase() !== "credit" ||
+    String(card.bank ?? "").trim().toLowerCase() !==
+      String(job.issuer ?? "").trim().toLowerCase()
+  ) throw cardError ?? new Error("identity_conflict");
+  const published = await publishReviewedCardIdentity(db, {
+    discoveryJobId: job.id,
+    action: "observe_existing",
+    reviewedFields: {
+      card_id: card.id,
+      issuer: card.bank,
+      cardName: card.card_name,
+      network: card.network,
+      ...publicationEvidence,
+      source_type: "official_html",
+      source_observation: {
+        kind: sourceKind.slice(0, 64),
+        identity_validated: true,
+        source_status: publicationEvidence.source_status ?? null,
+      },
+    },
+    parserVersion: "benefits-v6",
+  });
+  if (
+    published.cardId !== card.id || published.jobId !== job.id ||
+    published.resultingStatus !== "resolved"
+  ) throw new Error("invalid_catalog_publication_outcome");
+  const { data, error } = await db.from("card_discovery_jobs")
+    .select("*").eq("id", job.id).single();
+  if (error || !data) throw error ?? new Error("discovery_job_not_found");
+  return data;
+}
+
+async function resolveBoundIdentityOrReview(
+  db: UntypedSupabaseClient,
+  job: Record<string, any>,
+  content: string,
+  publicationEvidence: Record<string, unknown>,
+  submittedHash: string,
+  finalHash: string,
+  sourceKind: string,
+  legacyHashes: { submitted: string; final: string } | null = null,
+): Promise<{ cardId: string | null; reviewed: boolean }> {
+  const labeledHashes = [
+    ["submitted", submittedHash],
+    ["final", finalHash],
+    ...(legacyHashes
+      ? [["legacy_submitted", legacyHashes.submitted], [
+        "legacy_final",
+        legacyHashes.final,
+      ]]
+      : []),
+  ] as Array<[string, string]>;
+  const idsByHash = new Map<string, string[]>();
+  await Promise.all([...new Set(labeledHashes.map(([, hash]) => hash))].map(
+    async (hash) =>
+      idsByHash.set(hash, await findCatalogCardsByUrlHash(db, hash)),
+  ));
+  try {
+    const cardId = await selectBoundCatalogResourceIdentity({
+      resourceIdentityHashes: labeledHashes.map(([, hash]) => hash),
+      issuer: job.issuer,
+      content,
+      lookupCardIds: async (hash) => idsByHash.get(hash) ?? [],
+      loadCandidates: (ids) => loadCatalogUrlIdentityCandidates(db, ids),
+    });
+    return { cardId, reviewed: false };
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "identity_conflict") {
+      throw error;
+    }
+    const boundIds = [...new Set([...idsByHash.values()].flat())];
+    const candidates = await loadCatalogUrlIdentityCandidates(db, boundIds);
+    const observed = officialCardIdentityFromHtml(content, job.issuer) ??
+      canonicalCardIdentity(
+        job.issuer,
+        String(job.proposed_product ?? "Unknown"),
+      );
+    const boundResourceIdentities = Object.fromEntries(labeledHashes.map(
+      ([label, hash]) => [label, { hash, card_ids: idsByHash.get(hash) ?? [] }],
+    ));
+    await putInReview(
+      db,
+      job,
+      { ...observed, ...publicationEvidence },
+      {
+        ...publicationEvidence,
+        source_observation: { kind: sourceKind, identity_validated: false },
+        bound_resource_identities: boundResourceIdentities,
+      },
+      ["conflicting_url_identity"],
+      Number(job.evidence?.confidence ?? 0),
+      candidates,
+    );
+    return { cardId: null, reviewed: true };
+  }
+}
+
+type SubmittedUrlObservation = {
+  page: OfficialFetchResult & { text: string; contentHash: string };
+  submittedHash: string;
+  finalHash: string;
+  legacySubmittedHash: string;
+  legacyFinalHash: string;
+  publicationEvidence: Record<string, unknown>;
+};
+
+async function fetchSubmittedUrlObservation(
+  job: Record<string, any>,
   rawUrl: string,
+  deadlineAt: number,
+): Promise<SubmittedUrlObservation> {
+  const robotsCache = createOfficialRobotsCache();
+  const page = requireOfficialFetchBody(
+    await fetchOfficialIssuerResource({
+      issuer: job.issuer,
+      url: rawUrl,
+      enforceRobots: true,
+      deadlineAt,
+      allowedQueryParameters: approvedStoredQueryParameters(rawUrl),
+      robotsCache,
+    }),
+  );
+  const legacySubmittedHash = await sha256(page.submittedUrl);
+  const submittedHash = page.sourceIdentityHash ?? legacySubmittedHash;
+  const finalUrl = page.canonicalUrl;
+  const legacyFinalHash = await sha256(finalUrl);
+  const finalHash = page.finalResourceIdentityHash ?? legacyFinalHash;
+  const publicationEvidence = {
+    official_url: page.finalResourceUrl ?? page.finalUrl,
+    ...publicationFieldsFromFetch({
+      ...page,
+      sourceIdentityHash: submittedHash,
+      finalResourceIdentityHash: finalHash,
+    }),
+  };
+  return {
+    page,
+    submittedHash,
+    finalHash,
+    legacySubmittedHash,
+    legacyFinalHash,
+    publicationEvidence,
+  };
+}
+
+export async function versionSubmittedObservationJob(
+  db: UntypedSupabaseClient,
+  job: Record<string, any>,
+  observation: SubmittedUrlObservation,
+  requestAnchorKey: string,
+  semanticProductHash: string,
+): Promise<any> {
+  const evidence = job.evidence as SafeEvidence;
+  const versionKey = await discoveryObservationVersionKey({
+    issuer: String(job.issuer ?? evidence.issuer),
+    product: String(
+      job.proposed_product ?? evidence.product_signals?.[0] ?? "unknown",
+    ),
+    submittedUrlHash: observation.submittedHash,
+    finalUrlHash: observation.finalHash,
+    contentHash: semanticProductHash,
+    retrievedAt: observation.page.retrievedAt,
+  });
+  const existing = await db.from("card_discovery_jobs").select("*")
+    .eq("user_id", job.user_id).eq("dedupe_key", versionKey).maybeSingle();
+  if (existing.error) throw existing.error;
+  if (existing.data) return existing.data;
+
+  const now = new Date().toISOString();
+  const versionEvidence = {
+    ...evidence,
+    ...observation.publicationEvidence,
+    request_anchor_key: requestAnchorKey,
+    semantic_product_hash: semanticProductHash,
+    observation_version_key: versionKey,
+  };
+  const inserted = await db.from("card_discovery_jobs").insert({
+    user_id: job.user_id,
+    discovery_source: job.discovery_source ?? "statement",
+    issuer: job.issuer,
+    proposed_product: job.proposed_product,
+    evidence: versionEvidence,
+    dedupe_key: versionKey,
+    status: "queued",
+    updated_at: now,
+  }).select("*").maybeSingle();
+  if (inserted.error && inserted.error.code !== "23505") throw inserted.error;
+  if (inserted.data) return inserted.data;
+  const raced = await db.from("card_discovery_jobs").select("*")
+    .eq("user_id", job.user_id).eq("dedupe_key", versionKey).single();
+  if (raced.error || !raced.data) throw raced.error ?? inserted.error;
+  return raced.data;
+}
+
+async function claimSubmittedObservationJob(
+  db: UntypedSupabaseClient,
+  job: Record<string, any>,
+): Promise<{ job: Record<string, any>; claimed: boolean }> {
+  if (terminalDiscoveryStatus(job.status)) return { job, claimed: false };
+  const now = new Date().toISOString();
+  let update = db.from("card_discovery_jobs").update({
+    status: "discovering",
+    attempt_count: Number(job.attempt_count ?? 0) + 1,
+    updated_at: now,
+  }).eq("id", job.id).eq("user_id", job.user_id)
+    .in("status", ["queued", "failed", "review_required"]);
+  update = job.updated_at ? update.eq("updated_at", job.updated_at) : update;
+  const claimed = await update.select("*").maybeSingle();
+  if (claimed.error) throw claimed.error;
+  if (claimed.data) return { job: claimed.data, claimed: true };
+  const current = await db.from("card_discovery_jobs").select("*")
+    .eq("id", job.id).eq("user_id", job.user_id).single();
+  if (current.error || !current.data) throw current.error;
+  return { job: current.data, claimed: false };
+}
+
+async function processSubmittedUrlObservation(
+  db: UntypedSupabaseClient,
+  job: Record<string, any>,
+  observation: SubmittedUrlObservation,
 ) {
   const evidence = job.evidence as SafeEvidence;
-  const submittedUrl = canonicalOfficialUrl(job.issuer, rawUrl);
-  const submittedHash = await sha256(submittedUrl);
-  const knownSubmitted = await findCatalogCardByUrlHashes(db, [submittedHash]);
-  if (knownSubmitted) return markResolved(db, job.id, knownSubmitted);
-
-  const page = await fetchOfficialIssuerResource({
-    issuer: job.issuer,
-    url: submittedUrl,
-  });
+  const {
+    page,
+    submittedHash,
+    finalHash,
+    legacySubmittedHash,
+    legacyFinalHash,
+    publicationEvidence,
+  } = observation;
   const finalUrl = page.canonicalUrl;
-  const finalHash = await sha256(finalUrl);
-  const knownFinal = await findCatalogCardByUrlHashes(
+  const opaqueBinding = await resolveBoundIdentityOrReview(
     db,
-    [submittedHash, finalHash],
+    job,
+    page.text,
+    publicationEvidence,
+    submittedHash,
+    finalHash,
+    "bound_resource_identity_conflict",
+    { submitted: legacySubmittedHash, final: legacyFinalHash },
   );
-  if (knownFinal) return markResolved(db, job.id, knownFinal);
-
+  if (opaqueBinding.reviewed) {
+    return (await db.from("card_discovery_jobs").select("*").eq("id", job.id)
+      .single()).data;
+  }
+  if (opaqueBinding.cardId) {
+    return observeExistingCard(
+      db,
+      job,
+      opaqueBinding.cardId,
+      publicationEvidence,
+      "bound_official_card_observation",
+    );
+  }
   if (page.contentType === "application/pdf") {
     const product = evidence.product_signals?.find((value) =>
       normalizedProduct(value, job.issuer).length >= 4
@@ -232,11 +610,10 @@ async function processSubmittedUrl(
     await putInReview(
       db,
       job,
-      { ...canonical, official_url: finalUrl },
+      { ...canonical, ...publicationEvidence },
       {
         evidence,
-        official_url: finalUrl,
-        content_hash: page.contentHash,
+        ...publicationEvidence,
         source_type: "official_pdf",
       },
       ["official_pdf_requires_review"],
@@ -275,11 +652,10 @@ async function processSubmittedUrl(
     await putInReview(
       db,
       job,
-      { ...officialIdentity, official_url: finalUrl },
+      { ...officialIdentity, ...publicationEvidence },
       {
         evidence,
-        official_url: finalUrl,
-        content_hash: page.contentHash,
+        ...publicationEvidence,
         excerpt: sanitizeEvidence(pageText),
       },
       gate.reasons,
@@ -289,64 +665,31 @@ async function processSubmittedUrl(
       .single()).data;
   }
 
-  const { data: cardId, error: resolveError } = await db.rpc(
-    "resolve_card_catalog_identity",
+  await putInReview(
+    db,
+    job,
     {
-      _issuer: job.issuer,
-      _card_name: officialIdentity.cardName,
-      _network: canonical.network ?? evidence.network ?? null,
-      _source_url: finalUrl,
-      _submitted_url_hash: submittedHash,
-      _final_url_hash: finalHash,
-    },
-  );
-  if (resolveError || !cardId) {
-    throw resolveError ?? new Error("identity_conflict");
-  }
-
-  for (
-    const alias of [...canonical.aliases, ...(evidence.product_signals ?? [])]
-  ) {
-    const normalizedAlias = normalizedProduct(alias, job.issuer);
-    if (normalizedAlias.length < 2) continue;
-    const { error } = await db.from("card_catalog_aliases").upsert({
-      card_id: cardId,
-      discovery_job_id: job.id,
-      alias,
-      normalized_alias: normalizedAlias,
-      evidence_type: "issuer_page",
-      source_url: finalUrl,
-    }, { onConflict: "card_id,normalized_alias" });
-    if (error) throw error;
-  }
-  const { error: provenanceError } = await db.from("card_catalog_provenance")
-    .upsert({
-      card_id: cardId,
-      source_url: finalUrl,
-      canonical_submitted_url: submittedUrl,
-      canonical_final_url: finalUrl,
-      submitted_url_hash: submittedHash,
-      final_url_hash: finalHash,
+      ...officialIdentity,
+      network: officialIdentity.network ?? canonical.network ??
+        evidence.network ?? null,
+      aliases: [...canonical.aliases, ...(evidence.product_signals ?? [])],
+      ...publicationEvidence,
       source_type: "official_html",
-      content_hash: page.contentHash,
-      extracted_fields: canonical,
-      source_evidence: { excerpt: sanitizeEvidence(pageText) },
-      validation_version: "card-identity-v2",
-      confidence: evidence.confidence ?? 0,
-      approval_method: "automatic",
-      retrieved_at: new Date().toISOString(),
-    }, { onConflict: "card_id,source_url,content_hash" });
-  if (provenanceError) throw provenanceError;
-
-  await enqueueBenefitEnrichmentJob(db, {
-    cardId,
-    issuer: job.issuer,
-    canonicalUrl: finalUrl,
-    finalUrlHash: finalHash,
-    contentHash: page.contentHash,
-    parserVersion: "benefits-v5",
-  });
-  return markResolved(db, job.id, cardId);
+      source_observation: {
+        status: page.status,
+        kind: "submitted_statement_url",
+      },
+    },
+    {
+      evidence,
+      ...publicationEvidence,
+      excerpt: sanitizeEvidence(pageText),
+    },
+    ["authenticated_source_requires_admin_review"],
+    evidence.confidence ?? 0,
+  );
+  return (await db.from("card_discovery_jobs").select("*").eq("id", job.id)
+    .single()).data;
 }
 
 function htmlText(html: string): string {
@@ -363,6 +706,8 @@ function htmlText(html: string): string {
 async function discoverOfficialUrl(
   issuer: string,
   product: string,
+  deadlineAt: number,
+  robotsCache: OfficialRobotsCache,
 ): Promise<string | null> {
   const normalized = normalizedProduct(product, issuer);
   const known = knownOfficialSources[issuer]?.[normalized];
@@ -372,15 +717,28 @@ async function discoverOfficialUrl(
   for (const domain of officialDomainsForIssuer(issuer)) {
     for (const sitemapPath of ["/sitemap.xml", "/sitemap_index.xml"]) {
       try {
-        const response = await fetchOfficialIssuerResource({
-          issuer,
-          url: `https://${domain}${sitemapPath}`,
-          contentPurpose: "sitemap",
-        });
+        const response = requireOfficialFetchBody(
+          await fetchOfficialIssuerResource({
+            issuer,
+            url: `https://${domain}${sitemapPath}`,
+            contentPurpose: "sitemap",
+            enforceRobots: true,
+            deadlineAt,
+            allowedQueryParameters: approvedStoredQueryParameters(
+              `https://${domain}${sitemapPath}`,
+            ),
+            robotsCache,
+          }),
+        );
         urls.push(
           ...Array.from(
             response.text.matchAll(/<loc>\s*([^<]+)\s*<\/loc>/gi),
-            (m) => m[1],
+            (m) =>
+              m[1]
+                .replace(/&amp;/gi, "&")
+                .replace(/&#38;/gi, "&")
+                .replace(/&quot;|&#34;/gi, '"')
+                .trim(),
           ),
         );
       } catch {
@@ -400,91 +758,106 @@ async function putInReview(
   warnings: string[],
   confidence: number,
   existingCandidates: unknown[] = [],
-  preserveTerminal = false,
 ) {
-  if (preserveTerminal) {
-    const { data: currentReview, error: currentReviewError } = await db
-      .from("card_catalog_review_queue")
-      .select("id, status")
-      .eq("discovery_job_id", job.id)
-      .maybeSingle();
-    if (currentReviewError) throw currentReviewError;
+  const reviewIssuer = typeof job.issuer === "string" ? job.issuer : "";
+  if (!reviewIssuer) throw new Error("issuer_mismatch");
+  const rawProposedFields = proposedFields;
+  const rawSourceEvidence = sourceEvidence;
+  proposedFields = sanitizeDiscoveryEvidence(proposedFields) as Record<
+    string,
+    unknown
+  >;
+  sourceEvidence = sanitizeDiscoveryEvidence(sourceEvidence) as Record<
+    string,
+    unknown
+  >;
+  const restoreResourceIdentity = async (
+    raw: Record<string, unknown>,
+    sanitized: Record<string, unknown>,
+  ) => {
+    for (const prefix of ["submitted", "final"] as const) {
+      const rawUrl = raw[`${prefix}_url`];
+      if (typeof rawUrl !== "string") continue;
+      const resource = await canonicalPublicationResource(reviewIssuer, rawUrl);
+      const rawHash = raw[`${prefix}_url_hash`] ??
+        raw[`${prefix}_resource_identity_hash`];
+      if (
+        typeof rawHash !== "string" ||
+        rawHash.toLowerCase() !== resource.urlHash
+      ) throw new Error("identity_conflict");
+      sanitized[`${prefix}_url`] = resource.canonicalUrl;
+      sanitized[`${prefix}_url_hash`] = resource.urlHash;
+    }
     if (
-      currentReview &&
-      ["approved", "merged", "rejected"].includes(currentReview.status)
-    ) {
-      return;
-    }
-
-    let review = currentReview;
-    if (!review) {
-      const { data, error } = await db.from("card_catalog_review_queue")
-        .insert({
-          discovery_job_id: job.id,
-          proposed_fields: proposedFields,
-          source_evidence: sourceEvidence,
-          existing_candidates: existingCandidates,
-          validation_warnings: warnings,
-          confidence,
-          status: "pending",
-          updated_at: new Date().toISOString(),
-        })
-        .select("id, status")
-        .single();
-      if (!error) {
-        review = data;
-      } else {
-        const { data: racedReview, error: racedReviewError } = await db
-          .from("card_catalog_review_queue")
-          .select("id, status")
-          .eq("discovery_job_id", job.id)
-          .maybeSingle();
-        if (racedReviewError || !racedReview) throw error;
-        if (["approved", "merged", "rejected"].includes(racedReview.status)) {
-          return;
-        }
-        review = racedReview;
-      }
-    }
-    const { error: updateError } = await db.from("card_discovery_jobs").update(
-      reviewRequiredJobPatch(review.id, new Date().toISOString()),
-    ).eq("id", job.id).in("status", [
-      "queued",
-      "discovering",
-      "failed",
-      "review_required",
-    ]);
-    if (updateError) throw updateError;
-    return;
-  }
-
-  const { data: review, error } = await db.from("card_catalog_review_queue")
-    .upsert({
-      discovery_job_id: job.id,
-      proposed_fields: proposedFields,
-      source_evidence: sourceEvidence,
-      existing_candidates: existingCandidates,
-      validation_warnings: warnings,
-      confidence,
-      status: "pending",
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "discovery_job_id" })
-    .select("id")
-    .single();
-  if (error) throw error;
-  await db.from("card_discovery_jobs").update(
-    reviewRequiredJobPatch(review.id, new Date().toISOString()),
-  ).eq("id", job.id);
+      typeof raw.content_hash === "string" &&
+      /^[0-9a-f]{64}$/i.test(raw.content_hash)
+    ) sanitized.content_hash = raw.content_hash.toLowerCase();
+    if (
+      typeof raw.retrieved_at === "string" &&
+      /^\d{4}-\d{2}-\d{2}T/.test(raw.retrieved_at)
+    ) sanitized.retrieved_at = raw.retrieved_at.slice(0, 40);
+    if (
+      Number.isInteger(raw.source_status) && Number(raw.source_status) >= 100 &&
+      Number(raw.source_status) <= 599
+    ) sanitized.source_status = raw.source_status;
+  };
+  await restoreResourceIdentity(rawProposedFields, proposedFields);
+  await restoreResourceIdentity(rawSourceEvidence, sourceEvidence);
+  existingCandidates = sanitizeDiscoveryEvidence(
+    existingCandidates,
+  ) as unknown[];
+  const semanticHash = await semanticProductEnvelopeHash({
+    issuer: proposedFields.issuer ?? proposedFields.bank ?? reviewIssuer,
+    cardName: proposedFields.cardName ?? proposedFields.card_name ??
+      job.proposed_product ?? null,
+    network: proposedFields.network ?? null,
+    annual_fee: proposedFields.annual_fee ?? null,
+    joining_fee: proposedFields.joining_fee ?? null,
+    apr: proposedFields.apr ?? null,
+    suggested_action: proposedFields.suggested_action ?? null,
+    source_observation: proposedFields.source_observation ??
+      sourceEvidence.source_observation ?? null,
+    warnings,
+  });
+  const staged = await stageCatalogIdentityReview(db, {
+    discoveryJobId: String(job.id),
+    discoverySource: job.discovery_source === "issuer_crawl"
+      ? "issuer_crawl"
+      : "statement",
+    userId: typeof job.user_id === "string" ? job.user_id : null,
+    issuer: reviewIssuer,
+    proposedProduct: typeof job.proposed_product === "string"
+      ? job.proposed_product
+      : null,
+    dedupeKey: String(job.dedupe_key),
+    semanticHash,
+    proposedFields,
+    sourceEvidence: { ...sourceEvidence, semantic_product_hash: semanticHash },
+    existingCandidates: existingCandidates as Array<Record<string, unknown>>,
+    validationWarnings: warnings.slice(0, 32),
+    confidence: Math.max(0, Math.min(1, confidence)),
+    expectedJobStatus: typeof job.status === "string" ? job.status : null,
+    expectedJobUpdatedAt: typeof job.updated_at === "string"
+      ? job.updated_at
+      : null,
+  });
+  if (
+    staged.jobId !== String(job.id) ||
+    !["review_required", "resolved", "rejected"].includes(
+      staged.resultingStatus,
+    )
+  ) throw new Error("invalid_catalog_review_stage_outcome");
 }
 
 async function processDiscoveryJob(
   db: UntypedSupabaseClient,
   jobId: string,
+  deadlineAt = Date.now() + DISCOVERY_FETCH_DEADLINE_MS,
 ) {
   const { data: rawJob, error } = await db.from("card_discovery_jobs")
     .select("*").eq("id", jobId).single();
   if (error || !rawJob) return;
-  const job = rawJob as Record<string, any>;
+  let job = rawJob as Record<string, any>;
   const evidence = job.evidence as SafeEvidence;
   if (job.discovery_source === "issuer_crawl") {
     if (["resolved", "rejected"].includes(job.status)) return;
@@ -519,7 +892,6 @@ async function processDiscoveryJob(
       warnings,
       evidence.confidence ?? 0,
       existingCandidates,
-      true,
     );
     return;
   }
@@ -531,17 +903,23 @@ async function processDiscoveryJob(
     return;
   }
 
-  await db.from("card_discovery_jobs").update({
+  const claimed = await db.from("card_discovery_jobs").update({
     status: "discovering",
     attempt_count: Number(job.attempt_count ?? 0) + 1,
     updated_at: new Date().toISOString(),
-  }).eq("id", jobId);
+  }).eq("id", jobId).in("status", ["queued", "failed"])
+    .eq("updated_at", job.updated_at).select("*").maybeSingle();
+  if (claimed.error || !claimed.data) return;
+  job = claimed.data;
 
   try {
     const canonical = canonicalCardIdentity(job.issuer, product);
+    const robotsCache = createOfficialRobotsCache();
     const officialUrl = await discoverOfficialUrl(
       job.issuer,
       canonical.cardName,
+      deadlineAt,
+      robotsCache,
     );
     if (!officialUrl) {
       await putInReview(db, job, canonical, { evidence }, [
@@ -549,10 +927,28 @@ async function processDiscoveryJob(
       ], evidence.confidence ?? 0);
       return;
     }
-    const page = await fetchOfficialIssuerResource({
-      issuer: job.issuer,
-      url: officialUrl,
-    });
+    const page = requireOfficialFetchBody(
+      await fetchOfficialIssuerResource({
+        issuer: job.issuer,
+        url: officialUrl,
+        enforceRobots: true,
+        deadlineAt,
+        allowedQueryParameters: approvedStoredQueryParameters(officialUrl),
+        robotsCache,
+      }),
+    );
+    const submittedHash = page.sourceIdentityHash ??
+      await sha256(page.submittedUrl);
+    const finalHash = page.finalResourceIdentityHash ??
+      await sha256(page.canonicalUrl);
+    const publicationEvidence = {
+      official_url: page.finalResourceUrl ?? page.finalUrl,
+      ...publicationFieldsFromFetch({
+        ...page,
+        sourceIdentityHash: submittedHash,
+        finalResourceIdentityHash: finalHash,
+      }),
+    };
     if (page.contentType === "application/pdf") {
       await putInReview(
         db,
@@ -560,8 +956,7 @@ async function processDiscoveryJob(
         canonical,
         {
           evidence,
-          official_url: page.finalUrl,
-          content_hash: page.contentHash,
+          ...publicationEvidence,
           source_type: "official_pdf",
         },
         ["official_pdf_requires_review"],
@@ -579,11 +974,10 @@ async function processDiscoveryJob(
       await putInReview(
         db,
         job,
-        { ...canonical, official_url: page.finalUrl },
+        { ...canonical, ...publicationEvidence },
         {
           evidence,
-          official_url: page.finalUrl,
-          content_hash: page.contentHash,
+          ...publicationEvidence,
         },
         ["official_product_not_found"],
         evidence.confidence ?? 0,
@@ -591,11 +985,32 @@ async function processDiscoveryJob(
       return;
     }
     const officialProduct = officialIdentity.cardName;
+    const bound = await resolveBoundIdentityOrReview(
+      db,
+      job,
+      page.text,
+      publicationEvidence,
+      submittedHash,
+      finalHash,
+      "discovered_bound_resource_identity_conflict",
+    );
+    if (bound.reviewed) return;
+    if (bound.cardId) {
+      await observeExistingCard(
+        db,
+        job,
+        bound.cardId,
+        publicationEvidence,
+        "discovered_bound_official_card_observation",
+      );
+      return;
+    }
 
     const { data: catalogRows, error: catalogError } = await db
       .from("card_catalog")
-      .select("id, bank, card_name, network")
+      .select("id, bank, card_name, network, card_type")
       .ilike("bank", job.issuer)
+      .ilike("card_type", "credit")
       .eq("is_discontinued", false);
     if (catalogError) throw catalogError;
     const existing = (catalogRows ?? []).filter((
@@ -617,11 +1032,10 @@ async function processDiscoveryJob(
       await putInReview(
         db,
         job,
-        { ...officialIdentity, official_url: page.finalUrl },
+        { ...officialIdentity, ...publicationEvidence },
         {
           evidence,
-          official_url: page.finalUrl,
-          content_hash: page.contentHash,
+          ...publicationEvidence,
           excerpt: sanitizeEvidence(pageText),
         },
         gate.reasons,
@@ -631,56 +1045,36 @@ async function processDiscoveryJob(
       return;
     }
 
-    let cardId = existing[0]?.id as string | undefined;
-    if (!cardId) {
-      const { data: card, error: insertError } = await db.from("card_catalog")
-        .insert({
-          bank: officialIdentity.issuer,
-          card_name: officialIdentity.cardName,
-          network: officialIdentity.network ?? canonical.network ??
-            evidence.network ?? null,
-          card_type: "credit",
-          card_url: page.finalUrl,
-        }).select("id").single();
-      if (insertError) throw insertError;
-      cardId = card.id;
-    }
-    for (
-      const alias of [
-        ...officialIdentity.aliases,
-        ...canonical.aliases,
-        ...(evidence.product_signals ?? []),
-      ]
-    ) {
-      await db.from("card_catalog_aliases").upsert({
-        card_id: cardId,
-        alias,
-        normalized_alias: normalizedProduct(alias, job.issuer),
-        evidence_type: "issuer_page",
-        source_url: page.finalUrl,
-      }, { onConflict: "card_id,normalized_alias" });
-    }
-    await db.from("card_catalog_provenance").upsert({
-      card_id: cardId,
-      source_url: page.finalUrl,
-      source_type: "official_html",
-      content_hash: page.contentHash,
-      extracted_fields: officialIdentity,
-      source_evidence: { excerpt: sanitizeEvidence(pageText) },
-      validation_version: "card-identity-v1",
-      confidence: evidence.confidence ?? 0,
-      approval_method: "automatic",
-      retrieved_at: new Date().toISOString(),
-    }, { onConflict: "card_id,source_url,content_hash" });
-    await db.from("card_discovery_jobs").update({
-      status: "resolved",
-      resolved_card_id: cardId,
-      failure_category: null,
-      next_retry_at: null,
-      updated_at: new Date().toISOString(),
-    }).eq("id", jobId);
+    await putInReview(
+      db,
+      job,
+      {
+        ...officialIdentity,
+        network: officialIdentity.network ?? canonical.network ??
+          evidence.network ?? null,
+        aliases: [
+          ...officialIdentity.aliases,
+          ...canonical.aliases,
+          ...(evidence.product_signals ?? []),
+        ],
+        ...publicationEvidence,
+        source_type: "official_html",
+        source_observation: {
+          status: page.status,
+          kind: "statement_discovery",
+        },
+      },
+      {
+        evidence,
+        ...publicationEvidence,
+        excerpt: sanitizeEvidence(pageText),
+      },
+      ["authenticated_source_requires_admin_review"],
+      evidence.confidence ?? 0,
+      existing,
+    );
   } catch (error) {
-    const attempt = Number(job.attempt_count ?? 0) + 1;
+    const attempt = Number(job.attempt_count ?? 1);
     const failure = error instanceof Error
       ? error.message.slice(0, 120)
       : "discovery_failed";
@@ -696,17 +1090,19 @@ async function processDiscoveryJob(
       );
       return;
     }
-    await db.from("card_discovery_jobs").update({
+    const failed = await db.from("card_discovery_jobs").update({
       status: "failed",
       failure_category: failure,
       next_retry_at: new Date(Date.now() + Math.min(60, 2 ** attempt) * 60_000)
         .toISOString(),
       updated_at: new Date().toISOString(),
-    }).eq("id", jobId);
+    }).eq("id", jobId).eq("status", "discovering")
+      .eq("updated_at", job.updated_at).select("id").maybeSingle();
+    if (failed.error) throw failed.error;
   }
 }
 
-serve(async (request) => {
+export const handleRequest = async (request: Request): Promise<Response> => {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -738,6 +1134,7 @@ serve(async (request) => {
   }
 
   try {
+    const invocationDeadlineAt = Date.now() + DISCOVERY_FETCH_DEADLINE_MS;
     const body = await request.json();
     const action = body.action;
     if (action === "resolve_url") {
@@ -747,29 +1144,114 @@ serve(async (request) => {
       ) {
         return json({ error: "invalid_url", reason_code: "invalid_url" }, 400);
       }
-      const job = await upsertDiscoveryJob(db, user.id, evidence);
+      const anchor = await submittedRequestAnchor(evidence, body.source_url);
+      const priorJob = await findPriorSubmittedRequestJob(
+        db,
+        user.id,
+        anchor.key,
+      );
+      const fetchContext = {
+        id: "unpersisted-request-anchor",
+        user_id: user.id,
+        discovery_source: "statement",
+        issuer: evidence.issuer,
+        proposed_product: evidence.product_signals?.[0] ?? null,
+        evidence: {
+          ...evidence,
+          request_anchor_key: anchor.key,
+          submitted_url: anchor.canonicalUrl,
+          submitted_url_hash: anchor.urlHash,
+        },
+      };
+      let job: Record<string, any> = priorJob ?? fetchContext;
       try {
-        const result = await processSubmittedUrl(db, job, body.source_url);
+        const observation = await fetchSubmittedUrlObservation(
+          fetchContext,
+          body.source_url,
+          invocationDeadlineAt,
+        );
+        const observedIdentity = observation.page.contentType ===
+            "application/pdf"
+          ? null
+          : officialCardIdentityFromHtml(
+            observation.page.text,
+            evidence.issuer,
+          );
+        const lifecycleEvidence = observedIdentity
+          ? cardDiscontinuationEvidence(
+            observation.page.text,
+            evidence.issuer,
+            observedIdentity.cardName,
+          )
+          : { explicit: false, matchedExcerpt: null };
+        const semanticProductHash = await semanticProductEnvelopeHash({
+          issuer: evidence.issuer,
+          cardName: observedIdentity?.cardName ??
+            evidence.product_signals?.[0] ?? null,
+          network: observedIdentity?.network ?? evidence.network ?? null,
+          content_type: observation.page.contentType,
+          source_status: observation.page.status,
+          explicit_discontinuation: lifecycleEvidence.explicit,
+          matched_discontinuation_excerpt: lifecycleEvidence.matchedExcerpt,
+        });
+        job = await versionSubmittedObservationJob(
+          db,
+          fetchContext,
+          observation,
+          anchor.key,
+          semanticProductHash,
+        );
+        const claim = await claimSubmittedObservationJob(db, job);
+        job = claim.job;
+        if (!claim.claimed || terminalDiscoveryStatus(job.status)) {
+          return json(publicDiscoveryResult(job as any));
+        }
+        const result = await processSubmittedUrlObservation(
+          db,
+          job,
+          observation,
+        );
         return json(publicDiscoveryResult(result));
       } catch (error) {
+        if (priorJob && terminalDiscoveryStatus(priorJob.status)) {
+          return json(publicDiscoveryResult(priorJob as any));
+        }
         const reason = publicReasonCode(error);
-        await db.from("card_discovery_jobs").update({
+        const retryAt = reason === "fetch_timeout"
+          ? new Date(Date.now() + 120_000).toISOString()
+          : null;
+        if (job.id === "unpersisted-request-anchor") {
+          job = await upsertDiscoveryJob(
+            db,
+            user.id,
+            evidence,
+            body.source_url,
+          );
+        }
+        const failed = await db.from("card_discovery_jobs").update({
           status: reason === "fetch_timeout" ? "failed" : "review_required",
           failure_category: reason,
-          next_retry_at: reason === "fetch_timeout"
-            ? new Date(Date.now() + 120_000).toISOString()
-            : null,
+          next_retry_at: retryAt,
           updated_at: new Date().toISOString(),
-        }).eq("id", job.id);
+        }).eq("id", job.id).eq("user_id", user.id)
+          .in("status", DISCOVERY_MUTABLE_STATUSES)
+          .eq("updated_at", job.updated_at)
+          .select("*").maybeSingle();
+        if (failed.error) throw failed.error;
+        const responseJob = failed.data ??
+          (await db.from("card_discovery_jobs").select("*")
+            .eq("id", job.id).eq("user_id", user.id).single()).data ??
+          job;
+        if (terminalDiscoveryStatus(responseJob.status)) {
+          return json(publicDiscoveryResult(responseJob));
+        }
         return json(
           {
             ...publicDiscoveryResult({
-              id: job.id,
+              id: responseJob.id,
               status: reason === "fetch_timeout" ? "failed" : "review_required",
               failure_category: reason,
-              next_retry_at: reason === "fetch_timeout"
-                ? new Date(Date.now() + 120_000).toISOString()
-                : null,
+              next_retry_at: retryAt,
             }),
           },
           reason === "invalid_url" || reason === "unapproved_domain"
@@ -780,25 +1262,12 @@ serve(async (request) => {
     }
     if (action === "discover") {
       const evidence = safeEvidence(body.evidence);
-      const product = evidence.product_signals?.[0] ?? "unknown";
-      const dedupeKey = await sha256(
-        `${evidence.issuer}:${
-          normalizedProduct(product, evidence.issuer) || "unknown"
-        }`,
-      );
-      const { data: job, error } = await db.from("card_discovery_jobs").upsert({
-        user_id: user.id,
-        issuer: evidence.issuer,
-        proposed_product: product === "unknown" ? null : product,
-        evidence,
-        dedupe_key: dedupeKey,
-        status: "queued",
-        updated_at: new Date().toISOString(),
-      }, { onConflict: "user_id,dedupe_key", ignoreDuplicates: false })
-        .select("id, status, resolved_card_id, next_retry_at")
-        .single();
-      if (error) throw error;
-      EdgeRuntime.waitUntil(processDiscoveryJob(db, job.id));
+      const job = await upsertDiscoveryJob(db, user.id, evidence);
+      if (!terminalDiscoveryStatus(job.status)) {
+        EdgeRuntime.waitUntil(
+          processDiscoveryJob(db, job.id, invocationDeadlineAt),
+        );
+      }
       return json({
         job_id: job.id,
         status: job.status,
@@ -828,4 +1297,8 @@ serve(async (request) => {
       error: error instanceof Error ? error.message : "Request failed",
     }, 400);
   }
-});
+};
+
+if (import.meta.main) {
+  serve(handleRequest);
+}

@@ -1,3 +1,24 @@
+import {
+  buildCanonicalPublicationEnvelope,
+  handleBenefitAdminAction,
+  presentBenefitJob,
+  sanitizeAdminDto,
+  validateCanonicalPublicationEnvelope,
+  validateRetirementDecisionEvidence,
+  validateV5ApprovalDecisions,
+  validateV6ApprovalDecisions,
+} from "./benefit_admin.ts";
+import {
+  currentBenefitProposal,
+  diffBenefits,
+  extractGroundedBenefits,
+  extractGroundedBenefitsV6,
+} from "../_shared/benefit_enrichment.ts";
+import {
+  canonicalConditionObject,
+  stableCanonicalJson,
+} from "../_shared/benefit_contract.ts";
+
 type AdminHandler = (
   request: Request,
   db: Record<string, unknown>,
@@ -6,6 +27,55 @@ type AdminHandler = (
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
+}
+
+async function sha256(value: unknown): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(stableCanonicalJson(value)),
+  );
+  return [...new Uint8Array(digest)].map((byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
+}
+
+async function legacyRewardAliasProposal(
+  proposal: Record<string, any>,
+  cardId: string,
+) {
+  const config = { ...proposal.valueConfig };
+  delete config.offer_subject;
+  delete config.restrictions;
+  delete config.exclusions;
+  const condition = canonicalConditionObject({
+    title: proposal.title,
+    category: "points",
+    benefitType: proposal.valueType,
+    semanticKey: proposal.offerSubject,
+    value: proposal.value,
+    rate: proposal.rate,
+    cap: proposal.cap,
+    threshold: proposal.threshold,
+    frequency: proposal.frequency,
+    period: proposal.period,
+    valueConfig: config,
+    exclusions: proposal.exclusions,
+    restrictions: proposal.restrictions,
+    partners: proposal.partners,
+    regions: proposal.regions,
+    validFrom: proposal.effectiveFrom,
+    validUntil: proposal.effectiveTo,
+  });
+  condition.category = "rewards";
+  const conditionHash = await sha256([condition]);
+  const dedupeKey = `card-benefit-v2:${cardId.toLowerCase()}:${conditionHash}`;
+  return {
+    ...proposal,
+    category: "rewards",
+    conditionHash,
+    benefitId: dedupeKey,
+    dedupeKey,
+  };
 }
 
 async function handler(): Promise<AdminHandler> {
@@ -18,6 +88,28 @@ async function handler(): Promise<AdminHandler> {
   );
   return module.handleAdminCatalogEntry;
 }
+
+Deno.test("reviewed page-move conflicts remain explicitly retryable", async () => {
+  const module = await import("./index.ts");
+  const busy = module.safeError({
+    code: "40001",
+    message: "reviewed_enrichment_source_busy",
+  });
+  assert(
+    busy.status === 409 && busy.error === "publication_busy",
+    "serialization conflict was hidden as a non-retryable request failure",
+  );
+  const identity = module.safeError({ message: "conflicting_url_identity" });
+  assert(
+    identity.status === 409 && identity.error === "conflicting_url_identity",
+    "reviewed identity conflict lost its stable outcome",
+  );
+  const stale = module.safeError({ message: "stale_catalog_baseline" });
+  assert(
+    stale.status === 409 && stale.error === "stale_catalog_baseline",
+    "stale reviewed catalog state was not returned as a retryable conflict",
+  );
+});
 
 function request(body: Record<string, unknown>, token = "valid-token") {
   return new Request("https://example.test/admin-catalog-entry", {
@@ -33,35 +125,40 @@ function request(body: Record<string, unknown>, token = "valid-token") {
 Deno.test("legacy benefit projection retains its exact field contract", () => {
   const output = presentBenefitJob({
     id: "job",
+    parser_version: "benefits-v5",
     status: "review_required",
+    private_field: "must-not-expand-legacy",
     card_benefits_staging: {
       id: "staging",
+      parser_version: "benefits-v5",
       extracted_data: {
         proposals: [{
-          dedupeKey: "dining",
+          dedupeKey: "legacy:dining",
           title: "Dining",
+          description: "Get 5% cashback on dining.",
           category: "dining",
           valueType: "cashback",
           rate: 5,
-          currency: "INR",
-          benefit_category: "must-not-expand-legacy",
+          restrictions: [],
+          exclusions: [],
+          sourceUrl: "https://issuer.example/card",
+          sourceExcerpt: "Get 5% cashback on dining.",
+          contentHash: "fixture-content",
+          parserVersion: "benefits-v5",
+          confidence: { rate: 0.9 },
+          evidence: { rate: "5% cashback" },
+          warnings: [],
         }],
       },
     },
   });
+  assert("staging" in output, "legacy response was rejected");
   const proposal = output.staging?.extracted_data.proposals[0] as
     | Record<string, unknown>
     | undefined;
   assert(proposal?.title === "Dining", "legacy title changed");
   assert(proposal?.rate === 5, "legacy rate changed");
-  assert(
-    proposal !== undefined && !("currency" in proposal),
-    "legacy response was expanded",
-  );
-  assert(
-    !("benefit_category" in proposal),
-    "admin-only field leaked into legacy response",
-  );
+  assert(!("private_field" in output), "legacy response was expanded");
 });
 
 function authenticatedDb(
@@ -78,8 +175,12 @@ function authenticatedDb(
 }
 
 function withAdminProfile(
-  db: Record<string, unknown>,
-  profile = { id: "admin-1", is_active: true, is_admin: true },
+  db: Record<string, any>,
+  profile: Record<string, unknown> = {
+    id: "admin-1",
+    is_active: true,
+    is_admin: true,
+  },
 ) {
   const originalFrom = db.from as ((table: string) => unknown) | undefined;
   return {
@@ -90,23 +191,37 @@ function withAdminProfile(
         return originalFrom.call(db, table);
       }
       return {
-        select: () => ({
-          eq: () => ({
-            maybeSingle: () => Promise.resolve({ data: profile, error: null }),
-          }),
-        }),
+        select(columns: string) {
+          assert(
+            columns === "id,is_active,is_admin",
+            "admin authorization selected the wrong profile fields",
+          );
+          return {
+            eq(column: string, value: unknown) {
+              assert(
+                column === "id" && value === profile.id,
+                "admin authorization was not bound to the authenticated user id",
+              );
+              return {
+                async maybeSingle() {
+                  return { data: profile, error: null };
+                },
+              };
+            },
+          };
+        },
       };
     },
   };
 }
 
 function withAuthenticatedUser(db: Record<string, unknown>) {
-  return {
-    ...withAdminProfile(db),
+  return withAdminProfile({
+    ...db as Record<string, any>,
     auth: authenticatedDb({
       id: "admin-1",
     }).auth,
-  };
+  });
 }
 
 Deno.test("admin auth uses the caller project key with the bearer token", async () => {
@@ -180,87 +295,54 @@ Deno.test("protected admin handler returns 401 for missing or expired credential
 
 Deno.test("protected admin handler authorizes an active database admin regardless of email", async () => {
   const handle = await handler();
-  const serviceDb = {
-    from(table: string) {
-      assert(table === "users", "authorization read an unexpected table");
-      return {
-        select() {
-          return {
-            eq(column: string, value: unknown) {
-              assert(
-                column === "id" && value === "admin-1",
-                "profile lookup did not use the authenticated id",
-              );
-              return {
-                maybeSingle: () =>
-                  Promise.resolve({
-                    data: { id: "admin-1", is_active: true, is_admin: true },
-                    error: null,
-                  }),
-              };
-            },
-          };
-        },
-      };
-    },
-  };
-  const authDb = authenticatedDb({
+  const serviceDb = withAdminProfile({}, {
     id: "admin-1",
-    email: "not-allowlisted@example.test",
-    email_confirmed_at: null,
-    user_metadata: { is_admin: false },
+    is_active: true,
+    is_admin: true,
   });
-
   const response = await handle(
     request({ action: "access" }),
     serviceDb,
-    authDb,
+    authenticatedDb({
+      id: "admin-1",
+      email: "not-allowlisted@example.test",
+      email_confirmed_at: null,
+      user_metadata: { is_admin: false },
+    }),
   );
-
+  assert(response.status === 200, "active database admin was rejected");
+  const body = await response.json();
+  assert(body.is_admin === true, "access response compatibility changed");
   assert(
-    response.status === 200,
-    "database admin was rejected because of identity attributes",
-  );
-  assert(
-    (await response.json()).is_admin === true,
-    "access response compatibility changed",
+    body.authorization_source === "database_admin",
+    "database authorization source changed",
   );
 });
 
-Deno.test("protected admin handler rejects a verified founder email without the database admin flag", async () => {
+Deno.test("protected admin handler rejects allowlisted or metadata admins without the database flag", async () => {
   const handle = await handler();
-  const serviceDb = {
-    from() {
-      return {
-        select: () => ({
-          eq: () => ({
-            maybeSingle: () =>
-              Promise.resolve({
-                data: { id: "founder-1", is_active: true, is_admin: false },
-                error: null,
-              }),
-          }),
-        }),
-      };
-    },
-  };
-  const authDb = authenticatedDb({
-    id: "founder-1",
-    email: "admin@example.com",
-    email_confirmed_at: "2026-08-17T00:00:00.000Z",
-    user_metadata: { is_admin: true },
-  });
-
-  const response = await handle(
-    request({ action: "access" }),
-    serviceDb,
-    authDb,
-  );
-
-  assert(
-    response.status === 403,
-    "email or metadata bypassed the database admin flag",
-  );
+  const previous = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  try {
+    const response = await handle(
+      request({ action: "access" }),
+      withAdminProfile({}, {
+        id: "admin-1",
+        is_active: true,
+        is_admin: false,
+      }),
+      authenticatedDb({
+        id: "admin-1",
+        email: "admin@example.com",
+        email_confirmed_at: "2026-08-17T00:00:00.000Z",
+        user_metadata: { is_admin: true },
+      }),
+    );
+    assert(response.status === 403, "email or metadata bypassed the DB flag");
+  } finally {
+    if (previous === undefined) Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", previous);
+  }
 });
 
 Deno.test("protected admin handler authenticates with a request-scoped client", async () => {
@@ -303,79 +385,503 @@ Deno.test("protected admin handler authenticates with a request-scoped client", 
   );
 });
 
-Deno.test("admin cleanup removes only pending calculator issuer-crawl jobs", async () => {
+Deno.test("admin cleanup terminalizes calculator reviews without deleting history", async () => {
   const handle = await handler();
-  const deletedJobIds: string[] = [];
-  const serviceDb = {
-    from(table: string) {
-      if (table === "card_catalog_review_queue") {
-        const result = {
-          data: [
-            {
-              discovery_job_id: "job-calculator",
-              proposed_fields: {
-                official_url:
-                  "https://www.axis.bank.in/calculators/emi-calculator",
-              },
-              source_evidence: {},
-            },
-            {
-              discovery_job_id: "job-card",
-              proposed_fields: {
-                official_url: "https://www.axis.bank.in/cards/neo-credit-card",
-              },
-              source_evidence: {},
-            },
-          ],
-          error: null,
-        };
-        const query = {
-          select() {
-            return query;
-          },
-          eq() {
-            return query;
-          },
-          limit() {
-            return Promise.resolve(result);
-          },
-        };
-        return query;
-      }
-      assert(table === "card_discovery_jobs", "unexpected cleanup table");
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const serviceDb = withAdminProfile({
+    rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      return Promise.resolve({ data: 1, error: null });
+    },
+  });
+  try {
+    const unconfirmed = await handle(
+      request({ action: "purge-calculator-reviews" }),
+      serviceDb,
+      authenticatedDb({
+        id: "admin-1",
+        email: "admin@example.com",
+        email_confirmed_at: "2026-08-17T00:00:00.000Z",
+      }),
+    );
+    assert(
+      unconfirmed.status === 400,
+      "unconfirmed cleanup mutated review work",
+    );
+    assert(calls.length === 0, "unconfirmed cleanup reached SQL");
+    const response = await handle(
+      request({
+        action: "purge-calculator-reviews",
+        confirm: "non_product_calculator_resource",
+      }),
+      serviceDb,
+      authenticatedDb({
+        id: "admin-1",
+        email: "admin@example.com",
+        email_confirmed_at: "2026-08-17T00:00:00.000Z",
+      }),
+    );
+    const body = await response.json();
+    assert(response.status === 200, "calculator cleanup was rejected");
+    assert(
+      body.transitioned === 1,
+      "cleanup returned the wrong transition count",
+    );
+    assert(
+      Number(calls.length) === 1 &&
+        calls[0].name === "terminalize_calculator_review_rows" &&
+        calls[0].args._actor_id === "admin-1" &&
+        calls[0].args._confirmed === true,
+      "cleanup bypassed the retained-history transition boundary",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
+Deno.test("listing pending catalog reviews is read-only", async () => {
+  const handle = await handler();
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  let rpcCalls = 0;
+  const query = {
+    select() {
+      return query;
+    },
+    order() {
+      return query;
+    },
+    eq() {
+      return query;
+    },
+    async limit() {
+      return { data: [], error: null };
+    },
+  };
+  const serviceDb = withAdminProfile({
+    rpc() {
+      rpcCalls += 1;
+      return Promise.resolve({ data: 0, error: null });
+    },
+    from() {
+      return query;
+    },
+  });
+  try {
+    const response = await handle(
+      request({ action: "list", status: "pending" }),
+      serviceDb,
+      authenticatedDb({
+        id: "admin-1",
+        email: "admin@example.com",
+        email_confirmed_at: "2026-08-17T00:00:00.000Z",
+      }),
+    );
+    assert(response.status === 200, "pending list failed");
+    assert(rpcCalls === 0, "read-only listing terminalized review work");
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
+Deno.test("catalog admin DTO keeps reviewed fields and bounded public evidence only", async () => {
+  const module = await import("./index.ts") as {
+    presentCatalogReview?: (row: Record<string, unknown>) => Record<
+      string,
+      unknown
+    >;
+  };
+  assert(
+    typeof module.presentCatalogReview === "function",
+    "catalog review presenter is missing",
+  );
+  const output = module.presentCatalogReview!({
+    id: "review-1",
+    status: "pending",
+    created_at: "2026-08-20T12:00:00.123456Z",
+    proposed_fields: {
+      cardName: "Astra Reserve",
+      network: "Visa Infinite",
+      suggested_action: "mark_discontinued",
+      catalog_baseline: {
+        card_id: "card-1",
+        card_name: "Astra",
+        annual_fee: 3000,
+      },
+      source_observation: {
+        kind: "strong_explicit_discontinuation",
+        source_status: 200,
+        identity_validated: true,
+        explicit_discontinuation: true,
+        retrieved_at: "2026-08-20T12:00:00.123456Z",
+        matched_excerpt: "Astra Reserve card has been discontinued.",
+        customer_name: "PRIYA SHARMA",
+        statement_identity: { last_four: "4242" },
+        lease_token: "private-lease",
+        producer_evidence: "full internal producer evidence",
+      },
+    },
+    source_evidence: {
+      target_excerpt: "Astra Reserve card has been discontinued.",
+      customer_name: "PRIYA SHARMA",
+      statement_identity: { last_four: "4242" },
+      lease_token: "private-source-lease",
+    },
+    existing_candidates: [{ id: "card-2", card_name: "Astra" }],
+    card_discovery_jobs: {
+      id: "job-1",
+      issuer: "Horizon Bank",
+      proposed_product: "Astra Reserve",
+      status: "review_required",
+      evidence: {
+        last_four: "4242",
+        pdf_header_excerpt:
+          "PRIYA SHARMA · card ending 4242 · private statement header",
+        customer_name: "PRIYA SHARMA",
+        nested: {
+          cardholder_name: "PRIYA SHARMA",
+          statement_identifier: "4242",
+        },
+        raw_body: "private raw issuer page",
+      },
+      lease_token: "private-job-lease",
+    },
+  });
+  const serialized = JSON.stringify(output);
+
+  assert(serialized.includes("review-1"), "stable review id was removed");
+  assert(
+    serialized.includes("2026-08-20T12:00:00.123456Z"),
+    "lossless review timestamp was removed",
+  );
+  assert(
+    serialized.includes("Astra Reserve card has been discontinued"),
+    "target-specific public evidence was removed",
+  );
+  function assertNoStatementIdentity(value: unknown, path = "root") {
+    if (Array.isArray(value)) {
+      value.forEach((item, index) =>
+        assertNoStatementIdentity(item, `${path}[${index}]`)
+      );
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [key, nested] of Object.entries(value)) {
+      assert(
+        !/(?:last_four|pdf_header_excerpt|customer_name|cardholder_name|statement_identifier)/i
+          .test(key),
+        `catalog DTO retained private statement key at ${path}.${key}`,
+      );
+      assertNoStatementIdentity(nested, `${path}.${key}`);
+    }
+  }
+  assertNoStatementIdentity(output);
+  for (const privateValue of ["PRIYA SHARMA", "4242", "private statement"]) {
+    assert(
+      !serialized.includes(privateValue),
+      `catalog DTO leaked statement value ${privateValue}`,
+    );
+  }
+  for (
+    const secret of [
+      "private-lease",
+      "private-source-lease",
+      "full internal producer evidence",
+      "private raw issuer page",
+      "private-job-lease",
+    ]
+  ) {
+    assert(!serialized.includes(secret), `catalog DTO leaked ${secret}`);
+  }
+});
+
+Deno.test("issuer quarantine listing is newest-first filtered and cursor-paginated", async () => {
+  const handle = await handler();
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  const rows = [
+    {
+      id: "33333333-3333-4333-8333-333333333333",
+      status: "pending",
+      created_at: "2026-08-20T00:00:03+00:00",
+      proposed_fields: {
+        source_observation: {
+          classification: "issuer_discovery_quarantine",
+        },
+      },
+    },
+    {
+      id: "22222222-2222-4222-8222-222222222222",
+      status: "pending",
+      created_at: "2026-08-20T00:00:02.123456+00:00",
+      proposed_fields: {
+        source_observation: {
+          classification: "issuer_discovery_quarantine",
+        },
+      },
+    },
+    {
+      id: "11111111-1111-4111-8111-111111111111",
+      status: "pending",
+      created_at: "2026-08-20T00:00:01+00:00",
+      proposed_fields: {
+        source_observation: {
+          classification: "issuer_discovery_quarantine",
+        },
+      },
+    },
+  ];
+  const queryRecords: Array<{
+    contains?: Record<string, unknown>;
+    cursor?: string;
+    limit?: number;
+    orders?: Array<{ column: string; ascending: boolean }>;
+  }> = [];
+  const serviceDb = withAdminProfile({
+    rpc() {
+      throw new Error("quarantine list must remain read-only");
+    },
+    from() {
+      const record: {
+        contains?: Record<string, unknown>;
+        cursor?: string;
+        limit?: number;
+        orders?: Array<{ column: string; ascending: boolean }>;
+      } = { orders: [] };
+      queryRecords.push(record);
       const query = {
-        delete() {
+        select() {
+          return query;
+        },
+        order(column: string, options?: { ascending?: boolean }) {
+          record.orders?.push({
+            column,
+            ascending: options?.ascending !== false,
+          });
           return query;
         },
         eq() {
           return query;
         },
-        in(_column: string, ids: string[]) {
-          deletedJobIds.push(...ids);
-          return Promise.resolve({
-            data: ids.map((id) => ({ id })),
-            error: null,
-          });
-        },
-        select() {
+        contains(_column: string, value: Record<string, unknown>) {
+          record.contains = value;
           return query;
+        },
+        or(value: string) {
+          record.cursor = value;
+          return query;
+        },
+        async limit(value: number) {
+          record.limit = value;
+          return {
+            data: record.cursor ? rows.slice(2) : rows,
+            error: null,
+          };
         },
       };
       return query;
     },
+  });
+  const auth = authenticatedDb({
+    id: "admin-1",
+    email: "admin@example.com",
+    email_confirmed_at: "2026-08-17T00:00:00.000Z",
+  });
+  try {
+    const firstResponse = await handle(
+      request({
+        action: "issuer-quarantine-list",
+        status: "pending",
+        limit: 2,
+      }),
+      serviceDb,
+      auth,
+    );
+    const first = await firstResponse.json();
+    assert(firstResponse.status === 200, "quarantine list action failed");
+    assert(
+      first.items.length === 2 && first.items[0].id === rows[0].id,
+      "newest quarantine work was not returned first",
+    );
+    assert(
+      typeof first.next_cursor === "string" && first.next_cursor.length > 0,
+      "bounded quarantine page omitted its cursor",
+    );
+    assert(
+      JSON.stringify(queryRecords[0].contains).includes(
+        "issuer_discovery_quarantine",
+      ) && queryRecords[0].limit === 3 &&
+        JSON.stringify(queryRecords[0].orders) === JSON.stringify([
+            { column: "created_at", ascending: false },
+            { column: "id", ascending: false },
+          ]),
+      "quarantine classification or bounded lookahead was not applied",
+    );
+
+    const secondResponse = await handle(
+      request({
+        action: "issuer-quarantine-list",
+        status: "pending",
+        limit: 2,
+        cursor: first.next_cursor,
+      }),
+      serviceDb,
+      auth,
+    );
+    const second = await secondResponse.json();
+    assert(
+      secondResponse.status === 200 && second.items.length === 1 &&
+        second.items[0].id === rows[2].id,
+      "cursor did not continue after the prior quarantine page",
+    );
+    assert(
+      typeof queryRecords[1].cursor === "string" &&
+        queryRecords[1].cursor.includes("2026-08-20T00:00:02.123456+00:00"),
+      "cursor lost PostgreSQL microseconds or was not enforced by the query",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
+Deno.test("issuer quarantine listing rejects invalid status and classification", async () => {
+  const handle = await handler();
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  const auth = authenticatedDb({
+    id: "admin-1",
+    email: "admin@example.com",
+    email_confirmed_at: "2026-08-20T00:00:00.000Z",
+  });
+  try {
+    for (
+      const body of [
+        {
+          action: "issuer-quarantine-list",
+          status: "pending,or(status.eq.approved)",
+        },
+        {
+          action: "issuer-quarantine-list",
+          classification: "anything_else",
+        },
+      ]
+    ) {
+      const response = await handle(
+        request(body),
+        withAdminProfile({}),
+        auth,
+      );
+      assert(response.status === 400, "invalid quarantine filter was accepted");
+    }
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
+Deno.test("identity admin actions reject immutable client overrides and allow only edit catalog fields", async () => {
+  const handle = await handler();
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const review = {
+    discovery_job_id: "11111111-1111-4111-8111-111111111111",
+    proposed_fields: {
+      issuer: "Axis Bank",
+      cardName: "Privilege Infinite",
+      final_url: "https://www.axis.bank.in/card?variant=infinite",
+      content_hash: "a".repeat(64),
+    },
+    source_evidence: {
+      retrieved_at: "2026-08-20T00:00:00.000Z",
+    },
   };
-  const response = await handle(
-    request({ action: "purge-calculator-reviews" }),
-    withAdminProfile(serviceDb),
-    authenticatedDb({ id: "admin-1" }),
-  );
-  const body = await response.json();
-  assert(response.status === 200, "calculator cleanup was rejected");
-  assert(body.removed === 1, "cleanup returned the wrong removal count");
-  assert(
-    deletedJobIds.length === 1 && deletedJobIds[0] === "job-calculator",
-    "cleanup deleted a non-calculator job",
-  );
+  const query = {
+    select() {
+      return query;
+    },
+    eq() {
+      return query;
+    },
+    async single() {
+      return { data: review, error: null };
+    },
+  };
+  const serviceDb = withAdminProfile({
+    from() {
+      return query;
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      rpcCalls.push({ name, args });
+      return {
+        data: [{
+          card_id: "22222222-2222-4222-8222-222222222222",
+          job_id: review.discovery_job_id,
+          resulting_status: "approved",
+        }],
+        error: null,
+      };
+    },
+  });
+  const auth = authenticatedDb({
+    id: "admin-1",
+    email: "admin@example.com",
+    email_confirmed_at: "2026-08-17T00:00:00.000Z",
+  });
+  try {
+    const approveOverride = await handle(
+      request({
+        action: "approve",
+        review_item_id: "review-1",
+        proposed_fields: { final_url: "https://evil.example/card" },
+      }),
+      serviceDb,
+      auth,
+    );
+    assert(
+      approveOverride.status === 400,
+      "approve accepted a client proposal",
+    );
+    const editImmutable = await handle(
+      request({
+        action: "edit_approve",
+        review_item_id: "review-1",
+        proposed_fields: { content_hash: "b".repeat(64) },
+      }),
+      serviceDb,
+      auth,
+    );
+    assert(editImmutable.status === 400, "edit accepted immutable evidence");
+    const editAllowed = await handle(
+      request({
+        action: "edit_approve",
+        review_item_id: "review-1",
+        proposed_fields: { card_name: "Privilege Reserve", annual_fee: 2500 },
+      }),
+      serviceDb,
+      auth,
+    );
+    assert(editAllowed.status === 200, "allowed catalog edit was rejected");
+    assert(rpcCalls.length === 1, "rejected override reached publication");
+    assert(
+      JSON.stringify(rpcCalls[0].args._reviewed_fields) ===
+        JSON.stringify({ card_name: "Privilege Reserve", annual_fee: 2500 }),
+      "immutable review proposal was copied into client edit overrides",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
 });
 
 Deno.test("benefit list returns evidence and confidence without page bodies or secrets", async () => {
@@ -452,29 +958,54 @@ Deno.test("benefit list returns evidence and confidence without page bodies or s
       };
     },
   });
-  const response = await handle(request({ action: "benefit-list" }), db);
-  const body = await response.json();
-  const serialized = JSON.stringify(body);
-  assert(response.status === 200, "benefit list was rejected");
-  assert(
-    serialized.includes("₹500 dining credit"),
-    "safe evidence was omitted",
-  );
-  assert(serialized.includes("0.94"), "confidence was omitted");
-  assert(
-    body.items[0].crawler_discovered_without_statement_signal === true,
-    "linked issuer crawl was omitted",
-  );
-  assert(
-    !serialized.includes("private issuer html"),
-    "raw page body was exposed",
-  );
-  assert(!serialized.includes("secret-token"), "secret was exposed");
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  try {
+    const response = await handle(request({ action: "benefit-list" }), db);
+    const body = await response.json();
+    const serialized = JSON.stringify(body);
+    assert(response.status === 200, "benefit list was rejected");
+    assert(
+      serialized.includes("₹500 dining credit"),
+      "safe evidence was omitted",
+    );
+    assert(serialized.includes("0.94"), "confidence was omitted");
+    assert(
+      body.items[0].crawler_discovered_without_statement_signal === true,
+      "linked issuer crawl was omitted",
+    );
+    assert(
+      !serialized.includes("private issuer html"),
+      "raw page body was exposed",
+    );
+    assert(!serialized.includes("secret-token"), "secret was exposed");
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
 });
 
 Deno.test("benefit approval accepts only matching pending enrichment staging and approved decision actions", async () => {
   const handle = await handler();
   let rpcCalls = 0;
+  const lockedProposal = {
+    dedupeKey: "legacy:dining-credit",
+    title: "Dining credit",
+    description: "Get 10% cashback on dining spends.",
+    category: "cashback",
+    valueType: "cashback",
+    rate: 10,
+    restrictions: [],
+    exclusions: [],
+    sourceUrl: "https://issuer.example/card",
+    sourceExcerpt: "Get 10% cashback on dining spends.",
+    contentHash: "fixture-content",
+    parserVersion: "benefits-v5",
+    confidence: { rate: 0.9 },
+    evidence: { rate: "10% cashback" },
+    warnings: [],
+  };
   const db = withAuthenticatedUser({
     from(table: string) {
       return {
@@ -498,6 +1029,7 @@ Deno.test("benefit approval accepts only matching pending enrichment staging and
                 card_id: "card-1",
                 staging_id: "staging-1",
                 status: "staged",
+                parser_version: "benefits-v5",
               },
               error: null,
             };
@@ -508,6 +1040,12 @@ Deno.test("benefit approval accepts only matching pending enrichment staging and
               card_id: "card-1",
               status: "pending",
               request_type: "official_benefit_enrichment",
+              parser_version: "benefits-v5",
+              extracted_data: {
+                request_type: "official_benefit_enrichment",
+                parser_version: "benefits-v5",
+                proposals: [lockedProposal],
+              },
             },
             error: null,
           };
@@ -524,56 +1062,2878 @@ Deno.test("benefit approval accepts only matching pending enrichment staging and
         args._staging_id === "staging-1",
         "approval used an unowned staging row",
       );
+      const decision = (args._decisions as Record<string, any>[])[0];
+      if (decision.action === "reject") {
+        assert(
+          decision.proposal_index === 0 &&
+            !Object.hasOwn(decision, "canonical_envelope"),
+          "targeted reject did not retain only its locked proposal target",
+        );
+      } else {
+        assert(
+          decision.canonical_envelope?.version === "benefit-publication-v2" &&
+            decision.canonical_envelope?.dedupe_key?.startsWith(
+              "card-benefit-v2:card-1:",
+            ) &&
+            decision.canonical_envelope?.benefit?.benefit_category ===
+              "cashback",
+          "v5 rollback review did not route through the v2 card-scoped envelope",
+        );
+      }
       return {
         data: [{ staging_id: "staging-1", resulting_status: "approved" }],
         error: null,
       };
     },
   });
-  const invalid = await handle(
-    request({
-      action: "benefit-approve",
-      job_id: "job-1",
-      staging_id: "staging-1",
-      decisions: [{ action: "remove" }],
-    }),
-    db,
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  try {
+    const invalid = await handle(
+      request({
+        action: "benefit-approve",
+        job_id: "job-1",
+        staging_id: "staging-1",
+        decisions: [{ action: "remove" }],
+      }),
+      db,
+    );
+    const approved = await handle(
+      request({
+        action: "benefit-approve",
+        job_id: "job-1",
+        staging_id: "staging-1",
+        decisions: [{
+          action: "approve",
+          benefit: lockedProposal,
+        }],
+      }),
+      db,
+    );
+    const edited = await handle(
+      request({
+        action: "benefit-edit-approve",
+        job_id: "job-1",
+        staging_id: "staging-1",
+        decisions: [{
+          action: "edit",
+          edited_benefit: {
+            ...lockedProposal,
+            title: "Edited dining credit",
+            rate: 12,
+          },
+        }],
+      }),
+      db,
+    );
+    const selectedWithoutEdit = await handle(
+      request({
+        action: "benefit-edit-approve",
+        job_id: "job-1",
+        staging_id: "staging-1",
+        decisions: [{
+          action: "approve",
+          benefit: lockedProposal,
+        }],
+      }),
+      db,
+    );
+    const targetedReject = await handle(
+      request({
+        action: "benefit-edit-approve",
+        job_id: "job-1",
+        staging_id: "staging-1",
+        decisions: [{
+          action: "reject",
+          benefit: lockedProposal,
+        }],
+      }),
+      db,
+    );
+    const misplacedGlobalReject = await handle(
+      request({
+        action: "benefit-edit-approve",
+        job_id: "job-1",
+        staging_id: "staging-1",
+        decisions: [{ action: "reject" }],
+      }),
+      db,
+    );
+
+    assert(
+      invalid.status === 400,
+      "unsupported approval decision was accepted",
+    );
+    assert(
+      approved.status === 200,
+      "matching pending staging was not approved",
+    );
+    assert(
+      edited.status === 200,
+      "matching pending staging was not edit-approved",
+    );
+    assert(
+      selectedWithoutEdit.status === 200,
+      "explicit conflict selection required an artificial edit",
+    );
+    assert(
+      targetedReject.status === 200,
+      "targeted conflict rejection was blocked by the edit endpoint",
+    );
+    assert(
+      misplacedGlobalReject.status === 409,
+      "global rejection was accepted through the conflict-resolution endpoint",
+    );
+    assert(
+      rpcCalls === 4,
+      "valid or invalid decisions reached the wrong RPC count",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
+Deno.test("v6 admin presentation and approval preserve canonical replay identity", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      ...({ sourceIdentity: "a".repeat(64) } as Record<string, unknown>),
+      sourceUrl: "https://issuer.example/card",
+      text:
+        "Get 10% cashback on dining spends, capped at ₹500 per statement month.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
   );
-  const approved = await handle(
-    request({
-      action: "benefit-approve",
-      job_id: "job-1",
-      staging_id: "staging-1",
-      decisions: [{ action: "approve", benefit: { title: "Dining credit" } }],
-    }),
-    db,
+  const presented = presentBenefitJob({
+    id: "job-1",
+    card_id: "card-1",
+    parser_version: "benefits-v6",
+    status: "staged",
+    run_mode: "manual",
+    card_benefits_staging: {
+      id: "staging-1",
+      card_id: "card-1",
+      request_type: "official_benefit_enrichment",
+      parser_version: "benefits-v6",
+      status: "pending",
+      extracted_data: {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        retrieved_at: "2026-08-20T10:11:12.123456Z",
+        crawl_observation: {
+          crawl_complete: false,
+          crawl_reason: "required_source_failed",
+          observed_at: "2026-08-20T10:11:12.123456Z",
+          source_attempts: [{
+            url: "https://issuer.example/terms",
+            role: "required_supporting",
+            status: "failed",
+            httpStatus: 503,
+            errorCode: "http_5xx",
+            attemptedAt: "2026-08-20T10:11:13.123456Z",
+            leaseToken: "private-lease",
+          }],
+        },
+        proposals: [{
+          ...proposal,
+          sourceUrl: `${proposal.sourceUrl}?selector=secret-query`,
+          sourceUrls: [`${proposal.sourceUrl}?selector=secret-query`],
+        }],
+        diff: { additions: [proposal] },
+      },
+    },
+  }) as Record<string, any>;
+  const presentedProposal = presented.staging.extracted_data.proposals[0];
+  assert(
+    presentedProposal.benefitId === proposal.benefitId &&
+      presentedProposal.offerSubject === proposal.offerSubject,
+    "admin presenter stripped v6 identity",
   );
-  const edited = await handle(
-    request({
-      action: "benefit-edit-approve",
-      job_id: "job-1",
-      staging_id: "staging-1",
+  assert(
+    presentedProposal.valueConfig.offer_subject === proposal.offerSubject &&
+      presentedProposal.valueConfig.restrictions.join(",") === "dining spends",
+    "admin presenter stripped canonical identity terms",
+  );
+  assert(
+    !JSON.stringify(presented).includes("secret-query"),
+    "admin presenter exposed a raw source query",
+  );
+  assert(
+    presented.staging.extracted_data.retrieved_at ===
+        "2026-08-20T10:11:12.123456Z" &&
+      presented.staging.extracted_data.crawl_observation.crawl_complete ===
+        false &&
+      presented.staging.extracted_data.crawl_observation.source_attempts[0]
+          .role === "required_supporting" &&
+      !JSON.stringify(presented).includes("private-lease"),
+    "admin presenter lost bounded crawl completeness or leaked internals",
+  );
+
+  let submitted: Record<string, any>[] = [];
+  const db = {
+    from(table: string) {
+      return {
+        select() {
+          return this;
+        },
+        neq() {
+          return this;
+        },
+        in() {
+          return this;
+        },
+        eq() {
+          return this;
+        },
+        async single() {
+          return table === "card_catalog_enrichment_jobs"
+            ? {
+              data: {
+                id: "job-1",
+                card_id: "card-1",
+                staging_id: "staging-1",
+                status: "staged",
+                parser_version: "benefits-v6",
+              },
+              error: null,
+            }
+            : {
+              data: {
+                id: "staging-1",
+                card_id: "card-1",
+                status: "pending",
+                request_type: "official_benefit_enrichment",
+                parser_version: "benefits-v6",
+                extracted_data: {
+                  request_type: "official_benefit_enrichment",
+                  parser_version: "benefits-v6",
+                  proposals: [proposal],
+                },
+              },
+              error: null,
+            };
+        },
+      };
+    },
+    async rpc(_name: string, args: Record<string, any>) {
+      submitted = args._decisions;
+      return {
+        data: [{ staging_id: "staging-1", resulting_status: "approved" }],
+        error: null,
+      };
+    },
+  };
+  await handleBenefitAdminAction(db, {
+    action: "benefit-approve",
+    job_id: "job-1",
+    staging_id: "staging-1",
+    decisions: [{
+      action: "approve",
+      benefit: { ...presentedProposal, client_secret: "must not escape" },
+    }],
+  }, { id: "admin-1" });
+  const approved = submitted[0].benefit;
+  assert(
+    approved.benefitId === proposal.benefitId,
+    "approval stripped benefit ID",
+  );
+  assert(
+    approved.offerSubject === proposal.offerSubject,
+    "approval stripped offer subject",
+  );
+  assert(
+    approved.conditionHash === proposal.conditionHash,
+    "approval stripped canonical condition hash",
+  );
+  assert(
+    !JSON.stringify(submitted).includes("must not escape"),
+    "approval forwarded an arbitrary client field",
+  );
+
+  const current = currentBenefitProposal({
+    dedupe_key: approved.dedupeKey,
+    title: approved.title,
+    description: approved.description,
+    benefit_category: approved.category,
+    benefit_type: approved.valueType,
+    value_config: approved.valueConfig,
+    partners: approved.partners,
+    exclusions: approved.exclusions,
+    source_url: approved.sourceUrl,
+  });
+  assert(current != null, "approved v6 row was not reconstructed");
+  const replay = await extractGroundedBenefitsV6(
+    [{
+      ...({ sourceIdentity: "a".repeat(64) } as Record<string, unknown>),
+      sourceUrl: "https://issuer.example/card",
+      text:
+        "Get 10% cashback on dining spends, capped at ₹500 per statement month.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const diff = diffBenefits([current], replay);
+  assert(diff.unchanged.length === 1, "approved v6 offer changed on replay");
+  assert(
+    diff.conflicts.length === 0,
+    "approved v6 identity conflicted on replay",
+  );
+});
+
+Deno.test("v6 approval is bound to exact server-staged canonical proposals", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card?variant=official",
+      text:
+        "Get 10% cashback on dining spends, capped at ₹500 per statement month, excluding cash advances.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const call = async (
+    decisions: unknown,
+    stagedExtraction: unknown = {
+      request_type: "official_benefit_enrichment",
+      parser_version: "benefits-v6",
+      proposals: [proposal],
+    },
+  ) => {
+    let rpcCalls = 0;
+    let submitted: Record<string, any>[] = [];
+    const db = {
+      from(table: string) {
+        return {
+          select() {
+            return this;
+          },
+          neq() {
+            return this;
+          },
+          in() {
+            return this;
+          },
+          eq() {
+            return this;
+          },
+          async single() {
+            return table === "card_catalog_enrichment_jobs"
+              ? {
+                data: {
+                  id: "job-1",
+                  card_id: "card-1",
+                  staging_id: "staging-1",
+                  status: "staged",
+                  parser_version: "benefits-v6",
+                },
+                error: null,
+              }
+              : {
+                data: {
+                  id: "staging-1",
+                  card_id: "card-1",
+                  status: "pending",
+                  request_type: "official_benefit_enrichment",
+                  parser_version: "benefits-v6",
+                  extracted_data: stagedExtraction,
+                },
+                error: null,
+              };
+          },
+        };
+      },
+      async rpc(_name: string, args: Record<string, any>) {
+        rpcCalls += 1;
+        submitted = args._decisions;
+        return {
+          data: [{ staging_id: "staging-1", resulting_status: "approved" }],
+          error: null,
+        };
+      },
+    };
+    let error: unknown;
+    try {
+      await handleBenefitAdminAction(db, {
+        action: Array.isArray(decisions) &&
+            (decisions[0] as Record<string, unknown> | null)?.action === "edit"
+          ? "benefit-edit-approve"
+          : "benefit-approve",
+        job_id: "job-1",
+        staging_id: "staging-1",
+        decisions,
+      }, { id: "admin-1" });
+    } catch (caught) {
+      error = caught;
+    }
+    return { error, rpcCalls, submitted };
+  };
+  const exact = { action: "approve", benefit: proposal };
+  const tampered = [
+    {
+      label: "benefit ID",
       decisions: [{
-        action: "edit",
-        edited_benefit: { title: "Edited dining credit" },
+        action: "approve",
+        benefit: { ...proposal, benefitId: `${proposal.benefitId}:tampered` },
       }],
-    }),
-    db,
+    },
+    {
+      label: "offer subject",
+      decisions: [{
+        action: "approve",
+        benefit: { ...proposal, offerSubject: "cashback:cashback:fuel" },
+      }],
+    },
+    {
+      label: "restrictions",
+      decisions: [{
+        action: "approve",
+        benefit: { ...proposal, restrictions: ["fuel spends"] },
+      }],
+    },
+    {
+      label: "exclusions",
+      decisions: [{
+        action: "approve",
+        benefit: {
+          ...proposal,
+          exclusions: { additional: { source_terms: ["wallet reloads"] } },
+        },
+      }],
+    },
+    {
+      label: "source identity",
+      decisions: [{
+        action: "approve",
+        benefit: { ...proposal, sourceIdentity: "f".repeat(64) },
+      }],
+    },
+    {
+      label: "client canonical envelope injection",
+      decisions: [{
+        action: "approve",
+        benefit: proposal,
+        canonical_envelope: { nonce: "client-authority" },
+      }],
+    },
+    {
+      label: "unknown proposal",
+      decisions: [{
+        action: "approve",
+        benefit: {
+          ...proposal,
+          benefitId: `card-benefit-v2:card-1:${"f".repeat(64)}`,
+          dedupeKey: `card-benefit-v2:card-1:${"f".repeat(64)}`,
+          conditionHash: "f".repeat(64),
+        },
+      }],
+    },
+    { label: "duplicate proposal", decisions: [exact, exact] },
+  ];
+  for (const fixture of tampered) {
+    const result = await call(fixture.decisions);
+    assert(result.error instanceof Error, `${fixture.label} was accepted`);
+    assert(result.rpcCalls === 0, `${fixture.label} reached approval RPC`);
+  }
+
+  const malformedStaging = [
+    {
+      label: "null staged proposal",
+      extraction: {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [null, proposal],
+      },
+    },
+    {
+      label: "scalar staged proposal",
+      extraction: {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [proposal, "corrupt"],
+      },
+    },
+    {
+      label: "numeric staged proposal",
+      extraction: {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [proposal, 5],
+      },
+    },
+    {
+      label: "duplicate staged proposal",
+      extraction: {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [proposal, proposal],
+      },
+    },
+    {
+      label: "malformed proposal root",
+      extraction: {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: { valid: proposal },
+      },
+    },
+    { label: "malformed extraction root", extraction: "corrupt" },
+  ];
+  for (const fixture of malformedStaging) {
+    const result = await call([exact], fixture.extraction);
+    assert(result.error instanceof Error, `${fixture.label} was filtered`);
+    assert(result.rpcCalls === 0, `${fixture.label} reached approval RPC`);
+  }
+
+  const inconsistentStagedIdentity = {
+    ...proposal,
+    dedupeKey: `card-benefit-v2:card-1:${"b".repeat(64)}`,
+  };
+  const inconsistent = await call(
+    [{ action: "approve", benefit: inconsistentStagedIdentity }],
+    {
+      request_type: "official_benefit_enrichment",
+      parser_version: "benefits-v6",
+      proposals: [inconsistentStagedIdentity],
+    },
+  );
+  assert(
+    inconsistent.error instanceof Error,
+    "inconsistent staged benefit/dedupe identity was accepted",
+  );
+  assert(inconsistent.rpcCalls === 0, "inconsistent staging reached RPC");
+
+  for (const decisions of [[null], ["corrupt"], [5]]) {
+    const result = await call(decisions);
+    assert(result.error instanceof Error, "malformed decision was accepted");
+    assert(result.rpcCalls === 0, "malformed decision reached approval RPC");
+  }
+
+  const valid = await call([exact]);
+  assert(!valid.error, "exact staged proposal was rejected");
+  assert(valid.rpcCalls === 1, "exact staged proposal missed approval RPC");
+  assert(
+    valid.submitted[0].benefit.conditionHash === proposal.conditionHash,
+    "server canonical identity was not submitted",
+  );
+
+  const edited = await call([{
+    action: "edit",
+    edited_benefit: {
+      ...proposal,
+      title: "Reviewed dining cashback",
+      rate: 12,
+    },
+  }]);
+  assert(!edited.error, "material v6 edit was rejected");
+  assert(
+    edited.submitted[0].edited_benefit.title === "Reviewed dining cashback" &&
+      edited.submitted[0].edited_benefit.conditionHash ===
+        proposal.conditionHash,
+    "v6 edit did not retain server canonical identity",
+  );
+});
+
+Deno.test("admin presentation preserves SQL-shaped targeted reject audit identity", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const liveBenefitId = "11111111-1111-4111-8111-111111111111";
+  const presented = presentBenefitJob({
+    id: "job-1",
+    card_id: "card-1",
+    parser_version: "benefits-v6",
+    status: "completed",
+    run_mode: "manual",
+    card_benefits_staging: {
+      id: "staging-1",
+      card_id: "card-1",
+      request_type: "official_benefit_enrichment",
+      parser_version: "benefits-v6",
+      status: "rejected",
+      extracted_data: {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [proposal],
+        diff: {
+          additions: [proposal],
+        },
+      },
+      benefit_decisions: [
+        {
+          action: "reject",
+          proposal_index: 0,
+          dedupe_key: proposal.dedupeKey,
+          condition_hash: proposal.conditionHash,
+        },
+        { action: "reject", benefit_id: liveBenefitId },
+        { action: "reject", reason: "Whole review rejected" },
+      ],
+    },
+  }) as Record<string, any>;
+  assert(
+    presented.staging,
+    `SQL audit fixture was rejected by presentation: ${
+      JSON.stringify(presented)
+    }`,
+  );
+  const [canonical, currentAudit, global] = presented.staging.benefit_decisions;
+
+  assert(
+    canonical.proposal_index === 0 &&
+      canonical.dedupe_key === proposal.dedupeKey &&
+      canonical.condition_hash === proposal.conditionHash,
+    "canonical SQL reject audit lost proposal identity in presentation",
+  );
+  assert(
+    currentAudit.benefit_id === liveBenefitId &&
+      currentAudit.proposal_index === null,
+    "current SQL reject audit lost its exact live identity",
+  );
+  assert(
+    global.benefit_id === null && global.proposal_index === null &&
+      global.dedupe_key === null,
+    "global SQL reject audit acquired a target during presentation",
+  );
+});
+
+Deno.test("pure v6 decision validation rejects an unstaged canonical identity", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const extraction = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v6",
+    proposals: [proposal],
+  };
+  const valid = await validateV6ApprovalDecisions(
+    [{ action: "approve", benefit: proposal }],
+    extraction,
+    "card-1",
+  );
+  assert(valid[0].benefit != null, "pure validator rejected exact proposal");
+  let error: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      [{
+        action: "approve",
+        benefit: { ...proposal, restrictions: ["fuel spends"] },
+      }],
+      extraction,
+      "card-1",
+    );
+  } catch (caught) {
+    error = caught;
+  }
+  assert(error instanceof Error, "pure validator accepted identity smuggling");
+});
+
+Deno.test("reward proposals publish with the shared points category and replay key", async () => {
+  const staged = {
+    title: "Accelerated rewards",
+    category: "rewards",
+    valueType: "reward_points",
+    offerSubject: "rewards:reward_points:general",
+    rate: "5",
+    restrictions: ["retail spends"],
+    exclusions: [],
+    partners: [],
+    regions: ["IN"],
+  };
+  const rewards = await buildCanonicalPublicationEnvelope(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    staged,
+  );
+  const points = await buildCanonicalPublicationEnvelope(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    staged,
+    { ...staged, category: "POINTS" },
+  );
+  assert(
+    rewards.condition.category === "points",
+    "reward condition was not canonicalized",
+  );
+  assert(
+    JSON.stringify(rewards.staged_proposal_binding) === JSON.stringify(staged),
+    "server envelope did not retain its exact staged proposal binding",
+  );
+  assert(
+    rewards.benefit.benefit_category === "points",
+    "reward DB category was not canonicalized",
+  );
+  assert(
+    rewards.condition_hash === points.condition_hash,
+    "reward alias changed canonical hash",
+  );
+  assert(
+    rewards.dedupe_key === points.dedupe_key,
+    "reward alias changed card-scoped replay key",
+  );
+});
+
+Deno.test("canonical publication envelopes reject unknown keys and unsafe numeric domains", async () => {
+  const staged = {
+    title: "Dining cashback",
+    category: "cashback",
+    valueType: "cashback",
+    offerSubject: "cashback:cashback:dining",
+    rate: 10,
+    restrictions: ["dining spends"],
+    exclusions: [],
+    partners: [],
+    regions: ["IN"],
+  };
+  const accepted = await buildCanonicalPublicationEnvelope(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    staged,
+    { ...staged, rate: 0.000001, cap: Number.MAX_SAFE_INTEGER },
+  );
+  validateCanonicalPublicationEnvelope(accepted);
+
+  const invalid: Array<
+    { label: string; mutate: (value: Record<string, any>) => void }
+  > = [
+    { label: "root nonce", mutate: (value) => value.nonce = "hash-only" },
+    {
+      label: "condition nonce",
+      mutate: (value) => value.condition.nonce = "hash-only",
+    },
+    {
+      label: "nested config nonce",
+      mutate: (value) => value.condition.value_config.nonce = "hash-only",
+    },
+    {
+      label: "tiny number",
+      mutate: (value) => value.condition.value_config.rate = 1e-7,
+    },
+    {
+      label: "huge number",
+      mutate: (value) => value.condition.value_config.rate = 1e21,
+    },
+    {
+      label: "nested exclusion number",
+      mutate: (value) =>
+        value.condition.exclusions.additional.source_terms = [1e-7],
+    },
+  ];
+  for (const fixture of invalid) {
+    const envelope = structuredClone(accepted) as Record<string, any>;
+    fixture.mutate(envelope);
+    let error: unknown;
+    try {
+      validateCanonicalPublicationEnvelope(envelope);
+    } catch (caught) {
+      error = caught;
+    }
+    assert(error instanceof Error, `${fixture.label} envelope was accepted`);
+  }
+});
+
+Deno.test("pending pre-alias rewards v6 proposals migrate only from the exact legacy identity", async () => {
+  const cardId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const [current] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Earn 5 reward points for every ₹150 spent on eligible purchases.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    cardId,
+  );
+  const legacy = await legacyRewardAliasProposal(current, cardId);
+  const extraction = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v6",
+    proposals: [legacy],
+  };
+  const decisions = [{ action: "approve", benefit: legacy }];
+  const first = await validateV6ApprovalDecisions(
+    decisions,
+    extraction,
+    cardId,
+  );
+  const replay = await validateV6ApprovalDecisions(
+    decisions,
+    extraction,
+    cardId,
+  );
+  const envelope = first[0].canonical_envelope as Record<string, any>;
+  assert(
+    first[0].change_type === "category_alias_identity_migration" &&
+      envelope.condition.category === "points" &&
+      envelope.dedupe_key === current.dedupeKey &&
+      envelope.identity_migration?.legacy_dedupe_key === legacy.dedupeKey,
+    "exact pre-alias reward was not audited into the points identity",
+  );
+  assert(
+    stableCanonicalJson(first) === stableCanonicalJson(replay),
+    "legacy reward compatibility was not replay deterministic",
+  );
+
+  let tampered: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      decisions,
+      {
+        ...extraction,
+        proposals: [{ ...legacy, conditionHash: "f".repeat(64) }],
+      },
+      cardId,
+    );
+  } catch (caught) {
+    tampered = caught;
+  }
+  assert(
+    tampered instanceof Error,
+    "tampered pre-alias reward identity was accepted",
+  );
+});
+
+Deno.test("v6 edits reject display-only changes and preserve explicit date clears", async () => {
+  const cardId = "card-1";
+  const [extracted] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends, capped at ₹500 per month.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    cardId,
+  );
+  const dated = {
+    ...extracted,
+    effectiveFrom: "2026-01-01",
+    effectiveTo: "2026-12-31",
+  };
+  const datedEnvelope = await buildCanonicalPublicationEnvelope(cardId, dated);
+  const proposal = {
+    ...dated,
+    conditionHash: datedEnvelope.condition_hash,
+    benefitId: datedEnvelope.dedupe_key,
+    dedupeKey: datedEnvelope.dedupe_key,
+  };
+  const extraction = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v6",
+    proposals: [proposal],
+  };
+  for (
+    const edited of [
+      { ...proposal, title: "New marketing title" },
+      { ...proposal, description: "New marketing description" },
+    ]
+  ) {
+    let error: unknown;
+    try {
+      await validateV6ApprovalDecisions(
+        [{ action: "edit", edited_benefit: edited }],
+        extraction,
+        cardId,
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert(
+      error instanceof Error &&
+        (error as { code?: string }).code === "non_material_edit",
+      "display-only edit was accepted",
+    );
+  }
+
+  for (
+    const taxonomyEdit of [
+      { ...proposal, category: "points", rate: 12 },
+      { ...proposal, valueType: "reward_points", rate: 12 },
+    ]
+  ) {
+    let error: unknown;
+    try {
+      await validateV6ApprovalDecisions(
+        [{ action: "edit", edited_benefit: taxonomyEdit }],
+        extraction,
+        cardId,
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert(
+      error instanceof Error &&
+        (error as { code?: string }).code === "immutable_benefit_taxonomy",
+      "contradictory taxonomy edit was accepted",
+    );
+  }
+
+  const clearStart = await validateV6ApprovalDecisions(
+    [{ action: "edit", edited_benefit: { ...proposal, effectiveFrom: null } }],
+    extraction,
+    cardId,
+  );
+  const clearEnd = await validateV6ApprovalDecisions(
+    [{ action: "edit", edited_benefit: { ...proposal, effectiveTo: null } }],
+    extraction,
+    cardId,
+  );
+  assert(
+    (clearStart[0].canonical_envelope as Record<string, any>).benefit
+      .valid_from === null,
+    "explicit valid-from clear was discarded",
+  );
+  assert(
+    (clearEnd[0].canonical_envelope as Record<string, any>).benefit
+      .valid_until === null,
+    "explicit valid-until clear was discarded",
+  );
+
+  let invalidRange: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      [{
+        action: "edit",
+        edited_benefit: {
+          ...proposal,
+          effectiveFrom: "2027-01-01",
+          effectiveTo: "2026-01-01",
+        },
+      }],
+      extraction,
+      cardId,
+    );
+  } catch (caught) {
+    invalidRange = caught;
+  }
+  assert(invalidRange instanceof Error, "invalid effective range was accepted");
+
+  const material = await validateV6ApprovalDecisions(
+    [{
+      action: "edit",
+      edited_benefit: { ...proposal, title: "Reviewed title", rate: 12 },
+    }],
+    extraction,
+    cardId,
+  );
+  assert(
+    (material[0].edited_benefit as Record<string, unknown>).title ===
+      "Reviewed title",
+    "material edit discarded its display change",
+  );
+});
+
+Deno.test("v6 decisions reject duplicate proposal and live identities across every action family", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const liveBenefitId = "11111111-1111-4111-8111-111111111111";
+  const current = { ...proposal, liveBenefitId };
+  const extraction: Record<string, any> = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v6",
+    proposals: [proposal],
+    crawl_observation: {
+      crawl_complete: true,
+      observed_at: "2026-08-19T00:00:00.000Z",
+      absent_benefit_ids: [proposal.benefitId],
+      absent_legacy_benefit_ids: [],
+    },
+    diff: {
+      possibleRemovals: [{
+        benefit: current,
+        retirementEligible: true,
+        retirementReason: "two_complete_observations",
+        completeAbsenceObservedAt: [
+          "2026-08-12T00:00:00.000Z",
+          "2026-08-19T00:00:00.000Z",
+        ],
+      }],
+    },
+  };
+  const fixtures = [
+    [
+      { action: "approve", benefit: proposal },
+      { action: "approve", benefit: proposal },
+    ],
+    [
+      { action: "retire", benefit_id: liveBenefitId },
+      { action: "retire", benefit_id: liveBenefitId },
+    ],
+    [
+      { action: "keep_existing", benefit_id: liveBenefitId },
+      { action: "keep_existing", benefit_id: liveBenefitId },
+    ],
+    [
+      { action: "reject", benefit: proposal },
+      { action: "reject", benefit: proposal },
+    ],
+    [
+      { action: "approve", benefit: proposal },
+      { action: "reject", benefit: proposal },
+    ],
+  ];
+  for (const decisions of fixtures) {
+    let error: unknown;
+    try {
+      await validateV6ApprovalDecisions(decisions, extraction, "card-1");
+    } catch (caught) {
+      error = caught;
+    }
+    assert(
+      error instanceof Error &&
+        (error as { code?: string }).code === "duplicate_benefit_decision",
+      "duplicate decision identity was accepted",
+    );
+  }
+});
+
+Deno.test("v6 reject wire distinguishes proposal current and global targets", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const liveBenefitId = "11111111-1111-4111-8111-111111111111";
+  const current = { ...proposal, liveBenefitId };
+  const extraction = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v6",
+    proposals: [proposal],
+    diff: { modifications: [{ current, proposed: proposal }] },
+  };
+
+  const proposalReject = await validateV6ApprovalDecisions(
+    [{ action: "reject", benefit: proposal }],
+    extraction,
+    "card-1",
+  );
+  const currentReject = await validateV6ApprovalDecisions(
+    [{ action: "reject", benefit_id: liveBenefitId, current }],
+    extraction,
+    "card-1",
+  );
+  const globalReject = await validateV6ApprovalDecisions(
+    [{ action: "reject" }],
+    extraction,
+    "card-1",
+  );
+  assert(
+    proposalReject[0].proposal_index === 0 &&
+      !("benefit_id" in proposalReject[0]),
+    "canonical reject was not bound to its proposal",
+  );
+  assert(
+    currentReject[0].benefit_id === liveBenefitId &&
+      !("proposal_index" in currentReject[0]),
+    "current reject was not bound to its live UUID",
+  );
+  assert(
+    !("benefit_id" in globalReject[0]) &&
+      !("proposal_index" in globalReject[0]),
+    "global reject acquired an accidental target",
+  );
+
+  let proposedOnly: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      [{ action: "reject", proposed: proposal }],
+      extraction,
+      "card-1",
+    );
+  } catch (caught) {
+    proposedOnly = caught;
+  }
+  assert(
+    proposedOnly instanceof Error &&
+      (proposedOnly as { code?: string }).code ===
+        "client_publication_authority_rejected",
+    "proposed-only reject widened into a global reject",
+  );
+});
+
+Deno.test("v5 and v6 global reject require every target property to be absent", async () => {
+  const [v6Proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const [v5Proposal] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 10% cashback on dining spends.",
+    contentHash: "a".repeat(64),
+  }], "benefits-v5");
+  assert(v5Proposal, "v5 reject fixture did not extract");
+  const malformed = [
+    { benefit: null },
+    { benefit: [] },
+    { benefit: "" },
+    { benefit: {} },
+    { current: null },
+    { current: "" },
+    { current: [] },
+    { current: {} },
+    { proposed: null },
+    { proposed: [] },
+    { proposed: "" },
+    { proposed: {} },
+    { edited_benefit: null },
+    { dedupe_key: null },
+    { dedupe_key: "" },
+    { dedupe_key: 42 },
+    { dedupeKey: null },
+    { dedupeKey: [] },
+    { benefit_id: null },
+    { benefit_id: 42 },
+    { current_benefit_id: null },
+    { current_benefit_id: "" },
+    { proposal_index: null },
+    { proposal_index: "" },
+    { condition_hash: null },
+    { conditionHash: "" },
+    { proposalIndex: null },
+  ];
+  for (const target of malformed) {
+    for (
+      const [validator, proposal, extraction] of [
+        [
+          validateV6ApprovalDecisions,
+          v6Proposal,
+          {
+            request_type: "official_benefit_enrichment",
+            parser_version: "benefits-v6",
+            proposals: [v6Proposal],
+          },
+        ],
+        [
+          validateV5ApprovalDecisions,
+          v5Proposal,
+          {
+            request_type: "official_benefit_enrichment",
+            parser_version: "benefits-v5",
+            proposals: [v5Proposal],
+          },
+        ],
+      ] as const
+    ) {
+      let error: unknown;
+      try {
+        await validator(
+          [{ action: "reject", ...target }],
+          extraction,
+          "card-1",
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      assert(
+        error instanceof Error,
+        `${String(proposal.dedupeKey)} accepted present target ${
+          JSON.stringify(target)
+        }`,
+      );
+    }
+  }
+});
+
+Deno.test("v6 conflict-current rejection emits the exact SQL no-mutation target", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const liveBenefitId = "11111111-1111-4111-8111-111111111111";
+  const current = { ...proposal, liveBenefitId };
+  let unresolved: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      [{ action: "approve", benefit: proposal }],
+      {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [proposal],
+        diff: {
+          additions: [proposal],
+          conflicts: [{
+            code: "conflicting_current_terms",
+            current: [current],
+            proposed: [],
+          }],
+        },
+      },
+      "card-1",
+    );
+  } catch (caught) {
+    unresolved = caught;
+  }
+  assert(
+    unresolved instanceof Error &&
+      (unresolved as { code?: string }).code ===
+        "conflicting_proposal_decisions",
+    "current-only conflict completed without one explicit current resolution",
+  );
+  const decisions = await validateV6ApprovalDecisions(
+    [{ action: "reject", benefit_id: liveBenefitId, current }],
+    {
+      request_type: "official_benefit_enrichment",
+      parser_version: "benefits-v6",
+      proposals: [proposal],
+      diff: {
+        conflicts: [{
+          code: "conflicting_current_terms",
+          current: [current],
+          proposed: [],
+        }],
+      },
+    },
+    "card-1",
   );
 
   assert(
-    invalid.status === 400,
-    "unsupported approval decision was accepted",
+    decisions.length === 1 &&
+      decisions[0].action === "reject" &&
+      decisions[0].benefit_id === liveBenefitId &&
+      !Object.hasOwn(decisions[0], "proposal_index") &&
+      !Object.hasOwn(decisions[0], "canonical_envelope"),
+    "conflict-current reject did not preserve the SQL audit-only wire shape",
+  );
+});
+
+Deno.test("v5 conflict-current rejection keeps rollback wire parity", async () => {
+  const [proposal] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 10% cashback on dining spends.",
+    contentHash: "a".repeat(64),
+  }], "benefits-v5");
+  assert(proposal, "v5 conflict-current fixture did not extract");
+  const liveBenefitId = "11111111-1111-4111-8111-111111111111";
+  const current = { ...proposal, liveBenefitId };
+  const extraction = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v5",
+    proposals: [proposal],
+    diff: {
+      conflicts: [{
+        code: "conflicting_current_terms",
+        current: [current],
+        proposed: [],
+      }],
+    },
+  };
+  let unresolved: unknown;
+  try {
+    await validateV5ApprovalDecisions(
+      [{ action: "approve", benefit: proposal }],
+      extraction,
+      "card-1",
+    );
+  } catch (caught) {
+    unresolved = caught;
+  }
+  assert(
+    unresolved instanceof Error &&
+      (unresolved as { code?: string }).code ===
+        "conflicting_proposal_decisions",
+    "v5 current-only conflict completed without one explicit current resolution",
+  );
+  const decisions = await validateV5ApprovalDecisions(
+    [{ action: "reject", benefit_id: liveBenefitId, current }],
+    extraction,
+    "card-1",
   );
   assert(
-    approved.status === 200,
-    "matching pending staging was not approved",
+    decisions.length === 1 && decisions[0].benefit_id === liveBenefitId &&
+      !Object.hasOwn(decisions[0], "proposal_index"),
+    "v5 conflict-current target drifted from v6 SQL wire",
+  );
+});
+
+Deno.test("v6 validates every canonical and live diff target before decisions", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const liveBenefitId = "11111111-1111-4111-8111-111111111111";
+  const current = { ...proposal, liveBenefitId };
+  const duplicateDiffs = [
+    {
+      additions: [proposal],
+      conflicts: [{
+        code: "conflicting_proposed_terms",
+        current: [],
+        proposed: [proposal],
+      }],
+    },
+    {
+      modifications: [{ current, proposed: proposal }],
+      conflicts: [{
+        code: "conflicting_current_terms",
+        current: [current],
+        proposed: [],
+      }],
+    },
+  ];
+
+  for (const diff of duplicateDiffs) {
+    let error: unknown;
+    try {
+      await validateV6ApprovalDecisions(
+        [{ action: "reject" }],
+        {
+          request_type: "official_benefit_enrichment",
+          parser_version: "benefits-v6",
+          proposals: [proposal],
+          diff,
+        },
+        "card-1",
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert(
+      error instanceof Error &&
+        (error as { code?: string }).code ===
+          "duplicate_staged_decision_target",
+      "duplicate diff target survived global validation",
+    );
+  }
+});
+
+Deno.test("v6 conflicting proposals require exactly one explicit resolution", async () => {
+  const [first] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const [second] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 20% cashback on dining spends.",
+      contentHash: "b".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const current = {
+    ...first,
+    liveBenefitId: "11111111-1111-4111-8111-111111111111",
+  };
+  const extraction = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v6",
+    proposals: [first, second],
+    diff: {
+      conflicts: [{
+        code: "conflicting_proposed_terms",
+        current: [current],
+        proposed: [first, second],
+      }],
+    },
+  };
+
+  let bulk: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      [
+        { action: "approve", benefit: first },
+        { action: "approve", benefit: second },
+      ],
+      extraction,
+      "card-1",
+    );
+  } catch (caught) {
+    bulk = caught;
+  }
+  assert(
+    bulk instanceof Error &&
+      (bulk as { code?: string }).code === "conflicting_proposal_decisions",
+    "one conflict group approved every contradictory proposal",
+  );
+
+  const selected = await validateV6ApprovalDecisions(
+    [{ action: "approve", benefit: first }],
+    extraction,
+    "card-1",
+  );
+  assert(selected.length === 1, "explicit conflict selection was rejected");
+
+  const firstRate = Number(first.rate ?? 10);
+  const edited = await validateV6ApprovalDecisions(
+    [{
+      action: "edit",
+      benefit: first,
+      proposed: first,
+      edited_benefit: { ...first, rate: firstRate + 1 },
+    }],
+    extraction,
+    "card-1",
   );
   assert(
-    edited.status === 200,
-    "matching pending staging was not edit-approved",
+    (edited[0].edited_benefit as Record<string, unknown>).rate ===
+      firstRate + 1,
+    "supported material conflict edit was rejected",
   );
-  assert(rpcCalls === 2, "invalid decision reached the approval RPC");
+
+  let unresolved: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      [{ action: "keep_existing", benefit_id: current.liveBenefitId }],
+      extraction,
+      "card-1",
+    );
+  } catch (caught) {
+    unresolved = caught;
+  }
+  assert(
+    unresolved instanceof Error &&
+      (unresolved as { code?: string }).code ===
+        "conflicting_proposal_decisions",
+    "conflict group completed without one proposed resolution",
+  );
+});
+
+Deno.test("v5 and v6 validate every action-specific decision carrier", async () => {
+  const [v6Proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const [v5Proposal] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 10% cashback on dining spends.",
+    contentHash: "a".repeat(64),
+  }], "benefits-v5");
+  assert(v5Proposal, "v5 carrier fixture did not extract");
+
+  for (
+    const [validator, proposal, extraction] of [
+      [
+        validateV6ApprovalDecisions,
+        v6Proposal,
+        {
+          request_type: "official_benefit_enrichment",
+          parser_version: "benefits-v6",
+          proposals: [v6Proposal],
+        },
+      ],
+      [
+        validateV5ApprovalDecisions,
+        v5Proposal,
+        {
+          request_type: "official_benefit_enrichment",
+          parser_version: "benefits-v5",
+          proposals: [v5Proposal],
+        },
+      ],
+    ] as const
+  ) {
+    const rate = Number(proposal.rate ?? 10);
+    const contradictory = [
+      {
+        action: "approve",
+        benefit: proposal,
+        proposed: { ...proposal, title: "Contradictory proposal carrier" },
+      },
+      {
+        action: "approve",
+        benefit: proposal,
+        edited_benefit: { ...proposal, rate: rate + 1 },
+      },
+      {
+        action: "approve",
+        benefit: proposal,
+        current: { liveBenefitId: "11111111-1111-4111-8111-111111111111" },
+      },
+      {
+        action: "edit",
+        benefit: { ...proposal, title: "Contradictory original carrier" },
+        edited_benefit: { ...proposal, rate: rate + 1 },
+      },
+      {
+        action: "edit",
+        edited_benefit: { ...proposal, rate: rate + 1 },
+        editedBenefit: { ...proposal, rate: rate + 2 },
+      },
+    ];
+    for (const decision of contradictory) {
+      let error: unknown;
+      try {
+        await validator([decision], extraction, "card-1");
+      } catch (caught) {
+        error = caught;
+      }
+      assert(
+        error instanceof Error,
+        `${
+          String(proposal.dedupeKey)
+        } discarded contradictory carriers for ${decision.action}`,
+      );
+    }
+  }
+});
+
+Deno.test("v5 and v6 reject contradictory aliases inside every carrier action", async () => {
+  const [v6Proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const [v5Proposal] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 10% cashback on dining spends.",
+    contentHash: "a".repeat(64),
+  }], "benefits-v5");
+  assert(v5Proposal, "v5 nested-alias fixture did not extract");
+
+  for (
+    const [validator, proposal, parserVersion] of [
+      [validateV6ApprovalDecisions, v6Proposal, "benefits-v6"],
+      [validateV5ApprovalDecisions, v5Proposal, "benefits-v5"],
+    ] as const
+  ) {
+    const rate = Number(proposal.rate ?? 10);
+    const config = (proposal.valueConfig ?? {}) as Record<string, unknown>;
+    const extraction = {
+      request_type: "official_benefit_enrichment",
+      parser_version: parserVersion,
+      proposals: [proposal],
+    };
+    const contradictory = [
+      {
+        action: "approve",
+        benefit: {
+          ...proposal,
+          dedupe_key: "contradictory-nested-dedupe",
+        },
+      },
+      {
+        action: "approve",
+        benefit: { ...proposal, dedupe_key: "" },
+      },
+      {
+        action: "edit",
+        edited_benefit: {
+          ...proposal,
+          rate: rate + 1,
+          valueConfig: config,
+          value_config: { ...config, cap: 999 },
+        },
+      },
+      {
+        action: "edit",
+        edited_benefit: {
+          ...proposal,
+          rate: rate + 1,
+          value_config: null,
+        },
+      },
+      {
+        action: "reject",
+        benefit: {
+          ...proposal,
+          valueConfig: config,
+          value_config: { ...config, threshold: 999 },
+        },
+      },
+    ];
+    for (const decision of contradictory) {
+      let error: unknown;
+      try {
+        await validator([decision], extraction, "card-1");
+      } catch (caught) {
+        error = caught;
+      }
+      assert(
+        error instanceof Error,
+        `${
+          String(proposal.dedupeKey)
+        } accepted nested aliases for ${decision.action}`,
+      );
+    }
+    const exactAliases = await validator(
+      [{
+        action: "approve",
+        benefit: {
+          ...proposal,
+          dedupe_key: proposal.dedupeKey,
+          valueConfig: config,
+          value_config: config,
+        },
+      }],
+      extraction,
+      "card-1",
+    );
+    assert(
+      exactAliases.length === 1,
+      `${String(proposal.dedupeKey)} rejected identical nested aliases`,
+    );
+  }
+});
+
+Deno.test("v5 and v6 require exact nonempty decision aliases", async () => {
+  const [v6Proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const [v5Proposal] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 10% cashback on dining spends.",
+    contentHash: "a".repeat(64),
+  }], "benefits-v5");
+  assert(v5Proposal, "v5 alias fixture did not extract");
+  const liveBenefitId = "11111111-1111-4111-8111-111111111111";
+  const otherLiveBenefitId = "22222222-2222-4222-8222-222222222222";
+
+  for (
+    const [validator, proposal, parserVersion] of [
+      [validateV6ApprovalDecisions, v6Proposal, "benefits-v6"],
+      [validateV5ApprovalDecisions, v5Proposal, "benefits-v5"],
+    ] as const
+  ) {
+    const current = { ...proposal, liveBenefitId };
+    const extraction = {
+      request_type: "official_benefit_enrichment",
+      parser_version: parserVersion,
+      proposals: [proposal],
+      diff: { unchanged: [{ current, proposed: proposal }] },
+    };
+    const contradictory = [
+      {
+        action: "approve",
+        benefit: proposal,
+        dedupe_key: proposal.dedupeKey,
+        dedupeKey: "contradictory-dedupe",
+      },
+      { action: "approve", benefit: proposal, dedupe_key: null },
+      {
+        action: "reject",
+        benefit: proposal,
+        dedupe_key: proposal.dedupeKey,
+        dedupeKey: "contradictory-dedupe",
+      },
+      {
+        action: "reject",
+        current,
+        benefit_id: liveBenefitId,
+        current_benefit_id: otherLiveBenefitId,
+      },
+    ];
+    for (const decision of contradictory) {
+      let error: unknown;
+      try {
+        await validator([decision], extraction, "card-1");
+      } catch (caught) {
+        error = caught;
+      }
+      assert(
+        error instanceof Error,
+        `${
+          String(proposal.dedupeKey)
+        } accepted contradictory aliases for ${decision.action}`,
+      );
+    }
+    const exactDedupeAliases = await validator(
+      [{
+        action: "approve",
+        benefit: proposal,
+        dedupe_key: proposal.dedupeKey,
+        dedupeKey: proposal.dedupeKey,
+      }],
+      extraction,
+      "card-1",
+    );
+    assert(
+      exactDedupeAliases.length === 1,
+      `${String(proposal.dedupeKey)} rejected identical dedupe aliases`,
+    );
+    const exactCurrentAliases = await validator(
+      [{
+        action: "reject",
+        current,
+        benefit_id: liveBenefitId,
+        current_benefit_id: liveBenefitId,
+        dedupe_key: proposal.dedupeKey,
+        dedupeKey: proposal.dedupeKey,
+      }],
+      extraction,
+      "card-1",
+    );
+    assert(
+      exactCurrentAliases.length === 1,
+      `${String(proposal.dedupeKey)} rejected identical current aliases`,
+    );
+  }
+});
+
+Deno.test("v6 approval binds the full projection and edits preserve immutable fields", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text:
+        "Get 10% cashback on dining spends, capped at ₹500 per month until 31 December 2027.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const extraction = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v6",
+    proposals: [proposal],
+  };
+  const rate = Number(proposal.rate ?? 10);
+  const mutations = [
+    { ...proposal, rate: rate + 1 },
+    {
+      ...proposal,
+      valueConfig: { ...proposal.valueConfig, cap: 999 },
+    },
+    {
+      ...proposal,
+      exclusions: {
+        ...proposal.exclusions,
+        merchants: ["tampered merchant"],
+      },
+    },
+    { ...proposal, sourceIdentity: "f".repeat(64) },
+    { ...proposal, effectiveTo: "2099-12-31" },
+  ];
+  for (const mutated of mutations) {
+    let error: unknown;
+    try {
+      await validateV6ApprovalDecisions(
+        [{ action: "approve", benefit: mutated }],
+        extraction,
+        "card-1",
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert(error instanceof Error, "mutated approval projection was accepted");
+  }
+
+  let immutableEdit: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      [{
+        action: "edit",
+        edited_benefit: {
+          ...proposal,
+          rate: rate + 1,
+          sourceIdentity: "f".repeat(64),
+        },
+      }],
+      extraction,
+      "card-1",
+    );
+  } catch (caught) {
+    immutableEdit = caught;
+  }
+  assert(
+    immutableEdit instanceof Error &&
+      (immutableEdit as { code?: string }).code ===
+        "immutable_benefit_projection",
+    "edit changed immutable source identity",
+  );
+
+  const supported = await validateV6ApprovalDecisions(
+    [{
+      action: "edit",
+      edited_benefit: { ...proposal, rate: rate + 1 },
+    }],
+    extraction,
+    "card-1",
+  );
+  assert(
+    (supported[0].edited_benefit as Record<string, unknown>).rate === rate + 1,
+    "documented commercial edit was rejected",
+  );
+});
+
+Deno.test("v6 decision validation bounds one review payload before identity work", async () => {
+  let error: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      Array.from({ length: 65 }, (_, index) => ({
+        action: "reject",
+        reason: `reason-${index}`,
+      })),
+      {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [],
+      },
+      "card-1",
+    );
+  } catch (caught) {
+    error = caught;
+  }
+  assert(
+    error instanceof Error &&
+      (error as { code?: string }).code === "benefit_decisions_limit",
+    "oversized review decisions were not rejected at the boundary",
+  );
+});
+
+Deno.test("v6 admin identity terms remain explicitly bounded", () => {
+  const terms = Array.from({ length: 40 }, (_, index) => `term-${index}`);
+  const structured = {
+    additional: { source_terms: terms },
+    categories: ["fuel"],
+    days: ["sunday"],
+    mcc_codes: ["5541"],
+    merchants: ["example merchant"],
+    transaction_types: ["wallet reload"],
+  };
+  const presented = presentBenefitJob({
+    parser_version: "benefits-v6",
+    card_benefits_staging: {
+      parser_version: "benefits-v6",
+      extracted_data: {
+        parser_version: "benefits-v6",
+        proposals: [{
+          benefitId: `card-benefit-v2:card-1:${"a".repeat(64)}`,
+          dedupeKey: `card-benefit-v2:card-1:${"a".repeat(64)}`,
+          conditionHash: "a".repeat(64),
+          offerSubject: "cashback:cashback:dining",
+          sourceIdentity: "b".repeat(64),
+          title: "Dining cashback",
+          description: "Get cashback on dining spends.",
+          category: "cashback",
+          valueType: "cashback",
+          parserVersion: "benefits-v6",
+          sourceUrl: "https://issuer.example/card",
+          sourceExcerpt: "Get cashback on dining spends.",
+          contentHash: "c".repeat(64),
+          restrictions: terms,
+          confidence: { category: 0.9 },
+          evidence: { category: "cashback" },
+          warnings: [],
+          valueConfig: { restrictions: terms, exclusions: structured },
+          exclusions: structured,
+        }],
+      },
+    },
+  }) as Record<string, any>;
+  const proposal = presented.staging.extracted_data.proposals[0];
+
+  assert(
+    proposal.valueConfig.restrictions.length === 32,
+    "admin restrictions exceeded the v6 bound",
+  );
+  assert(
+    proposal.exclusions.additional.source_terms.length === 32,
+    "admin exclusions exceeded the v6 bound",
+  );
+  assert(
+    proposal.valueConfig.exclusions.mcc_codes.join(",") === "5541" &&
+      proposal.valueConfig.exclusions.transaction_types.join(",") ===
+        "wallet reload",
+    "admin value_config stripped structured exclusion dimensions",
+  );
+});
+
+Deno.test("admin DTO privacy recursively redacts URL secrets in values and object keys", () => {
+  const secret =
+    "https://user:password@issuer.example/terms?token=private#fragment";
+  const sanitized = sanitizeAdminDto({
+    description: `Read ${secret}`,
+    partners: [`Partner ${secret}`],
+    nested: {
+      [`evidence-${secret}`]: {
+        list: [`See ${secret}`],
+      },
+    },
+  });
+  const serialized = JSON.stringify(sanitized);
+  for (const leaked of ["user:", "password", "token=", "#fragment"]) {
+    assert(!serialized.includes(leaked), `admin DTO leaked ${leaked}`);
+  }
+  assert(
+    serialized.includes("https://issuer.example/terms"),
+    "privacy boundary discarded safe issuer provenance",
+  );
+});
+
+Deno.test("admin DTO privacy covers encoded, relative, protocol-relative, and bare-host secrets", () => {
+  const fixtures = [
+    "//issuer.example/path?token=secret#fragment",
+    "issuer.example/path?api_key=secret#fragment",
+    "issuer.example?token=secret#fragment",
+    "user:pass@issuer.example?token=secret#fragment",
+    "/terms?session=secret#fragment",
+    "https%3A%2F%2Fuser%3Apass%40issuer.example%2Fterms%3Ftoken%3Dsecret%23fragment",
+    "https%253A%252F%252Fuser%253Apass%2540issuer.example%252Fterms%253Ftoken%253Dsecret%2523fragment",
+    "https%25253A%25252F%25252Fuser%25253Apass%252540issuer.example%25252Fterms%25253Ftoken%25253Dsecret%252523fragment",
+    "https://issuer.example/terms&#63;token=secret&#35;fragment",
+    "https&amp;#58;//user&amp;#58;pass&amp;#64;issuer.example/terms&amp;#63;token=secret&amp;#35;fragment",
+    "https%3A%2F%2Fuser%26%2358%3Bpass%26%2364%3Bissuer.example%2Fterms%26%2363%3Btoken=secret%26%2335%3Bfragment",
+    "Save 20% today and keep literal 100%25 notation",
+  ];
+  const sanitized = sanitizeAdminDto({
+    partners: ["BookMyShow", ...fixtures],
+    nested: Object.fromEntries(fixtures.map((fixture) => [fixture, fixture])),
+  });
+  const serialized = JSON.stringify(sanitized);
+  for (
+    const secret of [
+      "token",
+      "api_key",
+      "session",
+      "secret",
+      "fragment",
+      "user:",
+      "pass@",
+      "%3F",
+      "&#63;",
+    ]
+  ) {
+    assert(
+      !serialized.toLowerCase().includes(secret.toLowerCase()),
+      `encoded DTO leaked ${secret}`,
+    );
+  }
+  assert(
+    serialized.includes("BookMyShow"),
+    "ordinary partner label was redacted",
+  );
+  assert(
+    serialized.includes("Save 20% today") &&
+      serialized.includes("100%25 notation"),
+    "ordinary percent text was corrupted",
+  );
+});
+
+Deno.test("real benefit presentation strips structured userinfo without treating email prose as credentials", () => {
+  const credentials = [
+    "alice@issuer.example:443/terms?token=secret#fragment",
+    "alice:password@issuer.example:443/terms?token=secret#fragment",
+    "alice@127.0.0.1:8080/terms?token=secret",
+    "alice:password@127.0.0.1:8080/terms?token=secret",
+    "alice@[2001:db8::1]:8443/terms#secret",
+    "alice:password@[2001:db8::1]:8443/terms#secret",
+    "alice@localhost:8000/terms?token=secret",
+    "alice:password@localhost:8000/terms?token=secret",
+    "alice@internal/terms?token=secret",
+    "alice:password@internal/terms?token=secret",
+    "alice%3Apassword%40localhost%3A8000%2Fterms%3Ftoken=secret",
+    "alice%253Apassword%2540%255B2001%253Adb8%253A%253A1%255D%253A8443%252Fterms%253Ftoken=secret",
+    "alice&amp;#58;password&amp;#64;internal/terms&amp;#63;token=secret",
+  ];
+  for (const credential of credentials) {
+    const presented = presentBenefitJob({
+      id: "job-1",
+      issuer: `Issuer ${credential}`,
+      parser_version: "benefits-v6",
+      card_catalog: { id: "card-1", bank: credential, card_name: credential },
+    });
+    const serialized = JSON.stringify(presented).toLowerCase();
+    for (const leaked of ["alice", "password", "token=", "#secret"]) {
+      assert(!serialized.includes(leaked), `presented DTO leaked ${leaked}`);
+    }
+  }
+
+  const keyPresentation = sanitizeAdminDto(
+    Object.fromEntries(
+      credentials.map((credential) => [credential, credential]),
+    ),
+  );
+  const keyJson = JSON.stringify(keyPresentation).toLowerCase();
+  for (const leaked of ["alice", "password", "token=", "#secret"]) {
+    assert(!keyJson.includes(leaked), `presented DTO key leaked ${leaked}`);
+  }
+
+  const ordinary = sanitizeAdminDto({
+    "support@example.com": "Email support@example.com or save 25% today",
+  });
+  const ordinaryJson = JSON.stringify(ordinary);
+  assert(
+    ordinaryJson.includes("support@example.com") &&
+      ordinaryJson.includes("25%"),
+    "ordinary email or percent prose was treated as URL userinfo",
+  );
+});
+
+Deno.test("admin privacy strips no-tail credentials but preserves ordinary percent and email prose", () => {
+  const secrets = [
+    "alice:secret@issuer.example",
+    "alice@issuer.example:8443",
+    "alice:secret@192.0.2.1",
+    "alice@[2001:db8::1]",
+    "alice@localhost",
+    "alice@internal",
+    "alice%3Asecret%40issuer.example",
+    "alice&#x3a;secret%40%5b2001:db8::1%5d",
+  ];
+  for (const secret of secrets) {
+    const value = sanitizeAdminDto({ [secret]: secret }) as Record<
+      string,
+      unknown
+    >;
+    const rendered = JSON.stringify(value);
+    assert(!rendered.includes("alice"), `userinfo leaked for ${secret}`);
+  }
+  for (
+    const ordinary of [
+      "alice@issuer.example",
+      "100% of ₹500 is ₹500",
+      "modulo 10%40 remains ordinary text",
+      "encoded math 25%2F5 is prose",
+    ]
+  ) {
+    assert(
+      sanitizeAdminDto({ value: ordinary }).value === ordinary,
+      `ordinary text changed: ${ordinary}`,
+    );
+  }
+  const encodedSecret = "https%3A%2F%2Fissuer.example%2Fcard%3Ftoken%3Dsecret";
+  assert(
+    !String(sanitizeAdminDto({ value: encodedSecret }).value).includes("token"),
+    "encoded URL secret survived structural probing",
+  );
+});
+
+Deno.test("admin privacy scans punctuation-delimited userinfo in real keys and values", () => {
+  const credentials = [
+    "[alice:secret@issuer.example]",
+    "{alice:secret@issuer.example}",
+    "/alice:secret@issuer.example,",
+    "(alice:secret@issuer.example).",
+    "alice@issuer.example:8443",
+    "alice:secret@192.0.2.1;",
+    "alice:secret@[2001:db8::1],",
+    "alice@localhost/path",
+    "alice@internal/path",
+    "%255Balice%253Asecret%2540%255B2001%253Adb8%253A%253A1%255D%255D",
+  ];
+  const payload = sanitizeAdminDto(Object.fromEntries(
+    credentials.map((credential) => [credential, credential]),
+  ));
+  const rendered = JSON.stringify(payload).toLowerCase();
+  for (const leaked of ["alice", "secret"]) {
+    assert(!rendered.includes(leaked), `punctuation DTO leaked ${leaked}`);
+  }
+  for (
+    const ordinary of [
+      "alice@issuer.example",
+      "Save 100% of ₹500",
+      "modulo 10%40 remains ordinary text",
+      "25%2F5 is prose",
+    ]
+  ) {
+    assert(
+      sanitizeAdminDto({ value: ordinary }).value === ordinary,
+      `candidate scanner changed ordinary text: ${ordinary}`,
+    );
+  }
+});
+
+Deno.test("admin presentation rejects oversized or cyclic input before traversing a displayed subset", () => {
+  const oversizedLanes = [
+    {
+      extracted_data: { proposals: Array.from({ length: 10_000 }, () => ({})) },
+    },
+    { source_evidence: Array.from({ length: 10_000 }, () => ({})) },
+    { benefit_decisions: Array.from({ length: 10_000 }, () => ({})) },
+    { source_evidence: Array.from({ length: 33 }, () => ({})) },
+    { benefit_decisions: Array.from({ length: 65 }, () => ({})) },
+    { extracted_data: { proposals: Array.from({ length: 65 }, () => ({})) } },
+  ];
+  for (const staging of oversizedLanes) {
+    const presented = presentBenefitJob({
+      id: "job-oversized",
+      status: "staged",
+      parser_version: "benefits-v6",
+      card_benefits_staging: staging,
+    }) as Record<string, unknown>;
+    assert(
+      presented.presentation_truncated === true &&
+        presented.presentation_invalid === true &&
+        JSON.stringify(presented).length < 2_000,
+      "oversized staging was partially displayed without an invalid marker",
+    );
+  }
+
+  const cyclic: Record<string, unknown> = { safe: "value" };
+  cyclic.self = cyclic;
+  const cyclicResult = sanitizeAdminDto(cyclic) as Record<string, unknown>;
+  assert(
+    cyclicResult.presentation_truncated === true &&
+      cyclicResult.presentation_invalid === true,
+    "runtime cycle was traversed or silently omitted",
+  );
+  const largeKeyResult = sanitizeAdminDto({
+    ["k".repeat(9_000)]: "value",
+  }) as Record<string, unknown>;
+  assert(
+    largeKeyResult.presentation_truncated === true,
+    "oversized object key was silently truncated",
+  );
+  const byteResult = sanitizeAdminDto({ value: "x".repeat(200_000) }) as Record<
+    string,
+    unknown
+  >;
+  assert(
+    byteResult.presentation_truncated === true &&
+      JSON.stringify(byteResult).length < 2_000,
+    "aggregate DTO byte budget was not enforced",
+  );
+  assert(
+    JSON.stringify(sanitizeAdminDto({ partner: "BookMyShow", rate: 5 })) ===
+      '{"partner":"BookMyShow","rate":5}',
+    "ordinary bounded presentation changed",
+  );
+});
+
+Deno.test("canonical envelope limits reject Edge-SQL drift boundaries before hashing", async () => {
+  const cardId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const base = {
+    title: "Dining cashback",
+    category: "cashback",
+    valueType: "cashback",
+    offerSubject: "cashback:cashback:dining",
+    rate: 10,
+    restrictions: ["x".repeat(500)],
+    exclusions: [],
+    partners: [],
+    regions: ["IN"],
+  };
+  await buildCanonicalPublicationEnvelope(cardId, base);
+  await buildCanonicalPublicationEnvelope(cardId, {
+    ...base,
+    restrictions: Array.from({ length: 64 }, () => "term"),
+  });
+  const withExtraKeys = (count: number) => ({
+    ...base,
+    ...Object.fromEntries(
+      Array.from({ length: count }, (_, index) => [`extra_${index}`, index]),
+    ),
+  });
+  await buildCanonicalPublicationEnvelope(cardId, withExtraKeys(247));
+  const nested = (objectCount: number) => {
+    let value: unknown = "leaf";
+    for (let index = 0; index < objectCount; index += 1) {
+      value = { next: value };
+    }
+    return value;
+  };
+  await buildCanonicalPublicationEnvelope(cardId, {
+    ...base,
+    nested: nested(7),
+  });
+
+  for (
+    const invalid of [
+      { ...base, restrictions: ["x".repeat(501)] },
+      { ...base, restrictions: Array.from({ length: 65 }, () => "term") },
+      {
+        ...base,
+        valueConfig: { platform: "x".repeat(48 * 1024) },
+      },
+      { ...base, padding: "x".repeat(132 * 1024) },
+      withExtraKeys(248),
+      { ...base, nested: nested(8) },
+    ]
+  ) {
+    let error: unknown;
+    try {
+      await buildCanonicalPublicationEnvelope(cardId, invalid);
+    } catch (caught) {
+      error = caught;
+    }
+    assert(error instanceof Error, "out-of-domain Edge envelope was accepted");
+  }
+});
+
+Deno.test("canonical publication parity requires nonempty terms and bounded recursive keys", async () => {
+  const base = {
+    title: "Dining cashback",
+    category: "cashback",
+    valueType: "cashback",
+    offerSubject: "cashback:cashback:dining",
+    rate: 10,
+    restrictions: [],
+    exclusions: [],
+    partners: [],
+  };
+  await buildCanonicalPublicationEnvelope("card-1", {
+    ...base,
+    valueConfig: { ["k".repeat(500)]: "value" },
+  });
+  for (
+    const invalid of [
+      { ...base, title: "" },
+      { ...base, valueType: "" },
+      Object.fromEntries(
+        Object.entries(base).filter(([key]) => key !== "title"),
+      ),
+      Object.fromEntries(
+        Object.entries(base).filter(([key]) => key !== "valueType"),
+      ),
+      { ...base, valueConfig: { ["k".repeat(501)]: "value" } },
+    ]
+  ) {
+    let error: unknown;
+    try {
+      await buildCanonicalPublicationEnvelope("card-1", invalid);
+    } catch (caught) {
+      error = caught;
+    }
+    assert(error instanceof Error, "Edge accepted a SQL-invalid envelope");
+  }
+});
+
+Deno.test("every locked proposal is bounded and shaped before subset approval", async () => {
+  const proposals = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text:
+        "Get 10% cashback on dining spends. Get 5% cashback on fuel spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  assert(proposals.length === 2, "multi-proposal fixture did not extract");
+  const extraction = (items: unknown[]) => ({
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v6",
+    proposals: items,
+  });
+  const valid = await validateV6ApprovalDecisions(
+    [{ action: "approve", benefit: proposals[0] }],
+    extraction(proposals),
+    "card-1",
+  );
+  assert(valid.length === 1, "valid multi-proposal staging was rejected");
+
+  let deep: unknown = "leaf";
+  for (let index = 0; index < 9; index += 1) deep = { next: deep };
+  const corrupt = [
+    { ...proposals[1], unknown: "x".repeat(200_000) },
+    { ...proposals[1], unknown: "small" },
+    proposals[0],
+    { ...proposals[1], valueConfig: { deep } },
+    {
+      ...proposals[1],
+      valueConfig: Object.fromEntries(
+        Array.from({ length: 257 }, (_, index) => [`key_${index}`, index]),
+      ),
+    },
+    { ...proposals[1], partners: [1] },
+    { ...proposals[1], confidence: { extraction: "high" } },
+    { ...proposals[1], sourceUrls: [proposals[1].sourceUrl, 42] },
+    { ...proposals[1], description: 4 },
+    { ...proposals[1], valueConfig: [] },
+    { ...proposals[1], warnings: [false] },
+  ];
+  for (const item of corrupt) {
+    let error: unknown;
+    try {
+      await validateV6ApprovalDecisions(
+        [{ action: "approve", benefit: proposals[0] }],
+        extraction([proposals[0], item]),
+        "card-1",
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert(error instanceof Error, "corrupt unselected proposal was accepted");
+    const presented = presentBenefitJob({
+      card_benefits_staging: [{
+        extracted_data: extraction([proposals[0], item]),
+      }],
+    }) as Record<string, unknown>;
+    assert(
+      presented.presentation_invalid === true,
+      "corrupt unselected proposal was presented as approvable",
+    );
+  }
+});
+
+Deno.test("every scalar valueConfig field rejects composite values in an unselected proposal", async () => {
+  const proposals = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text:
+        "Get 10% cashback on dining spends. Get 5% cashback on fuel spends.",
+      contentHash: "f".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  assert(
+    proposals.length === 2,
+    "multi-proposal scalar fixture did not extract",
+  );
+  await validateV6ApprovalDecisions(
+    [{ action: "approve", benefit: proposals[0] }],
+    {
+      request_type: "official_benefit_enrichment",
+      parser_version: "benefits-v6",
+      proposals,
+    },
+    "card-1",
+  );
+
+  const scalarFields = [
+    "category",
+    "discount_type",
+    "discount_percent",
+    "discount_amount",
+    "max_discount_per_transaction",
+    "max_usage_per_month",
+    "max_usage_per_period",
+    "usage_period",
+    "monthly_cap",
+    "annual_cap",
+    "unit",
+    "milestone_type",
+    "threshold_amount",
+    "reward_value",
+    "multiplier",
+    "base_rate",
+    "currency_unit",
+    "platform",
+    "value",
+    "rate",
+    "cap",
+    "threshold",
+    "frequency",
+    "period",
+    "offer_subject",
+  ];
+  for (const field of scalarFields) {
+    for (const composite of [{ nested: "value" }, ["value"]]) {
+      let error: unknown;
+      try {
+        await validateV6ApprovalDecisions(
+          [{ action: "approve", benefit: proposals[0] }],
+          {
+            request_type: "official_benefit_enrichment",
+            parser_version: "benefits-v6",
+            proposals: [
+              proposals[0],
+              {
+                ...proposals[1],
+                valueConfig: {
+                  ...proposals[1].valueConfig,
+                  [field]: composite,
+                },
+              },
+            ],
+          },
+          "card-1",
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      assert(
+        error instanceof Error,
+        `${
+          Array.isArray(composite) ? "array" : "object"
+        } ${field} value survived locked validation`,
+      );
+    }
+  }
+});
+
+Deno.test("all staged proposals are canonicalized before approval and duplicate targets never reach RPC", async () => {
+  const [proposal] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 10% cashback on dining spends.",
+    contentHash: "d".repeat(64),
+  }], "benefits-v5");
+  assert(proposal != null, "v5 duplicate target fixture did not extract");
+  const duplicate = {
+    ...proposal,
+    dedupeKey: `${proposal.dedupeKey}:other`,
+    // v5 publication has no semantic-key lane, so this optional presentation
+    // field cannot make otherwise identical publication targets distinct.
+    offerSubject: "cosmetic v5 subject",
+  };
+  const extraction = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v5",
+    proposals: [proposal, duplicate],
+  };
+  let error: unknown;
+  try {
+    await validateV5ApprovalDecisions(
+      [{ action: "approve", benefit: proposal }],
+      extraction,
+      "card-1",
+    );
+  } catch (caught) {
+    error = caught;
+  }
+  assert(
+    error instanceof Error,
+    "duplicate canonical publication target passed",
+  );
+
+  let rpcCalls = 0;
+  let handlerError: unknown;
+  try {
+    await handleBenefitAdminAction({
+      from() {
+        return {
+          select() {
+            return {
+              eq() {
+                return {
+                  single: async () => ({
+                    data: {
+                      id: "staging-1",
+                      card_id: "card-1",
+                      status: "pending",
+                      parser_version: "benefits-v5",
+                      extracted_data: extraction,
+                    },
+                    error: null,
+                  }),
+                };
+              },
+            };
+          },
+        };
+      },
+      async rpc() {
+        rpcCalls += 1;
+        return { data: [], error: null };
+      },
+    } as never, {
+      action: "benefit-approve",
+      job_id: "job-1",
+      staging_id: "staging-1",
+      decisions: [{ action: "approve", benefit: proposal }],
+    }, { id: "admin-1" });
+  } catch (caught) {
+    handlerError = caught;
+  }
+  assert(handlerError instanceof Error, "duplicate target did not fail closed");
+  assert(rpcCalls === 0, "invalid whole proposal set reached publication RPC");
+});
+
+Deno.test("legacy identity migration is server-derived and client change type is rejected", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "b".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const liveBenefitId = "11111111-1111-4111-8111-111111111111";
+  const current = currentBenefitProposal({
+    benefit_id: liveBenefitId,
+    dedupe_key: "legacy:dining",
+    title: proposal.title,
+    description: proposal.description,
+    benefit_category: "CASHBACK",
+    benefit_type: proposal.valueType,
+    value_config: proposal.valueConfig,
+    exclusions: proposal.exclusions,
+    source_url: proposal.sourceUrl,
+  });
+  assert(current != null, "legacy approval fixture did not reconstruct");
+  const diff = diffBenefits([current], [proposal]);
+  const staged = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v6",
+    proposals: [proposal],
+    diff,
+  };
+  const validated = await validateV6ApprovalDecisions(
+    [{ action: "approve", benefit: proposal }],
+    staged,
+    "card-1",
+  );
+  assert(
+    validated[0].change_type === "identity_migration" &&
+      validated[0].existing_benefit_id === liveBenefitId,
+    "server did not bind the exact legacy replacement",
+  );
+  const replay = await validateV6ApprovalDecisions(
+    [{ action: "approve", benefit: proposal }],
+    staged,
+    "card-1",
+  );
+  assert(
+    stableCanonicalJson(replay) === stableCanonicalJson(validated),
+    "legacy identity migration replay changed its publication decision",
+  );
+  for (const change_type of ["identity_migration", "term_change"]) {
+    let error: unknown;
+    try {
+      await validateV6ApprovalDecisions(
+        [{ action: "approve", benefit: proposal, change_type }],
+        staged,
+        "card-1",
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert(error instanceof Error, "client change_type became authoritative");
+  }
+});
+
+Deno.test("pending v5 rollback approval uses the locked legacy identity migration", async () => {
+  const [proposal] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 10% cashback on dining spends.",
+    contentHash: "c".repeat(64),
+  }], "benefits-v5");
+  assert(proposal != null, "v5 rollback approval fixture did not extract");
+  const liveBenefitId = "22222222-2222-4222-8222-222222222222";
+  const current = currentBenefitProposal({
+    benefit_id: liveBenefitId,
+    dedupe_key: "legacy:approved:dining",
+    title: proposal.title,
+    description: proposal.description,
+    benefit_category: "CASHBACK",
+    benefit_type: proposal.valueType,
+    value_config: {
+      ...proposal.valueConfig,
+      rate: proposal.rate,
+      restrictions: proposal.restrictions,
+    },
+    exclusions: proposal.exclusions,
+    source_url: proposal.sourceUrl,
+  });
+  assert(current != null, "v5 rollback current row did not reconstruct");
+  const staged = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v5",
+    proposals: [proposal],
+    diff: diffBenefits([current], [proposal]),
+  };
+  const validated = await validateV5ApprovalDecisions(
+    [{ action: "approve", benefit: proposal }],
+    staged,
+    "card-1",
+  );
+  assert(
+    validated[0].change_type === "identity_migration" &&
+      validated[0].existing_benefit_id === liveBenefitId,
+    "v5 approval did not bind the locked legacy replacement",
+  );
+  let error: unknown;
+  try {
+    await validateV5ApprovalDecisions(
+      [{ action: "approve", benefit: proposal, change_type: "term_change" }],
+      staged,
+      "card-1",
+    );
+  } catch (caught) {
+    error = caught;
+  }
+  assert(error instanceof Error, "v5 client change_type became authoritative");
+});
+
+Deno.test("v5 rollback preserves reject wire and conflict resolution parity", async () => {
+  const [first] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 10% cashback on dining spends.",
+    contentHash: "a".repeat(64),
+  }], "benefits-v5");
+  const [second] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 20% cashback on dining spends.",
+    contentHash: "b".repeat(64),
+  }], "benefits-v5");
+  assert(
+    first != null && second != null,
+    "v5 conflict fixture did not extract",
+  );
+  const extraction = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v5",
+    proposals: [first, second],
+    diff: {
+      conflicts: [{
+        code: "conflicting_proposed_terms",
+        current: [],
+        proposed: [first, second],
+      }],
+    },
+  };
+
+  for (
+    const fixture of [
+      {
+        decisions: [{ action: "reject", proposed: first }],
+        code: "client_publication_authority_rejected",
+        extraction: {
+          request_type: "official_benefit_enrichment",
+          parser_version: "benefits-v5",
+          proposals: [first],
+        },
+      },
+      {
+        decisions: [
+          { action: "approve", benefit: first },
+          { action: "approve", benefit: second },
+        ],
+        code: "conflicting_proposal_decisions",
+        extraction,
+      },
+    ]
+  ) {
+    let error: unknown;
+    try {
+      await validateV5ApprovalDecisions(
+        fixture.decisions,
+        fixture.extraction,
+        "card-1",
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert(
+      error instanceof Error &&
+        (error as { code?: string }).code === fixture.code,
+      `v5 parity failure did not return ${fixture.code}`,
+    );
+  }
+
+  const selected = await validateV5ApprovalDecisions(
+    [{ action: "approve", benefit: first }],
+    extraction,
+    "card-1",
+  );
+  const global = await validateV5ApprovalDecisions(
+    [{ action: "reject" }],
+    extraction,
+    "card-1",
+  );
+  assert(selected.length === 1, "v5 explicit selection was rejected");
+  assert(
+    !("benefit_id" in global[0]) && !("proposal_index" in global[0]),
+    "v5 global reject acquired an accidental target",
+  );
+});
+
+Deno.test("oversized locked proposal sets cannot approve a displayed subset", async () => {
+  let error: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      [{ action: "reject", reason: "not valid" }],
+      {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: Array.from({ length: 10_000 }, () => ({})),
+      },
+      "card-1",
+    );
+  } catch (caught) {
+    error = caught;
+  }
+  assert(
+    error instanceof Error &&
+      (error as { code?: string }).code ===
+        "invalid_staged_presentation_bounds",
+    "approval accepted an oversized raw proposal set hidden by presentation bounds",
+  );
+});
+
+Deno.test("retirement proof is recomputed from locked complete absence evidence", () => {
+  const base: Record<string, any> = {
+    crawl_observation: {
+      crawl_complete: true,
+      observed_at: "2026-08-19T00:00:00.000Z",
+      absent_benefit_ids: ["card-benefit-v2:card-a:cashback"],
+      absent_legacy_benefit_ids: ["legacy:cashback"],
+    },
+    diff: {
+      possibleRemovals: [{
+        benefit: {
+          liveBenefitId: "11111111-1111-4111-8111-111111111111",
+          benefitId: "card-benefit-v2:card-a:cashback",
+          dedupeKey: "legacy:cashback",
+        },
+        retirementEligible: true,
+        retirementReason: "two_complete_observations",
+        completeAbsenceObservedAt: [
+          "2026-08-12T00:00:00.000Z",
+          "2026-08-19T00:00:00.000Z",
+        ],
+      }],
+    },
+  };
+  assert(
+    validateRetirementDecisionEvidence(
+      base,
+      "11111111-1111-4111-8111-111111111111",
+    ).reason ===
+      "two_complete_observations",
+    "exact corroborated retirement was rejected",
+  );
+  const invalid = [
+    {
+      label: "incomplete",
+      patch: {
+        crawl_observation: { ...base.crawl_observation, crawl_complete: false },
+      },
+    },
+    {
+      label: "absent mismatch",
+      patch: {
+        crawl_observation: {
+          ...base.crawl_observation,
+          absent_benefit_ids: ["other"],
+          absent_legacy_benefit_ids: [],
+        },
+      },
+    },
+    {
+      label: "one observation",
+      patch: {
+        diff: {
+          possibleRemovals: [{
+            ...base.diff.possibleRemovals[0],
+            completeAbsenceObservedAt: ["2026-08-19T00:00:00.000Z"],
+          }],
+        },
+      },
+    },
+    {
+      label: "less than seven days",
+      patch: {
+        diff: {
+          possibleRemovals: [{
+            ...base.diff.possibleRemovals[0],
+            completeAbsenceObservedAt: [
+              "2026-08-13T00:00:00.000Z",
+              "2026-08-19T00:00:00.000Z",
+            ],
+          }],
+        },
+      },
+    },
+    {
+      label: "current observation missing from history",
+      patch: {
+        diff: {
+          possibleRemovals: [{
+            ...base.diff.possibleRemovals[0],
+            completeAbsenceObservedAt: [
+              "2026-08-11T00:00:00.000Z",
+              "2026-08-18T00:00:00.000Z",
+            ],
+          }],
+        },
+      },
+    },
+  ];
+  for (const fixture of invalid) {
+    let error: unknown;
+    try {
+      validateRetirementDecisionEvidence(
+        { ...base, ...fixture.patch },
+        "11111111-1111-4111-8111-111111111111",
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert(error instanceof Error, `${fixture.label} retirement was accepted`);
+  }
+  const explicit = structuredClone(base);
+  explicit.diff.possibleRemovals[0].benefit.effectiveTo = "2026-08-18";
+  explicit.diff.possibleRemovals[0].retirementReason = "explicit_past_end_date";
+  explicit.diff.possibleRemovals[0].completeAbsenceObservedAt = [
+    "2026-08-19T00:00:00.000Z",
+  ];
+  assert(
+    validateRetirementDecisionEvidence(
+      explicit,
+      "11111111-1111-4111-8111-111111111111",
+    ).reason ===
+      "explicit_past_end_date",
+    "official past end date was rejected",
+  );
+});
+
+Deno.test("v6 approval recomputes staged identity for the locked card", async () => {
+  const [foreignCardProposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-b",
+  );
+  let error: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      [{ action: "approve", benefit: foreignCardProposal }],
+      {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [foreignCardProposal],
+      },
+      "card-a",
+    );
+  } catch (caught) {
+    error = caught;
+  }
+  assert(
+    error instanceof Error &&
+      (error as { code?: string }).code === "invalid_staged_benefit_identity",
+    "foreign-card staged identity was accepted",
+  );
 });
 
 Deno.test("benefit quarantine state changes are explicit and a pilot uses the service-role pilot RPC", async () => {
@@ -647,59 +4007,67 @@ Deno.test("benefit quarantine state changes are explicit and a pilot uses the se
     "known_invalid",
     "additional_valid",
   ].map((profile, index) => ({ card_id: `card-${index}`, profile }));
-  const quarantined = await handle(
-    request({
-      action: "benefit-quarantine",
-      job_id: "job-1",
-      reason: "known invalid issuer page",
-    }),
-    db,
-  );
-  const statusAfterQuarantine = String(jobs.status);
-  const unquarantined = await handle(
-    request({ action: "benefit-unquarantine", job_id: "job-1" }),
-    db,
-  );
-  const invalidPilot = await handle(
-    request({
-      action: "benefit-start-pilot",
-      parser_version: "catalog-v1",
-      candidates,
-    }),
-    db,
-  );
-  const stalePilot = await handle(
-    request({
-      action: "benefit-start-pilot",
-      parser_version: "benefits-v4",
-      candidates,
-    }),
-    db,
-  );
-  const startedPilot = await handle(
-    request({ action: "benefit-start-pilot", candidates }),
-    db,
-  );
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  try {
+    const quarantined = await handle(
+      request({
+        action: "benefit-quarantine",
+        job_id: "job-1",
+        reason: "known invalid issuer page",
+      }),
+      db,
+    );
+    const statusAfterQuarantine = String(jobs.status);
+    const unquarantined = await handle(
+      request({ action: "benefit-unquarantine", job_id: "job-1" }),
+      db,
+    );
+    const invalidPilot = await handle(
+      request({
+        action: "benefit-start-pilot",
+        parser_version: "catalog-v1",
+        candidates,
+      }),
+      db,
+    );
+    const stalePilot = await handle(
+      request({
+        action: "benefit-start-pilot",
+        parser_version: "benefits-v4",
+        candidates,
+      }),
+      db,
+    );
+    const startedPilot = await handle(
+      request({ action: "benefit-start-pilot", candidates }),
+      db,
+    );
 
-  assert(
-    quarantined.status === 200 && statusAfterQuarantine === "quarantined",
-    "job was not quarantined",
-  );
-  assert(
-    unquarantined.status === 200 && String(jobs.status) === "queued",
-    "quarantined job was not queued",
-  );
-  assert(invalidPilot.status === 400, "reserved parser started a pilot");
-  assert(stalePilot.status === 400, "stale parser started a pilot");
-  assert(startedPilot.status === 200, "valid pilot was not initialized");
-  assert(
-    pilotParserVersion === "benefits-v5",
-    "admin pilot defaulted to the stale parser lane",
-  );
-  assert(
-    pilotCalls === 1,
-    "invalid pilot input reached the initialization RPC",
-  );
+    assert(
+      quarantined.status === 200 && statusAfterQuarantine === "quarantined",
+      "job was not quarantined",
+    );
+    assert(
+      unquarantined.status === 200 && String(jobs.status) === "queued",
+      "quarantined job was not queued",
+    );
+    assert(invalidPilot.status === 400, "reserved parser started a pilot");
+    assert(stalePilot.status === 400, "stale parser started a pilot");
+    assert(startedPilot.status === 200, "valid pilot was not initialized");
+    assert(
+      pilotParserVersion === "benefits-v6",
+      "admin pilot defaulted to the stale parser lane",
+    );
+    assert(
+      pilotCalls === 1,
+      "invalid pilot input reached the initialization RPC",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
 });
 
 Deno.test("benefit rejection requires a reason and retry resets only retryable job state", async () => {
@@ -753,30 +4121,38 @@ Deno.test("benefit rejection requires a reason and retry resets only retryable j
       );
     },
   });
-  const rejected = await handle(
-    request({
-      action: "benefit-reject",
-      job_id: "job-1",
-      staging_id: "staging-1",
-      decisions: [{ action: "reject" }],
-      reason: "",
-    }),
-    db,
-  );
-  const retried = await handle(
-    request({ action: "benefit-retry", job_id: "job-1" }),
-    db,
-  );
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  try {
+    const rejected = await handle(
+      request({
+        action: "benefit-reject",
+        job_id: "job-1",
+        staging_id: "staging-1",
+        decisions: [{ action: "reject" }],
+        reason: "",
+      }),
+      db,
+    );
+    const retried = await handle(
+      request({ action: "benefit-retry", job_id: "job-1" }),
+      db,
+    );
 
-  assert(rejected.status === 400, "reasonless rejection was accepted");
-  assert(retried.status === 200, "failed job was not reset for retry");
-  assert(job.status === "queued", "retry did not queue the failed job");
-  assert(job.attempt_count === 2, "retry reset the attempt history");
-  assert(job.run_mode === "scheduled", "retry changed the ownership lane");
-  assert(
-    job.result_summary.run_id === "run-1",
-    "retry overwrote run history",
-  );
+    assert(rejected.status === 400, "reasonless rejection was accepted");
+    assert(retried.status === 200, "failed job was not reset for retry");
+    assert(job.status === "queued", "retry did not queue the failed job");
+    assert(job.attempt_count === 2, "retry reset the attempt history");
+    assert(job.run_mode === "scheduled", "retry changed the ownership lane");
+    assert(
+      job.result_summary.run_id === "run-1",
+      "retry overwrote run history",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
 });
 
 Deno.test("benefit reads exclude legacy catalog jobs in the query and response", async () => {
@@ -840,81 +4216,97 @@ Deno.test("benefit reads exclude legacy catalog jobs in the query and response",
       };
     },
   });
-  const response = await handle(request({ action: "benefit-list" }), db);
-  const body = await response.json();
-  assert(response.status === 200, "benefit list was rejected");
-  assert(
-    body.items.length === 1,
-    "legacy catalog job appeared in benefit list",
-  );
-  assert(
-    body.items[0].id === "benefit-job",
-    "benefit list returned the wrong lane",
-  );
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  try {
+    const response = await handle(request({ action: "benefit-list" }), db);
+    const body = await response.json();
+    assert(response.status === 200, "benefit list was rejected");
+    assert(
+      body.items.length === 1,
+      "legacy catalog job appeared in benefit list",
+    );
+    assert(
+      body.items[0].id === "benefit-job",
+      "benefit list returned the wrong lane",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
 });
 
 Deno.test("benefit mutations cannot update catalog-v1 jobs", async () => {
   const handle = await handler();
-  for (
-    const [action, status] of [
-      ["benefit-retry", "failed"],
-      ["benefit-quarantine", "failed"],
-      ["benefit-unquarantine", "quarantined"],
-    ]
-  ) {
-    const job = {
-      id: "catalog-job",
-      parser_version: "catalog-v1",
-      run_mode: "manual",
-      status,
-    };
-    const db = withAuthenticatedUser({
-      from(table: string) {
-        assert(
-          table === "card_catalog_enrichment_jobs",
-          "mutation used an unexpected table",
-        );
-        let patch: Record<string, unknown> | null = null;
-        let benefitLaneOnly = false;
-        let approvedRunModes: string[] = [];
-        return {
-          update(next: Record<string, unknown>) {
-            patch = next;
-            return this;
-          },
-          eq() {
-            return this;
-          },
-          neq(column: string, value: string) {
-            if (column === "parser_version" && value === "catalog-v1") {
-              benefitLaneOnly = true;
-            }
-            return this;
-          },
-          in(column: string, values: string[]) {
-            if (column === "run_mode") approvedRunModes = values;
-            return this;
-          },
-          select() {
-            return this;
-          },
-          async single() {
-            const eligible =
-              (!benefitLaneOnly || job.parser_version !== "catalog-v1") &&
-              (approvedRunModes.length === 0 ||
-                approvedRunModes.includes(job.run_mode));
-            if (eligible && patch) Object.assign(job, patch);
-            return { data: eligible ? job : null, error: null };
-          },
-        };
-      },
-    });
-    const response = await handle(
-      request({ action, job_id: "catalog-job", reason: "legacy lane" }),
-      db,
-    );
-    assert(response.status === 409, `${action} mutated a catalog-v1 job`);
-    assert(job.status === status, `${action} changed a catalog-v1 job state`);
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  try {
+    for (
+      const [action, status] of [
+        ["benefit-retry", "failed"],
+        ["benefit-quarantine", "failed"],
+        ["benefit-unquarantine", "quarantined"],
+      ]
+    ) {
+      const job = {
+        id: "catalog-job",
+        parser_version: "catalog-v1",
+        run_mode: "manual",
+        status,
+      };
+      const db = withAuthenticatedUser({
+        from(table: string) {
+          assert(
+            table === "card_catalog_enrichment_jobs",
+            "mutation used an unexpected table",
+          );
+          let patch: Record<string, unknown> | null = null;
+          let benefitLaneOnly = false;
+          let approvedRunModes: string[] = [];
+          return {
+            update(next: Record<string, unknown>) {
+              patch = next;
+              return this;
+            },
+            eq() {
+              return this;
+            },
+            neq(column: string, value: string) {
+              if (column === "parser_version" && value === "catalog-v1") {
+                benefitLaneOnly = true;
+              }
+              return this;
+            },
+            in(column: string, values: string[]) {
+              if (column === "run_mode") approvedRunModes = values;
+              return this;
+            },
+            select() {
+              return this;
+            },
+            async single() {
+              const eligible =
+                (!benefitLaneOnly || job.parser_version !== "catalog-v1") &&
+                (approvedRunModes.length === 0 ||
+                  approvedRunModes.includes(job.run_mode));
+              if (eligible && patch) Object.assign(job, patch);
+              return { data: eligible ? job : null, error: null };
+            },
+          };
+        },
+      });
+      const response = await handle(
+        request({ action, job_id: "catalog-job", reason: "legacy lane" }),
+        db,
+      );
+      assert(response.status === 409, `${action} mutated a catalog-v1 job`);
+      assert(job.status === status, `${action} changed a catalog-v1 job state`);
+    }
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
   }
 });
 
@@ -1040,40 +4432,48 @@ Deno.test("benefit DTOs allow only documented nested output fields", async () =>
       };
     },
   });
-  const response = await handle(request({ action: "benefit-list" }), db);
-  const serialized = JSON.stringify(await response.json());
-  assert(response.status === 200, "benefit DTO response was rejected");
-  for (
-    const prohibited of [
-      "must not escape",
-      "unknown field",
-      "unknown_nested",
-      "debug_trace",
-      "clientSecret",
-      "accessToken",
-      "responseBody",
-      "authorizationHeader",
-    ]
-  ) {
-    assert(!serialized.includes(prohibited), `DTO exposed ${prohibited}`);
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  try {
+    const response = await handle(request({ action: "benefit-list" }), db);
+    const serialized = JSON.stringify(await response.json());
+    assert(response.status === 200, "benefit DTO response was rejected");
+    for (
+      const prohibited of [
+        "must not escape",
+        "unknown field",
+        "unknown_nested",
+        "debug_trace",
+        "clientSecret",
+        "accessToken",
+        "responseBody",
+        "authorizationHeader",
+      ]
+    ) {
+      assert(!serialized.includes(prohibited), `DTO exposed ${prohibited}`);
+    }
+    assert(
+      serialized.includes("₹500 dining credit"),
+      "allowlisted evidence was omitted",
+    );
+    assert(
+      serialized.includes("low_confidence"),
+      "allowlisted warning was omitted",
+    );
+    assert(
+      serialized.includes("max_discount_per_transaction") &&
+        serialized.includes("BookMyShow"),
+      "movie value config or partners were omitted from review",
+    );
+    assert(
+      !serialized.includes("internal_note"),
+      "unknown value-config fields escaped the review DTO",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
   }
-  assert(
-    serialized.includes("₹500 dining credit"),
-    "allowlisted evidence was omitted",
-  );
-  assert(
-    serialized.includes("low_confidence"),
-    "allowlisted warning was omitted",
-  );
-  assert(
-    serialized.includes("max_discount_per_transaction") &&
-      serialized.includes("BookMyShow"),
-    "movie value config or partners were omitted from review",
-  );
-  assert(
-    !serialized.includes("internal_note"),
-    "unknown value-config fields escaped the review DTO",
-  );
 });
 
 Deno.test("benefit counts remain complete while list and history use explicit pages", async () => {
@@ -1151,33 +4551,41 @@ Deno.test("benefit counts remain complete while list and history use explicit pa
       };
     },
   });
-  const response = await handle(
-    request({ action: "benefit-status", page: 2, limit: 25 }),
-    db,
-  );
-  const body = await response.json();
-  assert(response.status === 200, "paginated benefit status was rejected");
-  assert(body.items.length === 25, "status page did not honor its limit");
-  assert(
-    body.items[0].id === "benefit-26",
-    "status page did not honor its offset",
-  );
-  assert(
-    body.page === 2 && body.limit === 25 && body.has_more === true,
-    "page metadata was missing",
-  );
-  assert(
-    body.run_counts.total === 130,
-    "run counts were derived from the page",
-  );
-  assert(
-    countQueries > 0,
-    "run counts did not use an independent aggregate query",
-  );
-  assert(
-    body.movie_mapping_health[2].value === 41,
-    "movie mapping health was omitted from admin status",
-  );
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  try {
+    const response = await handle(
+      request({ action: "benefit-status", page: 2, limit: 25 }),
+      db,
+    );
+    const body = await response.json();
+    assert(response.status === 200, "paginated benefit status was rejected");
+    assert(body.items.length === 25, "status page did not honor its limit");
+    assert(
+      body.items[0].id === "benefit-26",
+      "status page did not honor its offset",
+    );
+    assert(
+      body.page === 2 && body.limit === 25 && body.has_more === true,
+      "page metadata was missing",
+    );
+    assert(
+      body.run_counts.total === 130,
+      "run counts were derived from the page",
+    );
+    assert(
+      countQueries > 0,
+      "run counts did not use an independent aggregate query",
+    );
+    assert(
+      body.movie_mapping_health[2].value === 41,
+      "movie mapping health was omitted from admin status",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
 });
 
 function quarantineStateDb(
@@ -1254,44 +4662,52 @@ Deno.test("manual quarantine preserves safety history and records a justified te
       idempotency_passed: false,
     },
   };
-  const response = await handle(
-    request({
-      action: "benefit-quarantine",
-      job_id: "pilot-job-1",
-      reason: "identity mismatch confirmed",
-    }),
-    quarantineStateDb(job),
-  );
-  const summary = job.result_summary as Record<string, unknown>;
-  assert(
-    response.status === 200,
-    "review-required pilot job was not quarantined",
-  );
-  assert(
-    job.status === "quarantined",
-    "quarantine did not reach a terminal state",
-  );
-  assert(summary.run_id === "run-1", "quarantine erased run history");
-  assert(
-    summary.unsafe_mutation_count === 2,
-    "quarantine falsified unsafe mutation history",
-  );
-  assert(
-    summary.raw_body_stored === true,
-    "quarantine falsified raw-body history",
-  );
-  assert(
-    summary.evidence_passed === false,
-    "quarantine falsified evidence history",
-  );
-  assert(
-    summary.quarantine_reason === "identity mismatch confirmed",
-    "quarantine reason was not recorded",
-  );
-  assert(
-    summary.idempotency_passed === true,
-    "justified quarantine was not marked idempotent",
-  );
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  try {
+    const response = await handle(
+      request({
+        action: "benefit-quarantine",
+        job_id: "pilot-job-1",
+        reason: "identity mismatch confirmed",
+      }),
+      quarantineStateDb(job),
+    );
+    const summary = job.result_summary as Record<string, unknown>;
+    assert(
+      response.status === 200,
+      "review-required pilot job was not quarantined",
+    );
+    assert(
+      job.status === "quarantined",
+      "quarantine did not reach a terminal state",
+    );
+    assert(summary.run_id === "run-1", "quarantine erased run history");
+    assert(
+      summary.unsafe_mutation_count === 2,
+      "quarantine falsified unsafe mutation history",
+    );
+    assert(
+      summary.raw_body_stored === true,
+      "quarantine falsified raw-body history",
+    );
+    assert(
+      summary.evidence_passed === false,
+      "quarantine falsified evidence history",
+    );
+    assert(
+      summary.quarantine_reason === "identity mismatch confirmed",
+      "quarantine reason was not recorded",
+    );
+    assert(
+      summary.idempotency_passed === true,
+      "justified quarantine was not marked idempotent",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
 });
 
 Deno.test("manual quarantine loses an optimistic race instead of overwriting newer job state", async () => {
@@ -1309,26 +4725,224 @@ Deno.test("manual quarantine loses an optimistic race instead of overwriting new
       evidence_passed: true,
     },
   };
-  const response = await handle(
-    request({
-      action: "benefit-quarantine",
-      job_id: "pilot-job-race",
-      reason: "issuer page confirmed invalid",
-    }),
-    quarantineStateDb(job, true),
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  try {
+    const response = await handle(
+      request({
+        action: "benefit-quarantine",
+        job_id: "pilot-job-race",
+        reason: "issuer page confirmed invalid",
+      }),
+      quarantineStateDb(job, true),
+    );
+    assert(
+      response.status === 409,
+      "stale quarantine overwrote newer job state",
+    );
+    assert(
+      job.status === "review_required",
+      "stale quarantine changed the job status",
+    );
+    assert(
+      (job.result_summary as Record<string, unknown>).quarantine_reason ===
+        undefined,
+      "stale quarantine changed the result summary",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
+Deno.test("admin pilot evidence exposes bounded computed proof and derives review metrics from decisions", () => {
+  const pilotEvidence = {
+    parser_version: "benefits-v6",
+    job_id: "11111111-1111-4111-8111-111111111111",
+    card_id: "22222222-2222-4222-8222-222222222222",
+    run_mode: "pilot",
+    canonical_hash: "a".repeat(64),
+    repeat_canonical_hash: "a".repeat(64),
+    deterministic_replay_passed: true,
+    source_manifest_hash: "b".repeat(64),
+    expected_required_source_keys: ["f".repeat(64)],
+    required_source_selection_overflow: false,
+    crawl_complete: true,
+    suppressed_removal_count: 0,
+    unsafe_mutation_count: 0,
+    raw_body_stored: false,
+    side_effect_proof_passed: true,
+    observed_at: "2026-08-20T00:00:00.000Z",
+    live_state_before: {
+      card_catalog: { count: 1, row_hash: "c".repeat(64) },
+      benefits: { count: 1, row_hash: "d".repeat(64) },
+      card_benefit_mapping: { count: 1, row_hash: "e".repeat(64) },
+    },
+    live_state_after: {
+      card_catalog: { count: 1, row_hash: "c".repeat(64) },
+      benefits: { count: 1, row_hash: "d".repeat(64) },
+      card_benefit_mapping: { count: 1, row_hash: "e".repeat(64) },
+    },
+    proposal_count: 0,
+    proposal_disposition: "no_change",
+    staging_id: null,
+    staging_content_hash: null,
+    raw_body: "<html>private customer 4242</html>",
+    lease_token: "secret-lease",
+  };
+  const presented = presentBenefitJob({
+    id: pilotEvidence.job_id,
+    card_id: pilotEvidence.card_id,
+    issuer: "Fixture Bank",
+    canonical_url: "https://issuer.example/card?token=must-not-leak",
+    parser_version: "benefits-v6",
+    status: "completed",
+    run_mode: "pilot",
+    attempt_count: 1,
+    normalized_fields: {
+      pilot_profile: "straightforward",
+      pilot_evidence: pilotEvidence,
+      operational_metrics: {
+        fetch_attempts: 2,
+        fetch_success: 2,
+        fetch_attempt_history_overflow: 1,
+        fetch_missing: 0.5,
+        fetch_success_rate: 2,
+        approvals: 999,
+        retries: 2,
+        processing_started_at: "Bearer secret-lease",
+      },
+    },
+    result_summary: {
+      reviewed_at: "2026-08-20T00:10:00.000Z",
+      approved_count: 999,
+      rejected_count: 999,
+    },
+    created_at: "2026-08-20T00:00:00.000Z",
+    updated_at: "2026-08-20T00:10:00.000Z",
+    card_catalog: {
+      id: pilotEvidence.card_id,
+      bank: "Fixture Bank",
+      card_name: "Fixture Card",
+    },
+    card_benefits_staging: {
+      id: "33333333-3333-4333-8333-333333333333",
+      card_id: pilotEvidence.card_id,
+      request_type: "official_benefit_enrichment",
+      parser_version: "benefits-v6",
+      status: "approved",
+      benefit_decisions: [
+        { action: "approve" },
+        { action: "edit" },
+        { action: "reject", proposal_index: 0 },
+        { action: "retire", benefit_id: "benefit-2" },
+      ],
+      created_at: "2026-08-20T00:01:00.000Z",
+      reviewed_at: "2026-08-20T00:10:00.000Z",
+      extracted_data: {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [],
+        diff: {},
+      },
+    },
+  }) as Record<string, any>;
+  assert(
+    presented.result_summary.pilot_evidence.canonical_hash ===
+        pilotEvidence.canonical_hash &&
+      presented.result_summary.pilot_profile === "straightforward" &&
+      presented.result_summary.pilot_evidence.side_effect_proof_passed ===
+        true &&
+      presented.result_summary.pilot_evidence
+          .expected_required_source_keys[0] === "f".repeat(64) &&
+      presented.result_summary.pilot_evidence
+          .required_source_selection_overflow === false &&
+      presented.result_summary.pilot_evidence.proposal_count === 0 &&
+      presented.result_summary.pilot_evidence.proposal_disposition ===
+        "no_change" &&
+      presented.result_summary.pilot_evidence.staging_id === null,
+    "admin response omitted computed pilot evidence",
   );
   assert(
-    response.status === 409,
-    "stale quarantine overwrote newer job state",
+    presented.result_summary.operational_metrics.fetch_attempts === 2 &&
+      presented.result_summary.operational_metrics
+          .fetch_attempt_history_overflow === 1 &&
+      presented.result_summary.operational_metrics.approvals === 1 &&
+      presented.result_summary.operational_metrics.edits === 1 &&
+      presented.result_summary.operational_metrics.targeted_rejects === 1 &&
+      presented.result_summary.operational_metrics.retirements === 1 &&
+      presented.result_summary.operational_metrics.retries === 2,
+    "admin metrics trusted supplied totals instead of exact decisions",
   );
   assert(
-    job.status === "review_required",
-    "stale quarantine changed the job status",
+    !Object.hasOwn(
+      presented.result_summary.operational_metrics,
+      "fetch_missing",
+    ) &&
+      !Object.hasOwn(
+        presented.result_summary.operational_metrics,
+        "fetch_success_rate",
+      ),
+    "admin metrics accepted fractional counts or out-of-range rates",
   );
   assert(
-    (job.result_summary as Record<string, unknown>).quarantine_reason ===
-      undefined,
-    "stale quarantine changed the result summary",
+    presented.result_summary.review_age_ms === 540000,
+    "admin review age was not derived from bounded UTC timestamps",
+  );
+  const serialized = JSON.stringify(presented);
+  for (
+    const forbidden of [
+      "must-not-leak",
+      "private customer 4242",
+      "secret-lease",
+    ]
+  ) {
+    assert(
+      !serialized.includes(forbidden),
+      `admin pilot DTO leaked ${forbidden}`,
+    );
+  }
+  const malformed = presentBenefitJob({
+    id: pilotEvidence.job_id,
+    card_id: pilotEvidence.card_id,
+    issuer: "Fixture Bank",
+    canonical_url: "https://issuer.example/card",
+    parser_version: "benefits-v6",
+    status: "completed",
+    run_mode: "pilot",
+    attempt_count: 1,
+    normalized_fields: {
+      pilot_profile: "straightforward",
+      pilot_evidence: {
+        ...pilotEvidence,
+        deterministic_replay_passed: "true",
+        crawl_complete: "true",
+        suppressed_removal_count: 0.5,
+        raw_body_stored: "false",
+        side_effect_proof_passed: "true",
+        live_state_before: {
+          ...pilotEvidence.live_state_before,
+          benefits: { count: 0.5, row_hash: "d".repeat(64) },
+        },
+      },
+    },
+    result_summary: {},
+    card_catalog: {},
+  }) as Record<string, any>;
+  assert(
+    malformed.result_summary.pilot_evidence
+          .deterministic_replay_passed === null &&
+      malformed.result_summary.pilot_evidence.crawl_complete === null &&
+      malformed.result_summary.pilot_evidence.raw_body_stored === null &&
+      malformed.result_summary.pilot_evidence.side_effect_proof_passed ===
+        null &&
+      malformed.result_summary.pilot_evidence.suppressed_removal_count ===
+        null &&
+      !Object.hasOwn(
+        malformed.result_summary.pilot_evidence.live_state_before,
+        "benefits",
+      ),
+    "malformed pilot booleans were displayed as computed false values",
   );
 });
-import { presentBenefitJob } from "./benefit_admin.ts";

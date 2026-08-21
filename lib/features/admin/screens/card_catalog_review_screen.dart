@@ -7,12 +7,114 @@ import '../../../core/theme/brand_tokens.dart';
 import '../data/admin_catalog_repository.dart';
 import '../widgets/benefit_enrichment_review_panel.dart';
 
+typedef CatalogIdentityReviewInvoker =
+    Future<Map<String, dynamic>> Function(Map<String, dynamic> body);
+
+Future<List<Map<String, dynamic>>> loadCatalogIdentityReviewItems({
+  required String status,
+  required CatalogIdentityReviewInvoker invoke,
+  int maxQuarantinePages = 20,
+}) async {
+  List<Map<String, dynamic>> parse(Map<String, dynamic> response) =>
+      (response['items'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+
+  if (maxQuarantinePages < 1 || maxQuarantinePages > 20) {
+    throw ArgumentError.value(maxQuarantinePages, 'maxQuarantinePages');
+  }
+  final general = parse(await invoke({'action': 'list', 'status': status}));
+  final quarantines = <Map<String, dynamic>>[];
+  String? cursor;
+  final seenCursors = <String>{};
+  for (var page = 0; page < maxQuarantinePages; page++) {
+    final response = await invoke({
+      'action': 'issuer-quarantine-list',
+      'status': status,
+      'limit': 25,
+      'cursor': ?cursor,
+    });
+    quarantines.addAll(parse(response));
+    if (quarantines.length > 500) {
+      throw AdminCatalogRequestFailed(
+        'Issuer quarantine results were truncated at the safe row limit.',
+      );
+    }
+    if (response['has_more'] != true) break;
+    final next = response['next_cursor'];
+    if (next is! String || next.isEmpty || !seenCursors.add(next)) {
+      throw AdminCatalogRequestFailed(
+        'Issuer quarantine pagination returned an invalid cursor.',
+      );
+    }
+    cursor = next;
+    if (page == maxQuarantinePages - 1) {
+      throw AdminCatalogRequestFailed(
+        'Issuer quarantine results were truncated at the safe page limit.',
+      );
+    }
+  }
+  final seen = <Object?>{};
+  return [...quarantines, ...general]
+      .where((item) {
+        final id = item['id'];
+        if (id is! String || id.isEmpty) {
+          throw AdminCatalogRequestFailed(
+            'Admin review response contained an item without a stable ID.',
+          );
+        }
+        return seen.add(id);
+      })
+      .toList(growable: false);
+}
+
 Future<void> requestAdminReauthorization({
   required Future<void> Function() clearSession,
   required VoidCallback showLogin,
 }) async {
   await clearSession();
   showLogin();
+}
+
+Map<String, dynamic> catalogIdentityReviewActionBody({
+  required String action,
+  required Object? reviewItemId,
+  Map<String, dynamic>? fields,
+  String? mergeCardId,
+  String? reason,
+}) {
+  final normalizedReason = reason?.trim();
+  if ((action == 'retry' ||
+          action == 'reject' ||
+          action == 'mark_discontinued' ||
+          action == 'reactivate') &&
+      (normalizedReason == null || normalizedReason.length < 2)) {
+    throw ArgumentError.value(reason, 'reason', 'A review reason is required');
+  }
+  final body = <String, dynamic>{
+    'action': action,
+    'review_item_id': reviewItemId,
+  };
+  if (fields != null) body['proposed_fields'] = fields;
+  if (mergeCardId != null) body['merge_card_id'] = mergeCardId;
+  if (normalizedReason != null && normalizedReason.isNotEmpty) {
+    body['reason'] = normalizedReason;
+  }
+  return body;
+}
+
+Map<String, dynamic> catalogIdentityEditableFields(
+  Map<String, dynamic> serverProposal, {
+  required String cardName,
+  required String network,
+}) {
+  final result = <String, dynamic>{};
+  final normalizedName = cardName.trim();
+  final normalizedNetwork = network.trim();
+  if (normalizedName.isNotEmpty) result['cardName'] = normalizedName;
+  if (normalizedNetwork.isNotEmpty) result['network'] = normalizedNetwork;
+  return result;
 }
 
 class CardCatalogReviewScreen extends StatefulWidget {
@@ -49,11 +151,7 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
   }
 
   Future<List<Map<String, dynamic>>> _load() async {
-    final data = await _invoke({'action': 'list', 'status': _status});
-    return (data['items'] as List? ?? const [])
-        .whereType<Map>()
-        .map((item) => Map<String, dynamic>.from(item))
-        .toList(growable: false);
+    return loadCatalogIdentityReviewItems(status: _status, invoke: _invoke);
   }
 
   void _reload() => setState(() => _items = _load());
@@ -73,13 +171,13 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
     String? mergeCardId,
     String? reason,
   }) async {
-    final body = <String, dynamic>{
-      'action': action,
-      'review_item_id': item['id'],
-    };
-    if (fields != null) body['proposed_fields'] = fields;
-    if (mergeCardId != null) body['merge_card_id'] = mergeCardId;
-    if (reason != null) body['reason'] = reason;
+    final body = catalogIdentityReviewActionBody(
+      action: action,
+      reviewItemId: item['id'],
+      fields: fields,
+      mergeCardId: mergeCardId,
+      reason: reason,
+    );
     try {
       await _invoke(body);
       _reload();
@@ -130,14 +228,14 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
       false;
 
   Future<String?> _askReason(String title, {bool required = false}) async {
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
+    var reason = '';
+    return showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(title),
         content: TextField(
-          controller: controller,
           autofocus: true,
+          onChanged: (value) => reason = value.trim(),
           decoration: InputDecoration(
             labelText: required ? 'Reason (required)' : 'Review note',
           ),
@@ -149,32 +247,22 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
           ),
           FilledButton(
             onPressed: () {
-              final value = controller.text.trim();
-              if (required && value.length < 2) return;
-              context.pop(value);
+              if (required && reason.length < 2) return;
+              context.pop(reason);
             },
             child: const Text('Continue'),
           ),
         ],
       ),
     );
-    controller.dispose();
-    return result;
   }
 
   Future<void> _editAndApprove(Map<String, dynamic> item) async {
     final original = Map<String, dynamic>.from(
       item['proposed_fields'] as Map? ?? const {},
     );
-    final issuer = TextEditingController(
-      text: (original['issuer'] ?? original['bank'] ?? '').toString(),
-    );
-    final name = TextEditingController(
-      text: (original['cardName'] ?? original['card_name'] ?? '').toString(),
-    );
-    final network = TextEditingController(
-      text: original['network']?.toString(),
-    );
+    var name = (original['cardName'] ?? original['card_name'] ?? '').toString();
+    var network = original['network']?.toString() ?? '';
     final fields = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => AlertDialog(
@@ -184,16 +272,14 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(
-                controller: issuer,
-                decoration: const InputDecoration(labelText: 'Issuer'),
-              ),
-              TextField(
-                controller: name,
+              TextFormField(
+                initialValue: name,
+                onChanged: (value) => name = value,
                 decoration: const InputDecoration(labelText: 'Card name'),
               ),
-              TextField(
-                controller: network,
+              TextFormField(
+                initialValue: network,
+                onChanged: (value) => network = value,
                 decoration: const InputDecoration(labelText: 'Network'),
               ),
             ],
@@ -205,20 +291,18 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
             child: const Text('Cancel'),
           ),
           FilledButton(
-            onPressed: () => context.pop({
-              ...original,
-              'issuer': issuer.text.trim(),
-              'cardName': name.text.trim(),
-              'network': network.text.trim(),
-            }),
+            onPressed: () => context.pop(
+              catalogIdentityEditableFields(
+                original,
+                cardName: name,
+                network: network,
+              ),
+            ),
             child: const Text('Approve'),
           ),
         ],
       ),
     );
-    issuer.dispose();
-    name.dispose();
-    network.dispose();
     if (fields != null) await _act('edit_approve', item, fields: fields);
   }
 
@@ -274,6 +358,7 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
               onRetry: (item) async {
                 final note = await _askReason(
                   'Retry official-source discovery',
+                  required: true,
                 );
                 if (note != null) await _act('retry', item, reason: note);
               },
@@ -283,6 +368,38 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
                   required: true,
                 );
                 if (reason != null) await _act('reject', item, reason: reason);
+              },
+              onMarkDiscontinued: (item) async {
+                final reason = await _askReason(
+                  'Reason for marking this card discontinued',
+                  required: true,
+                );
+                if (reason == null) return;
+                final confirmed = await _confirm(
+                  title: 'Mark this card discontinued?',
+                  message:
+                      'This removes the product from new-acquisition surfaces while retaining it for existing cardholders and audit history.',
+                  actionLabel: 'Mark discontinued',
+                );
+                if (confirmed) {
+                  await _act('mark_discontinued', item, reason: reason);
+                }
+              },
+              onReactivate: (item) async {
+                final reason = await _askReason(
+                  'Reason for reactivating this card',
+                  required: true,
+                );
+                if (reason == null) return;
+                final confirmed = await _confirm(
+                  title: 'Reactivate this card?',
+                  message:
+                      'This returns the product to active acquisition surfaces based on the reviewed issuer evidence.',
+                  actionLabel: 'Reactivate',
+                );
+                if (confirmed) {
+                  await _act('reactivate', item, reason: reason);
+                }
               },
             ),
             BenefitEnrichmentReviewPanel(
@@ -495,6 +612,8 @@ class _IdentityReviewPanel extends StatelessWidget {
     required this.onMerge,
     required this.onRetry,
     required this.onReject,
+    required this.onMarkDiscontinued,
+    required this.onReactivate,
   });
 
   final Future<List<Map<String, dynamic>>> items;
@@ -507,6 +626,8 @@ class _IdentityReviewPanel extends StatelessWidget {
   final void Function(Map<String, dynamic>, String) onMerge;
   final ValueChanged<Map<String, dynamic>> onRetry;
   final ValueChanged<Map<String, dynamic>> onReject;
+  final ValueChanged<Map<String, dynamic>> onMarkDiscontinued;
+  final ValueChanged<Map<String, dynamic>> onReactivate;
 
   @override
   Widget build(BuildContext context) {
@@ -640,13 +761,15 @@ class _IdentityReviewPanel extends StatelessWidget {
                 padding: const EdgeInsets.all(24),
                 itemCount: items.length,
                 separatorBuilder: (_, _) => const SizedBox(height: 16),
-                itemBuilder: (context, index) => _ReviewCard(
+                itemBuilder: (context, index) => CatalogIdentityReviewCard(
                   item: items[index],
                   onApprove: () => onApprove(items[index]),
                   onEditApprove: () => onEditApprove(items[index]),
                   onMerge: (cardId) => onMerge(items[index], cardId),
                   onRetry: () => onRetry(items[index]),
                   onReject: () => onReject(items[index]),
+                  onMarkDiscontinued: () => onMarkDiscontinued(items[index]),
+                  onReactivate: () => onReactivate(items[index]),
                 ),
               );
             },
@@ -657,14 +780,17 @@ class _IdentityReviewPanel extends StatelessWidget {
   }
 }
 
-class _ReviewCard extends StatelessWidget {
-  const _ReviewCard({
+class CatalogIdentityReviewCard extends StatelessWidget {
+  const CatalogIdentityReviewCard({
+    super.key,
     required this.item,
     required this.onApprove,
     required this.onEditApprove,
     required this.onMerge,
     required this.onRetry,
     required this.onReject,
+    this.onMarkDiscontinued,
+    this.onReactivate,
   });
 
   final Map<String, dynamic> item;
@@ -673,6 +799,8 @@ class _ReviewCard extends StatelessWidget {
   final ValueChanged<String> onMerge;
   final VoidCallback onRetry;
   final VoidCallback onReject;
+  final VoidCallback? onMarkDiscontinued;
+  final VoidCallback? onReactivate;
 
   @override
   Widget build(BuildContext context) {
@@ -685,6 +813,41 @@ class _ReviewCard extends StatelessWidget {
     final evidence = Map<String, dynamic>.from(
       job['evidence'] as Map? ?? const {},
     );
+    final sourceObservation = Map<String, dynamic>.from(
+      fields['source_observation'] as Map? ?? const {},
+    );
+    final sourceEvidence = Map<String, dynamic>.from(
+      item['source_evidence'] as Map? ?? const {},
+    );
+    final baseline = Map<String, dynamic>.from(
+      fields['catalog_baseline'] as Map? ?? const {},
+    );
+    final issuerDiscoveryQuarantine =
+        sourceObservation['classification'] == 'issuer_discovery_quarantine' &&
+        sourceObservation['kind'] == 'issuer_discovery_quarantine';
+    final issuerDiscoveryRetryable =
+        sourceObservation['retryable'] == true &&
+        sourceObservation['retryability_reason'] ==
+            'attempt_budget_reset_allowed';
+    final suggestedAction = fields['suggested_action'];
+    final lifecycleReview =
+        baseline.isNotEmpty &&
+        (suggestedAction == 'mark_discontinued' ||
+            suggestedAction == 'reactivate');
+    final strongDiscontinuation =
+        suggestedAction == 'mark_discontinued' &&
+        ((sourceObservation['kind'] == 'strong_gone_observation' &&
+                sourceObservation['source_status'] == 410) ||
+            (sourceObservation['kind'] == 'strong_explicit_discontinuation' &&
+                sourceObservation['source_status'] == 200 &&
+                sourceObservation['identity_validated'] == true &&
+                sourceObservation['explicit_discontinuation'] == true));
+    final strongReactivation =
+        suggestedAction == 'reactivate' &&
+        sourceObservation['kind'] == 'exact_card_reappearance' &&
+        sourceObservation['source_status'] == 200 &&
+        sourceObservation['identity_validated'] == true &&
+        sourceObservation['explicit_discontinuation'] != true;
     final warnings = (item['validation_warnings'] as List? ?? const [])
         .map((warning) => _identityWarningLabel(warning.toString()))
         .toList(growable: false);
@@ -697,64 +860,162 @@ class _ReviewCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              '${fields['issuer'] ?? job['issuer'] ?? 'Unknown issuer'} · '
-              '${fields['cardName'] ?? fields['card_name'] ?? job['proposed_product'] ?? 'Unknown variant'}',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 10),
-            Text(
-              'Proposed identity',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            _line('Subject', evidence['subject_product']),
-            _line('PDF filename', evidence['filename_product']),
-            _line('PDF header', evidence['pdf_header_product']),
-            _line('Network', fields['network'] ?? evidence['network']),
-            _line('Masked last four', evidence['last_four']),
-            _line('Official source', fields['official_url']),
-            const SizedBox(height: 10),
-            Text(
-              'Evidence and risk',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            _line('Confidence', _confidenceLabel(item['confidence'])),
-            if (warnings.isNotEmpty) _line('Warnings', warnings.join(' · ')),
-            if (evidence['pdf_header_excerpt'] != null)
-              _line('Sanitized evidence', evidence['pdf_header_excerpt']),
-            if (pending) ...[
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  FilledButton(
-                    onPressed: onApprove,
-                    child: const Text('Approve as new card'),
-                  ),
-                  OutlinedButton(
-                    onPressed: onEditApprove,
-                    child: const Text('Edit and approve'),
-                  ),
-                  for (final candidate in candidates.whereType<Map>())
-                    OutlinedButton(
-                      onPressed: candidate['id'] is String
-                          ? () => onMerge(candidate['id'] as String)
-                          : null,
-                      child: Text(
-                        'Merge with ${candidate['card_name'] ?? 'existing card'}',
-                      ),
-                    ),
-                  TextButton(
-                    onPressed: onRetry,
-                    child: const Text('Retry discovery'),
-                  ),
-                  TextButton(
-                    onPressed: onReject,
-                    child: const Text('Reject proposal'),
-                  ),
-                ],
+            if (issuerDiscoveryQuarantine) ...[
+              Text(
+                'Issuer discovery quarantine',
+                style: Theme.of(context).textTheme.titleLarge,
               ),
+              _line('Issuer', sourceObservation['issuer']),
+              _line(
+                'Reason',
+                _identityWarningLabel(sourceObservation['reason'].toString()),
+              ),
+              _line('Evidence', sourceObservation['public_evidence']),
+              if (!issuerDiscoveryRetryable)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Manual repair required before issuer discovery can be retried.',
+                  ),
+                ),
+              if (pending) ...[
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    if (issuerDiscoveryRetryable)
+                      FilledButton(
+                        onPressed: onRetry,
+                        child: const Text('Retry issuer discovery'),
+                      ),
+                    TextButton(
+                      onPressed: onReject,
+                      child: const Text('Keep quarantined'),
+                    ),
+                  ],
+                ),
+              ],
+            ] else if (lifecycleReview) ...[
+              Text(
+                '${job['issuer'] ?? fields['issuer'] ?? 'Unknown issuer'} · ${baseline['card_name'] ?? fields['cardName'] ?? fields['card_name'] ?? 'Unknown card'}',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Before → proposed',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              _comparisonLine(
+                'Card name',
+                baseline['card_name'],
+                fields['cardName'] ?? fields['card_name'],
+              ),
+              _comparisonLine(
+                'Network',
+                baseline['network'],
+                fields['network'],
+              ),
+              _comparisonLine(
+                'Joining fee',
+                baseline['joining_fee'],
+                fields['joining_fee'],
+              ),
+              _comparisonLine(
+                'Annual fee',
+                baseline['annual_fee'],
+                fields['annual_fee'],
+              ),
+              _comparisonLine('APR', baseline['apr'], fields['apr']),
+              _comparisonLine(
+                'Canonical URL',
+                baseline['card_url'],
+                fields['official_url'] ?? fields['card_url'],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Lifecycle evidence',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              _line(
+                'Retrieved',
+                sourceObservation['retrieved_at'] ??
+                    sourceEvidence['retrieved_at'],
+              ),
+              _line(
+                'Target excerpt',
+                sourceObservation['matched_excerpt'] ??
+                    sourceEvidence['target_excerpt'],
+              ),
+              if (pending && (strongDiscontinuation || strongReactivation)) ...[
+                const SizedBox(height: 16),
+                if (strongDiscontinuation)
+                  FilledButton(
+                    onPressed: onMarkDiscontinued,
+                    child: const Text('Mark discontinued'),
+                  ),
+                if (strongReactivation)
+                  FilledButton(
+                    onPressed: onReactivate,
+                    child: const Text('Reactivate'),
+                  ),
+              ],
+            ] else ...[
+              Text(
+                '${fields['issuer'] ?? job['issuer'] ?? 'Unknown issuer'} · '
+                '${fields['cardName'] ?? fields['card_name'] ?? job['proposed_product'] ?? 'Unknown variant'}',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Proposed identity',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              _line('Subject', evidence['subject_product']),
+              _line('PDF filename', evidence['filename_product']),
+              _line('PDF header', evidence['pdf_header_product']),
+              _line('Network', fields['network'] ?? evidence['network']),
+              _line('Official source', fields['official_url']),
+              const SizedBox(height: 10),
+              Text(
+                'Evidence and risk',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              _line('Confidence', _confidenceLabel(item['confidence'])),
+              if (warnings.isNotEmpty) _line('Warnings', warnings.join(' · ')),
+              if (pending) ...[
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton(
+                      onPressed: onApprove,
+                      child: const Text('Approve as new card'),
+                    ),
+                    OutlinedButton(
+                      onPressed: onEditApprove,
+                      child: const Text('Edit and approve'),
+                    ),
+                    for (final candidate in candidates.whereType<Map>())
+                      OutlinedButton(
+                        onPressed: candidate['id'] is String
+                            ? () => onMerge(candidate['id'] as String)
+                            : null,
+                        child: Text(
+                          'Merge with ${candidate['card_name'] ?? 'existing card'}',
+                        ),
+                      ),
+                    TextButton(
+                      onPressed: onRetry,
+                      child: const Text('Retry discovery'),
+                    ),
+                    TextButton(
+                      onPressed: onReject,
+                      child: const Text('Reject proposal'),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ],
         ),
@@ -774,6 +1035,19 @@ class _ReviewCard extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(top: 5),
       child: SelectableText('$label: $value'),
+    );
+  }
+
+  Widget _comparisonLine(String label, Object? before, Object? proposed) {
+    final beforeLabel = before?.toString().trim().isNotEmpty == true
+        ? before.toString()
+        : 'Not set';
+    final proposedLabel = proposed?.toString().trim().isNotEmpty == true
+        ? proposed.toString()
+        : 'No proposal';
+    return Padding(
+      padding: const EdgeInsets.only(top: 5),
+      child: SelectableText('$label: $beforeLabel → $proposedLabel'),
     );
   }
 }

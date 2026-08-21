@@ -3,6 +3,20 @@ import 'package:flutter/material.dart';
 import '../data/admin_catalog_repository.dart';
 import '../models/benefit_enrichment_review.dart';
 
+num? _safeMaterialNumber(String raw) {
+  final value = raw.trim();
+  if (!RegExp(r'^-?\d+(?:\.\d{1,6})?$').hasMatch(value)) return null;
+  final parsed = num.tryParse(value);
+  if (parsed == null || !parsed.toDouble().isFinite) return null;
+  final absolute = parsed.abs();
+  if (parsed != 0 && (absolute < 0.000001 || absolute >= 1e21)) return null;
+  final coefficient = BigInt.tryParse(value.replaceAll('.', ''))?.abs();
+  if (coefficient == null || coefficient > BigInt.from(9007199254740991)) {
+    return null;
+  }
+  return parsed;
+}
+
 class BenefitEnrichmentReviewPanel extends StatefulWidget {
   const BenefitEnrichmentReviewPanel({
     required this.repository,
@@ -75,16 +89,16 @@ class _BenefitEnrichmentReviewPanelState
   }
 
   Future<String?> _askReason(String title) async {
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
+    var reason = '';
+    return showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(title),
         content: TextField(
-          controller: controller,
           autofocus: true,
           minLines: 2,
           maxLines: 5,
+          onChanged: (value) => reason = value.trim(),
           decoration: const InputDecoration(labelText: 'Reason (required)'),
         ),
         actions: [
@@ -94,7 +108,6 @@ class _BenefitEnrichmentReviewPanelState
           ),
           FilledButton(
             onPressed: () {
-              final reason = controller.text.trim();
               if (reason.length >= 3) Navigator.pop(context, reason);
             },
             child: const Text('Continue'),
@@ -102,8 +115,6 @@ class _BenefitEnrichmentReviewPanelState
         ],
       ),
     );
-    controller.dispose();
-    return result;
   }
 
   Future<bool> _confirmApproval() async =>
@@ -128,6 +139,47 @@ class _BenefitEnrichmentReviewPanelState
       ) ??
       false;
 
+  Future<String?> _confirmRetirement(BenefitPossibleRemoval removal) async {
+    var reason = '';
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Retire ${removal.benefit.label}?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'This retires only this card-to-benefit mapping. Confirm the issuer evidence and provide an audit reason.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              autofocus: true,
+              minLines: 2,
+              maxLines: 5,
+              onChanged: (value) => reason = value.trim(),
+              decoration: const InputDecoration(
+                labelText: 'Retirement reason (required)',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (reason.length >= 3) Navigator.pop(context, reason);
+            },
+            child: const Text('Retire'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _edit(BenefitEnrichmentReview item) async {
     final decision = item.staging.decisions.firstWhereOrNull(
       (decision) =>
@@ -149,58 +201,114 @@ class _BenefitEnrichmentReviewPanelState
       );
       return;
     }
-    final title = TextEditingController(text: candidate.title);
-    final description = TextEditingController(text: candidate.description);
+    var title = candidate.title ?? '';
+    var description = candidate.description ?? '';
+    final stagedRate = candidate.rate;
+    if (stagedRate is! num) {
+      setState(
+        () => _actionError =
+            'This benefit has no numeric rate that can be edited safely.',
+      );
+      return;
+    }
+    var rate = stagedRate.toString();
     final edited = await showDialog<BenefitReviewDecision>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Edit benefit before approval'),
-        content: SizedBox(
-          width: 440,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: title,
-                decoration: const InputDecoration(labelText: 'Benefit title'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: description,
-                decoration: const InputDecoration(labelText: 'Description'),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(
-              context,
-              BenefitReviewDecision(
-                action: 'edit',
-                changeType: decision?.changeType,
-                dedupeKey: decision?.dedupeKey ?? candidate.dedupeKey,
-                displayPriority: decision?.displayPriority,
-                isPrimary: decision?.isPrimary,
-                editedBenefit: candidate.copyWith(
-                  title: title.text.trim(),
-                  description: description.text.trim(),
-                ),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final parsedRate = _safeMaterialNumber(rate);
+          final validTitle = title.trim().length >= 2;
+          final materialChange = parsedRate != null && parsedRate != stagedRate;
+          final invalidRate = rate.trim().isNotEmpty && parsedRate == null;
+          return AlertDialog(
+            title: const Text('Edit benefit before approval'),
+            content: SizedBox(
+              width: 440,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(
+                    key: const ValueKey('normal-edit-title'),
+                    initialValue: title,
+                    onChanged: (value) => setDialogState(() => title = value),
+                    decoration: const InputDecoration(
+                      labelText: 'Benefit title',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    initialValue: description,
+                    onChanged: (value) =>
+                        setDialogState(() => description = value),
+                    decoration: const InputDecoration(labelText: 'Description'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    key: const ValueKey('normal-edit-rate'),
+                    initialValue: rate,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                      signed: true,
+                    ),
+                    onChanged: (value) => setDialogState(() => rate = value),
+                    decoration: InputDecoration(
+                      labelText: 'Rate',
+                      errorText: invalidRate ? 'Enter a finite number.' : null,
+                      helperText: materialChange
+                          ? 'Commercial term changed.'
+                          : 'Change the staged rate to submit.',
+                    ),
+                  ),
+                ],
               ),
             ),
-            child: const Text('Approve edit'),
-          ),
-        ],
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: validTitle && materialChange
+                    ? () => Navigator.pop(
+                        context,
+                        (decision ??
+                                BenefitReviewDecision(
+                                  action: 'edit',
+                                  liveBenefitId: candidate.liveBenefitId,
+                                  dedupeKey: candidate.dedupeKey,
+                                  benefit: candidate,
+                                  proposed: candidate,
+                                ))
+                            .withEditedBenefit(
+                              candidate.copyWith(
+                                title: title.trim(),
+                                description: description.trim(),
+                                rate: parsedRate,
+                              ),
+                            ),
+                      )
+                    : null,
+                child: const Text('Approve edit'),
+              ),
+            ],
+          );
+        },
       ),
     );
-    title.dispose();
-    description.dispose();
     if (edited != null) {
       await _run(() => widget.repository.editApprove(item, [edited]));
+    }
+  }
+
+  Future<void> _resolveConflicts(BenefitEnrichmentReview item) async {
+    final decisions = await showDialog<List<BenefitReviewDecision>>(
+      context: context,
+      builder: (context) => _ConflictResolutionDialog(
+        conflicts: item.staging.extractedData.diff.conflicts,
+      ),
+    );
+    if (decisions != null) {
+      await _run(() => widget.repository.editApprove(item, decisions));
     }
   }
 
@@ -218,9 +326,13 @@ class _BenefitEnrichmentReviewPanelState
               onAuthorize: widget.onAuthorizationRequired,
             );
           }
-          final message = snapshot.error is AdminAccessDenied
-              ? 'Administrator access is required for benefit reviews.'
-              : 'Could not load benefit enrichment reviews.';
+          final message = switch (snapshot.error) {
+            AdminAccessDenied() =>
+              'Administrator access is required for benefit reviews.',
+            FormatException() =>
+              'Malformed v6 review data was rejected. Refresh after the ingestion record is repaired.',
+            _ => 'Could not load benefit enrichment reviews.',
+          };
           return _MessageState(message: message, onRetry: _reload);
         }
         final page = snapshot.data!;
@@ -258,7 +370,7 @@ class _BenefitEnrichmentReviewPanelState
                     child: _BenefitReviewCard(
                       item: item,
                       onOpenUrl: widget.onOpenUrl,
-                      onApprove: !_mutating && item.canReview
+                      onApprove: !_mutating && item.canBulkApply
                           ? () async {
                               if (await _confirmApproval()) {
                                 await _run(
@@ -268,7 +380,9 @@ class _BenefitEnrichmentReviewPanelState
                             }
                           : null,
                       onEdit: !_mutating && item.canReview
-                          ? () => _edit(item)
+                          ? () => item.hasConflicts
+                                ? _resolveConflicts(item)
+                                : _edit(item)
                           : null,
                       onReject: !_mutating && item.canReview
                           ? () async {
@@ -278,6 +392,20 @@ class _BenefitEnrichmentReviewPanelState
                               if (reason != null) {
                                 await _run(
                                   () => widget.repository.reject(item, reason),
+                                );
+                              }
+                            }
+                          : null,
+                      onRetire: !_mutating && item.canReview
+                          ? (removal) async {
+                              final reason = await _confirmRetirement(removal);
+                              if (reason != null) {
+                                await _run(
+                                  () => widget.repository.retire(
+                                    item,
+                                    removal,
+                                    reason,
+                                  ),
                                 );
                               }
                             }
@@ -347,6 +475,390 @@ class _BenefitEnrichmentReviewPanelState
   }
 }
 
+enum _ConflictAction { approve, edit, reject }
+
+class _ConflictChoice {
+  const _ConflictChoice(this.action, this.proposalIndex);
+
+  final _ConflictAction action;
+  final int proposalIndex;
+}
+
+class _ConflictResolutionDialog extends StatefulWidget {
+  const _ConflictResolutionDialog({required this.conflicts});
+
+  final List<BenefitConflict> conflicts;
+
+  @override
+  State<_ConflictResolutionDialog> createState() =>
+      _ConflictResolutionDialogState();
+}
+
+class _ConflictResolutionDialogState extends State<_ConflictResolutionDialog> {
+  final _choices = <int, _ConflictChoice>{};
+  final _titles = <int, TextEditingController>{};
+  final _descriptions = <int, TextEditingController>{};
+  final _rates = <int, TextEditingController>{};
+  final _reasons = <int, TextEditingController>{};
+  final _rejectedCurrent = <String>{};
+  final _currentReasons = <String, TextEditingController>{};
+
+  @override
+  void dispose() {
+    for (final controller in [
+      ..._titles.values,
+      ..._descriptions.values,
+      ..._rates.values,
+      ..._reasons.values,
+      ..._currentReasons.values,
+    ]) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  String _label(_ConflictAction action, BenefitProposal proposal) =>
+      switch (action) {
+        _ConflictAction.approve => 'Approve unchanged — ${proposal.label}',
+        _ConflictAction.edit => 'Edit — ${proposal.label}',
+        _ConflictAction.reject => 'Reject alternative — ${proposal.label}',
+      };
+
+  void _select(int group, String? encoded) {
+    if (encoded == null) return;
+    final parts = encoded.split(':');
+    final action = _ConflictAction.values.byName(parts.first);
+    final proposalIndex = int.parse(parts.last);
+    final proposal = widget.conflicts[group].proposed[proposalIndex];
+    final previous = _choices[group];
+    setState(() {
+      _choices[group] = _ConflictChoice(action, proposalIndex);
+      if (action == _ConflictAction.edit) {
+        final title = _titles.putIfAbsent(
+          group,
+          () => TextEditingController(text: proposal.title),
+        );
+        final description = _descriptions.putIfAbsent(
+          group,
+          () => TextEditingController(text: proposal.description),
+        );
+        final rate = _rates.putIfAbsent(
+          group,
+          () => TextEditingController(text: proposal.rate?.toString()),
+        );
+        if (previous?.action != action ||
+            previous?.proposalIndex != proposalIndex) {
+          title.text = proposal.title ?? '';
+          description.text = proposal.description ?? '';
+          rate.text = proposal.rate?.toString() ?? '';
+        }
+      }
+      if (action == _ConflictAction.reject) {
+        final reason = _reasons.putIfAbsent(group, TextEditingController.new);
+        if (previous?.action != action ||
+            previous?.proposalIndex != proposalIndex) {
+          reason.clear();
+        }
+      }
+    });
+  }
+
+  bool get _complete {
+    for (var group = 0; group < widget.conflicts.length; group += 1) {
+      final conflict = widget.conflicts[group];
+      if (conflict.proposed.isEmpty) {
+        final prefix = '$group:';
+        if (_rejectedCurrent.where((key) => key.startsWith(prefix)).length !=
+            1) {
+          return false;
+        }
+        continue;
+      }
+      final choice = _choices[group];
+      if (choice == null) return false;
+      if (choice.action == _ConflictAction.edit &&
+          (_titles[group]?.text.trim().length ?? 0) < 2) {
+        return false;
+      }
+      if (choice.action == _ConflictAction.edit) {
+        final stagedRate = conflict.proposed[choice.proposalIndex].rate;
+        final editedRate = _safeMaterialNumber(_rates[group]?.text ?? '');
+        if (stagedRate is! num ||
+            editedRate == null ||
+            editedRate == stagedRate) {
+          return false;
+        }
+      }
+      if (choice.action == _ConflictAction.reject &&
+          (_reasons[group]?.text.trim().length ?? 0) < 3) {
+        return false;
+      }
+    }
+    for (final key in _rejectedCurrent) {
+      if ((_currentReasons[key]?.text.trim().length ?? 0) < 3) return false;
+    }
+    return true;
+  }
+
+  List<BenefitReviewDecision> _decisions() {
+    final decisions = <BenefitReviewDecision>[];
+    for (var group = 0; group < widget.conflicts.length; group += 1) {
+      final choice = _choices[group];
+      if (choice == null) continue;
+      final proposal = widget.conflicts[group].proposed[choice.proposalIndex];
+      decisions.add(switch (choice.action) {
+        _ConflictAction.approve => BenefitReviewDecision(
+          action: 'approve',
+          dedupeKey: proposal.dedupeKey,
+          benefit: proposal,
+        ),
+        _ConflictAction.edit => BenefitReviewDecision(
+          action: 'edit',
+          dedupeKey: proposal.dedupeKey,
+          benefit: proposal,
+          proposed: proposal,
+          editedBenefit: proposal.copyWith(
+            title: _titles[group]!.text.trim(),
+            description: _descriptions[group]!.text.trim(),
+            rate: _safeMaterialNumber(_rates[group]!.text),
+          ),
+        ),
+        _ConflictAction.reject => BenefitReviewDecision(
+          action: 'reject',
+          reason: _reasons[group]!.text.trim(),
+          dedupeKey: proposal.dedupeKey,
+          benefit: proposal,
+        ),
+      });
+    }
+    for (var group = 0; group < widget.conflicts.length; group += 1) {
+      for (
+        var currentIndex = 0;
+        currentIndex < widget.conflicts[group].current.length;
+        currentIndex += 1
+      ) {
+        final key = '$group:$currentIndex';
+        if (!_rejectedCurrent.contains(key)) continue;
+        final current = widget.conflicts[group].current[currentIndex];
+        decisions.add(
+          BenefitReviewDecision(
+            action: 'reject',
+            reason: _currentReasons[key]!.text.trim(),
+            liveBenefitId: current.liveBenefitId,
+            dedupeKey: current.dedupeKey,
+            current: current,
+          ),
+        );
+      }
+    }
+    return decisions;
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Resolve benefit conflicts'),
+    content: SizedBox(
+      width: 560,
+      height: 480,
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Choose exactly one outcome for every conflict. Selecting an unchanged proposal publishes its exact staged terms.',
+            ),
+            const SizedBox(height: 12),
+            for (var group = 0; group < widget.conflicts.length; group += 1)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Conflict ${group + 1}: ${widget.conflicts[group].code ?? 'Unspecified conflict'}',
+                    ),
+                    if (widget.conflicts[group].proposed.isNotEmpty)
+                      DropdownButtonFormField<String>(
+                        key: ValueKey('conflict-resolution-$group'),
+                        initialValue: _choices[group] == null
+                            ? null
+                            : '${_choices[group]!.action.name}:${_choices[group]!.proposalIndex}',
+                        decoration: const InputDecoration(
+                          labelText: 'Required resolution',
+                        ),
+                        items: [
+                          for (
+                            var proposalIndex = 0;
+                            proposalIndex <
+                                widget.conflicts[group].proposed.length;
+                            proposalIndex += 1
+                          )
+                            for (final action in _ConflictAction.values)
+                              if (action != _ConflictAction.edit ||
+                                  widget
+                                          .conflicts[group]
+                                          .proposed[proposalIndex]
+                                          .rate
+                                      is num)
+                                DropdownMenuItem(
+                                  value: '${action.name}:$proposalIndex',
+                                  child: Text(
+                                    _label(
+                                      action,
+                                      widget
+                                          .conflicts[group]
+                                          .proposed[proposalIndex],
+                                    ),
+                                  ),
+                                ),
+                        ],
+                        onChanged: (value) => _select(group, value),
+                      )
+                    else
+                      const Padding(
+                        padding: EdgeInsets.only(top: 8),
+                        child: Text(
+                          'Select exactly one current benefit to reject.',
+                        ),
+                      ),
+                    for (
+                      var currentIndex = 0;
+                      currentIndex < widget.conflicts[group].current.length;
+                      currentIndex += 1
+                    ) ...[
+                      Builder(
+                        builder: (context) {
+                          final current =
+                              widget.conflicts[group].current[currentIndex];
+                          final key = '$group:$currentIndex';
+                          return CheckboxListTile(
+                            key: ValueKey(
+                              'conflict-current-reject-$group-$currentIndex',
+                            ),
+                            contentPadding: EdgeInsets.zero,
+                            value: _rejectedCurrent.contains(key),
+                            onChanged: current.liveBenefitId == null
+                                ? null
+                                : (selected) {
+                                    setState(() {
+                                      if (selected == true) {
+                                        if (widget
+                                            .conflicts[group]
+                                            .proposed
+                                            .isEmpty) {
+                                          _rejectedCurrent.removeWhere(
+                                            (candidate) =>
+                                                candidate.startsWith('$group:'),
+                                          );
+                                        }
+                                        _rejectedCurrent.add(key);
+                                        _currentReasons.putIfAbsent(
+                                          key,
+                                          TextEditingController.new,
+                                        );
+                                      } else {
+                                        _rejectedCurrent.remove(key);
+                                      }
+                                    });
+                                  },
+                            title: Text(
+                              '${widget.conflicts[group].proposed.isEmpty ? 'Reject' : 'Also reject'} current — ${current.label}',
+                            ),
+                          );
+                        },
+                      ),
+                      if (_rejectedCurrent.contains('$group:$currentIndex'))
+                        TextField(
+                          key: ValueKey(
+                            'conflict-current-reason-$group-$currentIndex',
+                          ),
+                          controller: _currentReasons['$group:$currentIndex'],
+                          onChanged: (_) => setState(() {}),
+                          decoration: const InputDecoration(
+                            labelText: 'Current-target rejection reason',
+                          ),
+                        ),
+                    ],
+                    if (_choices[group]?.action == _ConflictAction.edit) ...[
+                      const SizedBox(height: 8),
+                      TextField(
+                        key: ValueKey('conflict-title-$group'),
+                        controller: _titles[group],
+                        onChanged: (_) => setState(() {}),
+                        decoration: const InputDecoration(
+                          labelText: 'Benefit title',
+                        ),
+                      ),
+                      TextField(
+                        key: ValueKey('conflict-description-$group'),
+                        controller: _descriptions[group],
+                        onChanged: (_) => setState(() {}),
+                        decoration: const InputDecoration(
+                          labelText: 'Description',
+                        ),
+                      ),
+                      TextField(
+                        key: ValueKey('conflict-rate-$group'),
+                        controller: _rates[group],
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                          signed: true,
+                        ),
+                        onChanged: (_) => setState(() {}),
+                        decoration: InputDecoration(
+                          labelText: 'Rate',
+                          errorText:
+                              (_rates[group]?.text.trim().isNotEmpty == true &&
+                                  _safeMaterialNumber(
+                                        _rates[group]?.text ?? '',
+                                      ) ==
+                                      null)
+                              ? 'Enter a finite number.'
+                              : null,
+                          helperText:
+                              _safeMaterialNumber(_rates[group]?.text ?? '') ==
+                                  widget
+                                      .conflicts[group]
+                                      .proposed[_choices[group]!.proposalIndex]
+                                      .rate
+                              ? 'Change the staged rate to submit.'
+                              : 'Commercial term changed.',
+                        ),
+                      ),
+                    ],
+                    if (_choices[group]?.action == _ConflictAction.reject) ...[
+                      const SizedBox(height: 8),
+                      TextField(
+                        key: ValueKey('conflict-reason-$group'),
+                        controller: _reasons[group],
+                        onChanged: (_) => setState(() {}),
+                        decoration: const InputDecoration(
+                          labelText: 'Targeted rejection reason',
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: _complete
+            ? () => Navigator.pop(context, _decisions())
+            : null,
+        child: const Text('Submit conflict resolutions'),
+      ),
+    ],
+  );
+}
+
 class _ProgressSummary extends StatelessWidget {
   const _ProgressSummary({
     required this.counts,
@@ -403,6 +915,7 @@ class _BenefitReviewCard extends StatelessWidget {
     this.onApprove,
     this.onEdit,
     this.onReject,
+    this.onRetire,
     this.onRetry,
     this.onQuarantine,
   });
@@ -412,6 +925,7 @@ class _BenefitReviewCard extends StatelessWidget {
   final VoidCallback? onApprove;
   final VoidCallback? onEdit;
   final VoidCallback? onReject;
+  final ValueChanged<BenefitPossibleRemoval>? onRetire;
   final VoidCallback? onRetry;
   final VoidCallback? onQuarantine;
 
@@ -450,13 +964,49 @@ class _BenefitReviewCard extends StatelessWidget {
                 label: const Text('Open official source'),
               ),
             ],
+            if (item.staging.extractedData.retrievedAt != null)
+              Text('Retrieved: ${item.staging.extractedData.retrievedAt}'),
+            if (item.staging.extractedData.crawl.observedAt != null)
+              Text(
+                'Crawl observed: ${item.staging.extractedData.crawl.observedAt}',
+              ),
+            if (item.staging.extractedData.crawl.complete == false) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Incomplete crawl — ${item.staging.extractedData.crawl.readableReason ?? 'required evidence is missing'}',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+            if (item.staging.extractedData.crawl.sourceAttempts.isNotEmpty) ...[
+              const Divider(),
+              const Text('Source attempts'),
+              ...item.staging.extractedData.crawl.sourceAttempts.map(
+                (attempt) => Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: SelectableText(
+                    '${attempt.readableRole} · ${attempt.readableStatus}'
+                    '${attempt.httpStatus == null ? '' : ' · ${attempt.httpStatus}'}'
+                    '${attempt.errorCode == null ? '' : ' · ${attempt.errorCode}'}'
+                    '${attempt.attemptedAt == null ? '' : ' · ${attempt.attemptedAt}'}\n'
+                    '${attempt.url}',
+                  ),
+                ),
+              ),
+            ],
             if (diff.modifications.isNotEmpty) ...[
               const Divider(),
               const Text('Current'),
               ...diff.modifications.map(
-                (change) => _DiffRow(
-                  current: change.current,
-                  proposed: change.proposed,
+                (change) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (change.changeType == 'identity_migration')
+                      const Text('Identity migration'),
+                    _DiffRow(
+                      current: change.current,
+                      proposed: change.proposed,
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -468,7 +1018,16 @@ class _BenefitReviewCard extends StatelessWidget {
             if (diff.possibleRemovals.isNotEmpty) ...[
               const Divider(),
               const Text('Possible removals (informational)'),
-              ...diff.possibleRemovals.map(_ProposalEvidence.new),
+              ...diff.possibleRemovals.map(
+                (removal) => _RemovalEvidence(
+                  removal: removal,
+                  onRetire:
+                      removal.retirementEligible &&
+                          removal.benefit.liveBenefitId != null
+                      ? onRetire
+                      : null,
+                ),
+              ),
             ],
             if (diff.unchanged.isNotEmpty) ...[
               const Divider(),
@@ -483,6 +1042,10 @@ class _BenefitReviewCard extends StatelessWidget {
             if (diff.conflicts.isNotEmpty) ...[
               const Divider(),
               const Text('Conflicts'),
+              Text(
+                'Resolve each conflict with one unchanged selection, edit, or targeted rejection. Global reject remains separate. Bulk apply is disabled.',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
               ...diff.conflicts.expand(
                 (conflict) => [
                   Text('Current: ${conflict.code ?? 'Unspecified conflict'}'),
@@ -498,9 +1061,22 @@ class _BenefitReviewCard extends StatelessWidget {
               ...item.staging.sourceEvidence.map(
                 (evidence) => Padding(
                   padding: const EdgeInsets.only(top: 6),
-                  child: Text(
-                    evidence.sourceExcerpt ??
-                        evidence.evidence.values.join(' · '),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        evidence.sourceExcerpt ??
+                            evidence.evidence.values.join(' · '),
+                      ),
+                      if (evidence.dedupeKey != null)
+                        SelectableText('Benefit key: ${evidence.dedupeKey}'),
+                      if (evidence.offerSubject != null)
+                        Text('Condition: ${evidence.offerSubject}'),
+                      if (evidence.sourceUrl != null)
+                        SelectableText('Source: ${evidence.sourceUrl}'),
+                      if (evidence.contentHash != null)
+                        SelectableText('Content hash: ${evidence.contentHash}'),
+                    ],
                   ),
                 ),
               ),
@@ -520,7 +1096,11 @@ class _BenefitReviewCard extends StatelessWidget {
                 ),
                 OutlinedButton(
                   onPressed: onEdit,
-                  child: const Text('Edit proposed changes'),
+                  child: Text(
+                    item.hasConflicts
+                        ? 'Resolve conflicts'
+                        : 'Edit proposed changes',
+                  ),
                 ),
                 TextButton(
                   onPressed: onReject,
@@ -556,13 +1136,23 @@ class _DiffRow extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          '${current.label}${current.value == null ? '' : ' (${current.value})'} → ${proposed.label}${proposed.value == null ? '' : ' (${proposed.value})'}',
-        ),
+        Text('${_proposalSummary(current)} → ${_proposalSummary(proposed)}'),
         _ProposalEvidence(proposed),
       ],
     ),
   );
+}
+
+String _proposalSummary(BenefitProposal proposal) {
+  final terms = <String>[
+    if (proposal.value != null) 'value ${proposal.value}',
+    if (proposal.rate != null) 'rate ${proposal.rate}',
+    if (proposal.cap != null) 'cap ${proposal.cap}',
+    if (proposal.threshold != null) 'threshold ${proposal.threshold}',
+    if (proposal.frequency != null) 'frequency ${proposal.frequency}',
+    if (proposal.period != null) 'period ${proposal.period}',
+  ];
+  return [proposal.label, ...terms].join(' · ');
 }
 
 class _ProposalEvidence extends StatelessWidget {
@@ -574,7 +1164,12 @@ class _ProposalEvidence extends StatelessWidget {
     final details = [
       proposal.description,
       proposal.category,
-      proposal.value,
+      if (proposal.value != null) 'value ${proposal.value}',
+      if (proposal.rate != null) 'rate ${proposal.rate}',
+      if (proposal.cap != null) 'cap ${proposal.cap}',
+      if (proposal.threshold != null) 'threshold ${proposal.threshold}',
+      proposal.frequency,
+      proposal.period,
     ].whereType<String>().where((value) => value.isNotEmpty).join(' · ');
     final evidence = proposal.evidence.values.join(' · ');
     final confidence = proposal.confidence.entries
@@ -586,6 +1181,16 @@ class _ProposalEvidence extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(proposal.label),
+          if (proposal.liveBenefitId != null)
+            SelectableText('Live benefit ID: ${proposal.liveBenefitId}'),
+          if (proposal.benefitId != null)
+            SelectableText('Benefit ID: ${proposal.benefitId}'),
+          if (proposal.dedupeKey != null)
+            SelectableText('Benefit key: ${proposal.dedupeKey}'),
+          if (proposal.conditionHash != null)
+            SelectableText('Condition hash: ${proposal.conditionHash}'),
+          if (proposal.sourceIdentity != null)
+            SelectableText('Source identity: ${proposal.sourceIdentity}'),
           if (details.isNotEmpty) Text(details),
           if (evidence.isNotEmpty) Text('Evidence: $evidence'),
           if (confidence.isNotEmpty) Text('Confidence: $confidence'),
@@ -597,6 +1202,38 @@ class _ProposalEvidence extends StatelessWidget {
       ),
     );
   }
+}
+
+class _RemovalEvidence extends StatelessWidget {
+  const _RemovalEvidence({required this.removal, this.onRetire});
+
+  final BenefitPossibleRemoval removal;
+  final ValueChanged<BenefitPossibleRemoval>? onRetire;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 8),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _ProposalEvidence(removal.benefit),
+        Text(
+          'Retirement eligible: ${removal.retirementEligible ? 'Yes' : 'No'}',
+        ),
+        if (removal.readableRetirementReason != null)
+          Text(removal.readableRetirementReason!),
+        if (removal.completeAbsenceObservedAt.isNotEmpty)
+          Text(
+            'Complete absence observed: ${removal.completeAbsenceObservedAt.join(' · ')}',
+          ),
+        if (onRetire != null)
+          TextButton(
+            onPressed: () => onRetire!(removal),
+            child: const Text('Retire benefit'),
+          ),
+      ],
+    ),
+  );
 }
 
 String _warningLabel(String warning) {

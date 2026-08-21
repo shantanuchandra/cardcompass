@@ -32,7 +32,7 @@ class CardCompassApp extends ConsumerWidget {
           final content = child ?? const SizedBox.shrink();
 
           final marketingSurface =
-              path == '/login' || (path == '/' && auth.isLoading);
+              path == '/login' || (path == '/' && authStatusIsPending(auth));
           if (!marketingSurface) {
             return FeedbackRepositoryScope.lazy(
               repositoryFactory: () => FeedbackRepository(

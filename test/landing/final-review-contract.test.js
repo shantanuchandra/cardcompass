@@ -14,7 +14,7 @@ test('production surfaces preserve the /app/ OAuth callback and redirect legacy 
   assert.match(auth, /\/app\//);
   assert.match(supabaseConfig, /https:\/\/cardcompass\.in\/app\//);
   assert.match(server, /\/login/);
-  assert.match(server, /\/app\/#\/login/);
+  assert.match(server, /\/app\/login/);
   assert.doesNotMatch(workflow, /cp\s+-r\s+login/);
 });
 

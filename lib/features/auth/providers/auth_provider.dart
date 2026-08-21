@@ -4,6 +4,13 @@ import '../../../core/providers/supabase_provider.dart';
 
 enum AuthStatus { loading, authenticated, unauthenticated }
 
+/// Riverpod preserves the previous value while an async dependency refreshes,
+/// which makes `isLoading` true even though an authorization decision is
+/// already available. Only the initial value-less load should block routing or
+/// disable sign-in controls.
+bool authStatusIsPending(AsyncValue<AuthStatus> auth) =>
+    auth.isLoading && !auth.hasValue;
+
 class InactiveAccountException implements Exception {
   const InactiveAccountException();
 

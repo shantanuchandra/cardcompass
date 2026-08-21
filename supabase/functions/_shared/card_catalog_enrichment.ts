@@ -20,22 +20,49 @@ export type CatalogPatch = Partial<{
 }>;
 
 import {
-  extractGroundedBenefits,
   type BenefitProposal,
+  extractGroundedBenefits,
 } from "./benefit_enrichment.ts";
+import {
+  redactSensitiveUrlsInText,
+  redactSensitiveUrlsInValue,
+  safeHttpsDisplayUrl,
+} from "./benefit_source_privacy.ts";
+import {
+  type CanonicalCardIdentity,
+  exactOfficialPageIdentity,
+} from "./card_discovery.ts";
+
+export function requireCatalogPageIdentity(
+  html: string,
+  issuer: string,
+  expectedCardName: string,
+  sourceUrl?: string,
+): CanonicalCardIdentity {
+  const identity = exactOfficialPageIdentity(
+    html,
+    issuer,
+    expectedCardName,
+    sourceUrl,
+  );
+  if (!identity) throw new Error("identity_mismatch");
+  return identity;
+}
 
 /**
  * Legacy catalog-enrichment shape plus the reviewable, grounded proposal fields.
  * The legacy scalar confidence/evidence fields remain while field-level evidence
  * is available to the benefit staging flow.
  */
-export type BenefitCandidate = Omit<BenefitProposal, "confidence" | "evidence"> & {
-  confidence: number;
-  evidence: string;
-  source_url: string;
-  fieldConfidence: Record<string, number>;
-  fieldEvidence: Record<string, string>;
-};
+export type BenefitCandidate =
+  & Omit<BenefitProposal, "confidence" | "evidence">
+  & {
+    confidence: number;
+    evidence: string;
+    source_url: string;
+    fieldConfidence: Record<string, number>;
+    fieldEvidence: Record<string, string>;
+  };
 
 export type FieldConflict = {
   field: CatalogField;
@@ -60,8 +87,44 @@ function decodedText(html: string): string {
     .slice(0, 160_000);
 }
 
+function catalogIdentityTokens(value: string): string[] {
+  const generic = new Set(["bank", "card", "cards", "credit", "the", "and"]);
+  return value.toLowerCase().split(/[^a-z0-9]+/).filter((token) =>
+    token.length > 1 && !generic.has(token)
+  );
+}
+
+function productScopedCatalogHtml(
+  html: string,
+  expectedCardName: string,
+): string {
+  if (!html.trim() || !/<[a-z][\s\S]*>/i.test(html)) return html;
+  let cleaned = html;
+  for (let pass = 0; pass < 4; pass += 1) {
+    const next = cleaned
+      .replace(/<(header|nav|footer|aside)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
+      .replace(
+        /<([a-z][a-z0-9:-]*)\b[^>]*\brole\s*=\s*(?:"(?:banner|navigation|contentinfo|complementary)"|'(?:banner|navigation|contentinfo|complementary)'|(?:banner|navigation|contentinfo|complementary))[^>]*>[\s\S]*?<\/\1\s*>/gi,
+        " ",
+      );
+    if (next === cleaned) break;
+    cleaned = next;
+  }
+  const expectedTokens = catalogIdentityTokens(expectedCardName);
+  if (expectedTokens.length === 0) return cleaned;
+  const mainSections = [...cleaned.matchAll(
+    /<main\b[^>]*>[\s\S]*?<\/main\s*>/gi,
+  )].map((match) => match[0]);
+  const targetMain = mainSections.find((section) => {
+    const tokens = new Set(catalogIdentityTokens(decodedText(section)));
+    return expectedTokens.every((token) => tokens.has(token));
+  });
+  return targetMain ?? cleaned;
+}
+
 function excerpt(value: string): string {
-  return value.replace(/(?<!\d)(?:\d[\s-]*){6,}(?!\d)/g, "[redacted]")
+  return redactSensitiveUrlsInText(value)
+    .replace(/(?<!\d)(?:\d[\s-]*){6,}(?!\d)/g, "[redacted]")
     .replace(/\s+/g, " ").trim().slice(0, 300);
 }
 
@@ -81,28 +144,53 @@ function labelledLine(text: string, label: RegExp): string | null {
   return null;
 }
 
-function feeField(text: string, label: RegExp): FieldEvidence<number> | undefined {
-  const line = labelledLine(text, label);
-  if (!line) return undefined;
-  const value = normalizeMoney(line);
-  return value == null
-    ? undefined
-    : { value, confidence: 0.96, evidence: excerpt(line) };
+function feeField(
+  text: string,
+  label: RegExp,
+): FieldEvidence<number> | undefined {
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (!label.test(line)) continue;
+    if (
+      /\b(?:waiv(?:e|er|ed)|spend|eligible|threshold|add[- ]?on|supplementary)\b/i
+        .test(line)
+    ) {
+      continue;
+    }
+    const context = `${line} ${lines[index + 1] ?? ""}`.trim();
+    const value = normalizeMoney(context);
+    if (value != null) {
+      return { value, confidence: 0.96, evidence: excerpt(context) };
+    }
+  }
+  return undefined;
 }
 
 export function normalizeOfficialCatalogPage(
   html: string,
   sourceUrl: string,
-): { patch: CatalogPatch; benefits: BenefitCandidate[]; evidence: Record<string, string> } {
-  const text = decodedText(html);
+  expectedCardName = "",
+): {
+  patch: CatalogPatch;
+  benefits: BenefitCandidate[];
+  evidence: Record<string, string>;
+} {
+  const text = decodedText(productScopedCatalogHtml(html, expectedCardName));
+  sourceUrl = safeHttpsDisplayUrl(sourceUrl) ?? "invalid-source";
   const patch: CatalogPatch = {};
   const joiningFee = feeField(text, /\bjoining\s+fee\b/i);
   const annualFee = feeField(text, /\bannual(?:|\s+membership)\s+fee\b/i);
   if (joiningFee) patch.joining_fee = joiningFee;
   if (annualFee) patch.annual_fee = annualFee;
 
-  const aprLine = labelledLine(text, /\b(?:finance\s+charges?|annual percentage rate|apr)\b/i);
-  const annualRate = aprLine?.match(/([0-9]+(?:\.[0-9]+)?)%\s*(?:annually|annual|p\.?a\.?)/i);
+  const aprLine = labelledLine(
+    text,
+    /\b(?:finance\s+charges?|annual percentage rate|apr)\b/i,
+  );
+  const annualRate = aprLine?.match(
+    /([0-9]+(?:\.[0-9]+)?)%\s*(?:annually|annual|p\.?a\.?)/i,
+  );
   if (aprLine && annualRate) {
     patch.apr = {
       value: Number(annualRate[1]),
@@ -111,8 +199,13 @@ export function normalizeOfficialCatalogPage(
     };
   }
 
-  const networkLine = labelledLine(text, /\bnetwork\b/i);
-  const network = networkLine?.match(/\b(visa|mastercard|rupay|american express|amex)\b/i)?.[1];
+  const networkLine = labelledLine(
+    text,
+    /^\s*(?:(?:card|payment)\s+)?network\b/i,
+  );
+  const network = networkLine?.match(
+    /\b(visa|mastercard|rupay|american express|amex)\b/i,
+  )?.[1];
   if (network && networkLine) {
     patch.network = {
       value: /american express|amex/i.test(network)
@@ -141,35 +234,51 @@ export function normalizeOfficialCatalogPage(
       fieldConfidence: benefit.confidence,
       fieldEvidence: benefit.evidence,
     }))
-    .sort((left, right) => text.indexOf(left.sourceExcerpt) - text.indexOf(right.sourceExcerpt));
+    .sort((left, right) =>
+      text.indexOf(left.sourceExcerpt) - text.indexOf(right.sourceExcerpt)
+    );
 
-  return {
+  return redactSensitiveUrlsInValue({
     patch,
     benefits: benefits.slice(0, 40),
     evidence: Object.fromEntries(
       Object.entries(patch).map(([field, value]) => [field, value.evidence]),
     ),
+  }) as {
+    patch: CatalogPatch;
+    benefits: BenefitCandidate[];
+    evidence: Record<string, string>;
   };
 }
 
 export function diffCatalogFields(
   existing: Partial<Record<CatalogField, unknown>>,
   proposed: CatalogPatch,
-): { backfill: Partial<Record<CatalogField, unknown>>; conflicts: FieldConflict[] } {
+): {
+  backfill: Partial<Record<CatalogField, unknown>>;
+  conflicts: FieldConflict[];
+} {
   const backfill: Partial<Record<CatalogField, unknown>> = {};
   const conflicts: FieldConflict[] = [];
-  for (const [field, candidate] of Object.entries(proposed) as [CatalogField, FieldEvidence][]) {
+  for (
+    const [field, candidate] of Object.entries(proposed) as [
+      CatalogField,
+      FieldEvidence,
+    ][]
+  ) {
     if (candidate.confidence < 0.9) continue;
     const current = existing[field];
     if (current == null || current === "") {
       backfill[field] = candidate.value;
-    } else if (String(current).toLowerCase() !== String(candidate.value).toLowerCase()) {
+    } else if (
+      String(current).toLowerCase() !== String(candidate.value).toLowerCase()
+    ) {
       conflicts.push({
         field,
-        existing: current,
-        proposed: candidate.value,
+        existing: redactSensitiveUrlsInValue(current),
+        proposed: redactSensitiveUrlsInValue(candidate.value),
         confidence: candidate.confidence,
-        evidence: candidate.evidence,
+        evidence: redactSensitiveUrlsInText(candidate.evidence),
       });
     }
   }

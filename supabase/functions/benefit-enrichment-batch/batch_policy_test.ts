@@ -1,6 +1,7 @@
 import {
   buildJobKey,
   enqueueBenefitEnrichmentJob,
+  enqueueBenefitEnrichmentJobs,
   evaluatePilotGate,
   failureDisposition,
   findReusableStaging,
@@ -9,12 +10,13 @@ import {
   selectPilotCandidates,
   simulateLeaseClaim,
 } from "./batch_policy.ts";
+import type { PilotJob } from "./batch_policy.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
-Deno.test("a lease claim recovers expired work and claims at most five rows from one issuer", () => {
+Deno.test("a lease claim recovers expired work and claims exactly one row per invocation", () => {
   const now = new Date("2026-08-17T12:00:00.000Z");
   const jobs = [
     ...Array.from({ length: 6 }, (_, index) => ({
@@ -42,7 +44,7 @@ Deno.test("a lease claim recovers expired work and claims at most five rows from
     result.recoveredIds.join(",") === "axis-0",
     "expired lease was not recovered",
   );
-  assert(result.claimed.length === 5, "claim exceeded the five-job maximum");
+  assert(result.claimed.length === 1, "claim exceeded the one-card maximum");
   assert(
     result.claimed.every((job) => job.issuer === "Axis Bank"),
     "claim mixed issuers",
@@ -134,7 +136,7 @@ Deno.test("batch claims reserve catalog-v1 for the legacy worker in every run mo
   );
 });
 
-Deno.test("one-issuer claims group bank casing and whitespace variants", () => {
+Deno.test("one-card claims keep deterministic issuer ordering across casing variants", () => {
   const result = simulateLeaseClaim(
     [
       {
@@ -169,8 +171,8 @@ Deno.test("one-issuer claims group bank casing and whitespace variants", () => {
     "scheduled",
   );
   assert(
-    result.claimed.map((job) => job.id).sort().join(",") === "axis-a,axis-b",
-    "one bank was split into separate issuer lanes",
+    result.claimed.map((job) => job.id).join(",") === "axis-a",
+    "one-card claim lost deterministic normalized-issuer ordering",
   );
 });
 
@@ -212,66 +214,139 @@ Deno.test("job identity is stable for the card, canonical URL hash, and parser",
   assert(first !== nextParser, "parser version was omitted from identity");
 });
 
-Deno.test("re-enqueueing a leased job preserves its processing state and lease", async () => {
-  const original = {
-    id: "job-1",
-    job_key: `card-a:${"a".repeat(64)}:benefits-v1`,
-    status: "processing",
-    lease_token: "lease-1",
-    lease_expires_at: "2026-08-17T12:15:00.000Z",
-    attempt_count: 2,
-  };
-  let stored = { ...original };
-  let upserts = 0;
+Deno.test("v6 enqueue reports the authoritative inserted count without overwriting a lease", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const db = {
-    from(table: string) {
-      assert(
-        table === "card_catalog_enrichment_jobs",
-        "enqueue targeted the wrong table",
-      );
-      return {
-        async upsert(
-          input: Record<string, unknown> | Record<string, unknown>[],
-          options: { onConflict?: string; ignoreDuplicates?: boolean },
-        ) {
-          upserts += 1;
-          const [row] = Array.isArray(input) ? input : [input];
-          const conflicts = row.job_key === stored.job_key;
-          if (!conflicts || !options.ignoreDuplicates) {
-            stored = { ...stored, ...row } as typeof stored;
-          }
-          return { error: null };
-        },
-      };
+    from() {
+      throw new Error("non_atomic_enqueue");
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      return { data: 0, error: null };
     },
   };
 
-  await enqueueBenefitEnrichmentJob(db, {
+  const inserted = await enqueueBenefitEnrichmentJob(db, {
     cardId: "card-a",
     issuer: "Axis Bank",
     canonicalUrl: "https://axis.example/card-a",
     finalUrlHash: "a".repeat(64),
     contentHash: "b".repeat(64),
-    parserVersion: "benefits-v1",
+    parserVersion: "benefits-v6",
   });
 
   assert(
-    JSON.stringify(stored) === JSON.stringify(original),
-    "duplicate enqueue rewound or mutated an active lease",
+    calls.length === 1 &&
+      calls[0].name === "enqueue_card_benefit_enrichment_jobs",
+    "enqueue bypassed the serialized database boundary",
   );
-  assert(upserts === 1, "enqueue skipped its database boundary");
+  const rows = calls[0].args._jobs as Record<string, unknown>[];
+  assert(
+    rows.length === 1 &&
+      rows[0].job_key === `card-a:${"a".repeat(64)}:benefits-v6`,
+    "atomic enqueue lost the stable job identity",
+  );
+  assert(inserted === 0, "v6 enqueue hid the authoritative inserted count");
+});
+
+Deno.test("v5 rollback enqueue keeps distinct source job keys on the legacy upsert path", async () => {
+  const writes: Record<string, unknown>[][] = [];
+  const db = {
+    rpc() {
+      throw new Error("v5_used_v6_identity_rpc");
+    },
+    from(table: string) {
+      assert(table === "card_catalog_enrichment_jobs", "wrong legacy table");
+      return {
+        upsert(
+          input: Record<string, unknown> | Record<string, unknown>[],
+          options: { onConflict: string; ignoreDuplicates: boolean },
+        ) {
+          assert(options.onConflict === "job_key", "v5 lost job-key identity");
+          assert(
+            options.ignoreDuplicates,
+            "v5 conflicts could overwrite leases",
+          );
+          const rows = Array.isArray(input) ? input : [input];
+          writes.push(rows);
+          return {
+            async select() {
+              return {
+                data: rows.map((row, index) => ({
+                  id: `${row.job_key}:${index}`,
+                })),
+                error: null,
+              };
+            },
+          };
+        },
+      };
+    },
+  };
+  const inserted = await enqueueBenefitEnrichmentJobs(db, [
+    {
+      cardId: "card-a",
+      issuer: "Axis Bank",
+      canonicalUrl: "https://axis.example/old",
+      finalUrlHash: "a".repeat(64),
+      contentHash: "c".repeat(64),
+      parserVersion: "benefits-v5",
+    },
+    {
+      cardId: "card-a",
+      issuer: "Axis Bank",
+      canonicalUrl: "https://axis.example/new",
+      finalUrlHash: "b".repeat(64),
+      contentHash: "d".repeat(64),
+      parserVersion: "benefits-v5",
+    },
+  ]);
+  assert(inserted === 2, "v5 did not report both inserted source identities");
+  assert(
+    writes.length === 1 && writes[0].length === 2,
+    "v5 source changed was suppressed",
+  );
+});
+
+Deno.test("v6 batch enqueue rejects impossible counts and reports a real partial count", async () => {
+  const inputs = ["a", "b"].map((key) => ({
+    cardId: `card-${key}`,
+    issuer: "Axis Bank",
+    canonicalUrl: `https://axis.example/${key}`,
+    finalUrlHash: key.repeat(64),
+    contentHash: null,
+    parserVersion: "benefits-v6",
+  }));
+  const partial = await enqueueBenefitEnrichmentJobs({
+    async rpc() {
+      return { data: 1, error: null };
+    },
+  }, inputs);
+  assert(partial === 1, "v6 partial insertion was silently reported as full");
+
+  let invalid: unknown;
+  try {
+    await enqueueBenefitEnrichmentJobs({
+      async rpc() {
+        return { data: 3, error: null };
+      },
+    }, inputs);
+  } catch (caught) {
+    invalid = caught;
+  }
+  assert(
+    invalid instanceof Error &&
+      invalid.message === "invalid_enrichment_enqueue_count",
+    "impossible v6 insertion count was accepted",
+  );
 });
 
 Deno.test("benefit enqueue refuses the reserved catalog-v1 parser", async () => {
   let writes = 0;
   const db = {
-    from() {
+    async rpc() {
       writes += 1;
-      return {
-        async upsert() {
-          return { error: null };
-        },
-      };
+      return { data: 0, error: null };
     },
   };
   let error: unknown;
@@ -558,19 +633,95 @@ Deno.test("secret comparison hashes unequal-length inputs before fixed-length co
 });
 
 Deno.test("scheduled rollout stays blocked until the exact safe five-job pilot passes", () => {
-  const base = Array.from({ length: 5 }, (_, index) => ({
+  const base: PilotJob[] = Array.from({ length: 5 }, (_, index) => ({
     id: `pilot-${index}`,
+    issuer: ["Issuer A", "Issuer B", "Issuer C", "Issuer A", "Issuer B"][index],
+    pilotProfile: [
+      "straightforward",
+      "redirect_or_js",
+      "terms_linked",
+      "known_invalid",
+      "additional_valid",
+    ][index],
     runMode: "pilot" as const,
-    status: index === 4 ? "quarantined" : "staged",
-    quarantineReason: index === 4 ? "identity_mismatch" : null,
+    status: "completed",
+    quarantineReason: null,
+    safetyMetadataValid: true,
     unsafeMutationCount: 0,
     idempotencyPassed: true,
     evidencePassed: true,
     rawBodyStored: false,
-  }));
+    pilotQualified: false,
+    successfulNoChange: true,
+    reviewMetadataPresent: false,
+    reviewMetadataMalformed: false,
+    reviewStatus: null,
+    approvedCount: null,
+    retainedCount: null,
+    retiredCount: null,
+    rejectedCount: null,
+    computedEvidenceValid: true,
+    deterministicReplayPassed: true,
+    sideEffectProofPassed: true,
+    crawlComplete: true,
+    suppressedRemovalCount: 0,
+    sourceBindingValid: true,
+    conflictCount: 0,
+  } as PilotJob));
   assert(
     evaluatePilotGate(base).status === "passed",
     "safe terminal pilot did not pass",
+  );
+  const pendingReview = base.map((job) => ({
+    ...job,
+    status: "staged",
+    successfulNoChange: false,
+  }));
+  assert(
+    evaluatePilotGate(pendingReview).status === "running" &&
+      !evaluatePilotGate(pendingReview).scheduledClaimAllowed,
+    "pending pilot reviews unlocked rollout",
+  );
+  const oneIssuer = base.map((job) => ({ ...job, issuer: "Issuer A" }));
+  assert(
+    evaluatePilotGate(oneIssuer).blockers.includes("pilot_issuer_diversity"),
+    "one-issuer evidence cohort unlocked rollout",
+  );
+  const duplicateProfile = base.map((job, index) =>
+    index === 4 ? { ...job, pilotProfile: "straightforward" } : job
+  );
+  assert(
+    evaluatePilotGate(duplicateProfile).blockers.includes(
+      "pilot_profile_coverage",
+    ),
+    "duplicate pilot profiles unlocked rollout",
+  );
+  const completedNoChange: PilotJob[] = base.map((job, index) =>
+    index === 0
+      ? { ...job, status: "completed", successfulNoChange: true }
+      : job
+  );
+  assert(
+    evaluatePilotGate(completedNoChange).status === "passed",
+    "successful no-change completion did not finish the pilot",
+  );
+  const completedApproval: PilotJob[] = base.map((job, index) =>
+    index === 1
+      ? {
+        ...job,
+        status: "completed",
+        reviewMetadataPresent: true,
+        reviewStatus: "approved",
+        approvedCount: 1,
+        retainedCount: 0,
+        retiredCount: 0,
+        rejectedCount: 0,
+      }
+      : job
+  );
+  assert(
+    evaluatePilotGate(completedApproval).scheduledClaimAllowed,
+    "admin-approved completion self-deadlocked scheduled claims",
   );
   assert(
     evaluatePilotGate(base.slice(0, 4)).status === "running",
@@ -600,10 +751,69 @@ Deno.test("scheduled rollout stays blocked until the exact safe five-job pilot p
     ).status === "blocked",
     "failed idempotency did not block rollout",
   );
+  const attestedOnly = base.map((job, index) =>
+    index === 1 ? ({ ...job, computedEvidenceValid: false } as PilotJob) : job
+  );
+  assert(
+    evaluatePilotGate(attestedOnly).blockers.includes(
+      "pilot_computed_evidence_invalid",
+    ),
+    "self-attested pilot metadata unlocked rollout",
+  );
+  const crossBound = base.map((job, index) =>
+    index === 1 ? ({ ...job, sourceBindingValid: false } as PilotJob) : job
+  );
+  assert(
+    evaluatePilotGate(crossBound).blockers.includes("pilot_source_mismatch"),
+    "cross-card/source pilot evidence unlocked rollout",
+  );
+  const replayMismatch = base.map((job, index) =>
+    index === 1
+      ? ({ ...job, deterministicReplayPassed: false } as PilotJob)
+      : job
+  );
+  assert(
+    evaluatePilotGate(replayMismatch).blockers.includes(
+      "deterministic_replay_failed",
+    ),
+    "nondeterministic pilot evidence unlocked rollout",
+  );
+  const sideEffect = base.map((job, index) =>
+    index === 1 ? ({ ...job, sideEffectProofPassed: false } as PilotJob) : job
+  );
+  assert(
+    evaluatePilotGate(sideEffect).blockers.includes("side_effect_proof_failed"),
+    "live-state mutation evidence unlocked rollout",
+  );
+  const incomplete = base.map((job, index) =>
+    index === 1 ? ({ ...job, crawlComplete: false } as PilotJob) : job
+  );
+  assert(
+    evaluatePilotGate(incomplete).blockers.includes("pilot_crawl_incomplete"),
+    "incomplete negative simulation counted among five qualified jobs",
+  );
+  const suppressed = base.map((job, index) =>
+    index === 1 ? ({ ...job, suppressedRemovalCount: 1 } as PilotJob) : job
+  );
+  assert(
+    evaluatePilotGate(suppressed).blockers.includes(
+      "pilot_suppressed_removals",
+    ),
+    "suppressed removals counted as a qualified observation",
+  );
+  const conflicts = base.map((job, index) =>
+    index === 1 ? ({ ...job, conflictCount: 1 } as PilotJob) : job
+  );
+  assert(
+    evaluatePilotGate(conflicts).blockers.includes("pilot_conflict_unresolved"),
+    "unresolved proposal conflict unlocked rollout",
+  );
   assert(
     evaluatePilotGate(
       base.map((job, index) =>
-        index === 4 ? { ...job, quarantineReason: null } : job
+        index === 4
+          ? { ...job, status: "quarantined", quarantineReason: null }
+          : job
       ),
     ).status === "blocked",
     "unjustified quarantine did not block rollout",
@@ -637,7 +847,135 @@ Deno.test("scheduled rollout stays blocked until the exact safe five-job pilot p
       : job
   );
   assert(
-    evaluatePilotGate(recovered).status === "passed",
-    "recovered pilot could not pass",
+    evaluatePilotGate(recovered).status === "blocked",
+    "incomplete negative fixture counted among five qualified jobs",
+  );
+
+  const fullyRejected: PilotJob[] = base.map((job, index) =>
+    index === 0
+      ? {
+        ...job,
+        status: "completed",
+        reviewMetadataPresent: true,
+        reviewStatus: "rejected",
+        approvedCount: 0,
+        retainedCount: 0,
+        retiredCount: 0,
+        rejectedCount: 2,
+      }
+      : job
+  );
+  assert(
+    evaluatePilotGate(fullyRejected).blockers.includes(
+      "pilot_review_rejected",
+    ),
+    "fully rejected review unlocked rollout",
+  );
+
+  const partiallyRejected: PilotJob[] = base.map((job, index) =>
+    index === 0
+      ? {
+        ...job,
+        status: "completed",
+        reviewMetadataPresent: true,
+        reviewStatus: "approved",
+        approvedCount: 1,
+        retainedCount: 0,
+        retiredCount: 0,
+        rejectedCount: 1,
+      }
+      : job
+  );
+  assert(
+    evaluatePilotGate(partiallyRejected).blockers.includes(
+      "pilot_review_partially_rejected",
+    ),
+    "mixed approval/rejection unlocked rollout",
+  );
+
+  for (
+    const malformed of [
+      {
+        reviewMetadataPresent: true,
+        reviewMetadataMalformed: true,
+        reviewStatus: "approved",
+        approvedCount: null,
+        rejectedCount: 0,
+      },
+      {
+        reviewMetadataPresent: true,
+        reviewMetadataMalformed: true,
+        reviewStatus: "approved",
+        approvedCount: -1,
+        rejectedCount: 0,
+      },
+      {
+        reviewMetadataPresent: false,
+        reviewMetadataMalformed: false,
+        reviewStatus: null,
+        approvedCount: null,
+        rejectedCount: null,
+      },
+    ] satisfies Array<Partial<PilotJob>>
+  ) {
+    const jobs: PilotJob[] = base.map((job, index) =>
+      index === 0
+        ? {
+          ...job,
+          status: "completed",
+          successfulNoChange: false,
+          ...malformed,
+        }
+        : job
+    );
+    assert(
+      evaluatePilotGate(jobs).blockers.includes(
+        "pilot_review_metadata_invalid",
+      ),
+      "missing or malformed completed-review metadata unlocked rollout",
+    );
+  }
+
+  const promoted: PilotJob[] = completedApproval.map((job) => ({
+    ...job,
+    runMode: "scheduled" as const,
+    pilotQualified: true,
+  }));
+  assert(
+    evaluatePilotGate(promoted).status === "passed",
+    "qualified pilot handoff forgot the completed gate",
+  );
+  assert(
+    evaluatePilotGate(promoted.slice(0, 4)).status === "running",
+    "partial qualified handoff unlocked rollout",
+  );
+  const recurring = promoted.map((job, index) => ({
+    ...job,
+    status: ["queued", "processing", "failed", "staged", "completed"][index],
+  }));
+  assert(
+    evaluatePilotGate(recurring).status === "passed",
+    "a qualified scheduled recurrence self-deadlocked its own claim",
+  );
+  const rejectedAfterHandoff: PilotJob[] = promoted.map((job, index) =>
+    index === 0
+      ? {
+        ...job,
+        status: "staged",
+        successfulNoChange: false,
+        reviewMetadataPresent: true,
+        reviewStatus: "rejected",
+        approvedCount: 0,
+        retainedCount: 0,
+        retiredCount: 0,
+        rejectedCount: 1,
+      }
+      : job
+  );
+  assert(
+    evaluatePilotGate(rejectedAfterHandoff).blockers.includes(
+      "pilot_review_rejected",
+    ),
+    "a post-handoff full rejection left rollout unlocked",
   );
 });

@@ -90,18 +90,13 @@ final class CardDataRepository {
   }
 }
 
-const _identityFields = {
-  'id',
-  'bank',
-  'issuer',
+const _identityEditableFields = {
+  'cardName',
   'card_name',
-  'name',
   'network',
-  'card_type',
+  'joining_fee',
   'annual_fee',
-  'currency',
-  'official_url',
-  'image_url',
+  'apr',
 };
 const _decisionFields = {
   'action',
@@ -204,7 +199,9 @@ void _validateAction(CardReviewAction action) {
         if (!_hasOnly(action.payload, {'proposed_fields'})) _invalidAction();
         final proposed = action.payload['proposed_fields'];
         if (proposed is! Map ||
-            proposed.keys.any((key) => !_identityFields.contains(key)) ||
+            proposed.keys.any(
+              (key) => !_identityEditableFields.contains(key),
+            ) ||
             proposed.entries.any(
               (entry) => !_validIdentityValue(entry.key, entry.value),
             )) {

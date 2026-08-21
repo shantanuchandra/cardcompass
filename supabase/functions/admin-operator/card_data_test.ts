@@ -92,7 +92,7 @@ Deno.test("identity list uses a bounded queue query and excludes raw evidence", 
     id: IDENTITY_ID,
     status: "pending",
     proposed_fields: {
-      card_name: "Issuer Premier",
+      cardName: "Issuer Premier",
       issuer: "Issuer",
       network: "Visa",
       official_url: "https://issuer.example/card",
@@ -104,8 +104,15 @@ Deno.test("identity list uses a bounded queue query and excludes raw evidence", 
       raw_body: "excluded",
       authorization: "excluded",
     },
-    existing_candidates: [{ id: MERGE_ID, card_name: "Premier", secret: "x" }],
-    validation_warnings: [{ code: "ambiguous_match", raw: "excluded" }],
+    existing_candidates: [{
+      card_id: MERGE_ID,
+      card_name: "Premier",
+      secret: "x",
+    }],
+    validation_warnings: [
+      "legacy_warning",
+      { code: "ambiguous_match", raw: "excluded" },
+    ],
     confidence: 0.81,
     review_reason: "possible duplicate",
     created_at: "2026-08-18T09:00:00Z",
@@ -153,10 +160,18 @@ Deno.test("identity list uses a bounded queue query and excludes raw evidence", 
     network: "Visa",
     official_url: "https://issuer.example/card",
   });
+  assertEquals(output.items[0].card, {
+    bank: "Issuer",
+    card_name: "Issuer Premier",
+  });
   assertEquals(output.items[0].existing_candidates, [{
     id: MERGE_ID,
     card_name: "Premier",
   }]);
+  assertEquals(output.items[0].validation_warnings, [
+    { code: "legacy_warning" },
+    { code: "ambiguous_match" },
+  ]);
   assertEquals(output.items[0].discovery_job.evidence, { source_url: null });
   assertEquals(fake.calls.at(-1), { method: "range", args: [0, 50] });
 });
@@ -354,7 +369,15 @@ function bodyAtRequestBytes(targetBytes: number) {
 Deno.test("identity mutations enforce exact operation payloads", async () => {
   const valid = [
     { operation: "approve" },
-    { operation: "edit_approve", proposed_fields: { card_name: "Premier" } },
+    {
+      operation: "edit_approve",
+      proposed_fields: {
+        card_name: "Premier",
+        joining_fee: 500,
+        annual_fee: 500,
+        apr: 42,
+      },
+    },
     { operation: "merge", merge_card_id: MERGE_ID },
     { operation: "reject", reason: "not a product page" },
     { operation: "retry" },
@@ -378,7 +401,7 @@ Deno.test("identity mutations enforce exact operation payloads", async () => {
     },
     {
       operation: "edit_approve",
-      proposed_fields: { official_url: "file:///etc/passwd" },
+      proposed_fields: { official_url: "https://issuer.example/card" },
     },
     { operation: "merge", merge_card_id: "not-a-uuid" },
     { operation: "reject", reason: " " },

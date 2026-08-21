@@ -1,18 +1,26 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import assert from "node:assert/strict";
+import test from "node:test";
+import { readFile } from "node:fs/promises";
 
 import {
   diffCatalogFields,
   normalizeMoney,
   normalizeOfficialCatalogPage,
-} from '../../supabase/functions/_shared/card_catalog_enrichment.ts';
+  requireCatalogPageIdentity,
+} from "../../supabase/functions/_shared/card_catalog_enrichment.ts";
 
-test('normalizes explicit Indian fee and APR values', () => {
-  assert.equal(normalizeMoney('₹ 1,500 + GST'), 1500);
-  assert.equal(normalizeMoney('INR 0'), 0);
-  assert.equal(normalizeMoney('Not applicable'), null);
+const catalogEntrypoint = new URL(
+  "../../supabase/functions/catalog-enrichment/index.ts",
+  import.meta.url,
+);
 
-  const result = normalizeOfficialCatalogPage(`
+test("normalizes explicit Indian fee and APR values", () => {
+  assert.equal(normalizeMoney("₹ 1,500 + GST"), 1500);
+  assert.equal(normalizeMoney("INR 0"), 0);
+  assert.equal(normalizeMoney("Not applicable"), null);
+
+  const result = normalizeOfficialCatalogPage(
+    `
     <html><head><title>White Reserve Credit Card | Kotak</title></head>
     <body>
       <h1>White Reserve Credit Card</h1>
@@ -23,54 +31,249 @@ test('normalizes explicit Indian fee and APR values', () => {
         <dt>Network</dt><dd>Visa Infinite</dd>
       </dl>
     </body></html>
-  `, 'https://www.kotak.com/rd/white-reserve');
+  `,
+    "https://www.kotak.com/rd/white-reserve",
+  );
 
   assert.equal(result.patch.joining_fee?.value, 12500);
   assert.equal(result.patch.annual_fee?.value, 12500);
   assert.equal(result.patch.apr?.value, 42);
-  assert.equal(result.patch.network?.value, 'Visa');
+  assert.equal(result.patch.network?.value, "Visa");
 });
 
-test('backfills null fields but reports non-null conflicts', () => {
+test("catalog scalar extraction ignores site-wide header and footer offers", () => {
+  const result = normalizeOfficialCatalogPage(
+    `
+      <header>
+        <p>Annual Fee ₹3,50,000</p>
+        <p>Network Mastercard</p>
+      </header>
+      <main>
+        <h1>IndianOil Axis Bank Credit Card</h1>
+        <p>Spend more than ₹3,50,000 in a card anniversary year and you will be eligible for annual fee waiver.</p>
+        <p>A related Sapphiro product testimonial mentions a dual network Mastercard card.</p>
+        <dl>
+          <dt>Joining Fee</dt><dd>₹500 + GST</dd>
+          <dt>Annual Fee</dt><dd>₹500 + GST</dd>
+          <dt>Network</dt><dd>Visa</dd>
+        </dl>
+      </main>
+      <footer><p>Finance charges 48% annually</p></footer>
+    `,
+    "https://www.axis.bank.in/cards/credit-card/indianoil-axis-bank-credit-card",
+    "IndianOil",
+  );
+
+  assert.equal(result.patch.joining_fee?.value, 500);
+  assert.equal(result.patch.annual_fee?.value, 500);
+  assert.equal(result.patch.network?.value, "Visa");
+  assert.equal(result.patch.apr, undefined);
+});
+
+test("backfills null fields but reports non-null conflicts", () => {
   assert.deepEqual(
     diffCatalogFields(
-      {network: null, annual_fee: null},
+      { network: null, annual_fee: null },
       {
-        network: {value: 'Visa', confidence: 0.96, evidence: 'Network: Visa'},
-        annual_fee: {value: 1500, confidence: 0.95, evidence: 'Annual Fee ₹1,500'},
+        network: { value: "Visa", confidence: 0.96, evidence: "Network: Visa" },
+        annual_fee: {
+          value: 1500,
+          confidence: 0.95,
+          evidence: "Annual Fee ₹1,500",
+        },
       },
     ),
     {
-      backfill: {network: 'Visa', annual_fee: 1500},
+      backfill: { network: "Visa", annual_fee: 1500 },
       conflicts: [],
     },
   );
 
   const conflict = diffCatalogFields(
-    {annual_fee: 1000},
-    {annual_fee: {value: 1500, confidence: 0.95, evidence: 'Annual Fee ₹1,500'}},
+    { annual_fee: 1000 },
+    {
+      annual_fee: {
+        value: 1500,
+        confidence: 0.95,
+        evidence: "Annual Fee ₹1,500",
+      },
+    },
   );
   assert.deepEqual(conflict.backfill, {});
-  assert.equal(conflict.conflicts[0].field, 'annual_fee');
+  assert.equal(conflict.conflicts[0].field, "annual_fee");
   assert.equal(conflict.conflicts[0].existing, 1000);
   assert.equal(conflict.conflicts[0].proposed, 1500);
+
+  const privateConflict = diffCatalogFields(
+    { network: "https://user:pass@issuer.example/network?token=secret" },
+    { network: { value: "Visa", confidence: 0.96, evidence: "Network Visa" } },
+  );
+  assert.doesNotMatch(
+    JSON.stringify(privateConflict),
+    /user:pass|token|secret/i,
+  );
 });
 
-test('extracts grounded benefits without inventing missing values', () => {
-  const result = normalizeOfficialCatalogPage(`
+test("extracts grounded benefits without inventing missing values", () => {
+  const result = normalizeOfficialCatalogPage(
+    `
     <html><body>
       <h2>Dining benefits</h2>
       <p>Get 10% cashback on dining, capped at ₹500 per statement month.</p>
       <p>Airport lounge access: 2 complimentary visits per quarter.</p>
     </body></html>
-  `, 'https://www.example-bank.test/cards/example');
+  `,
+    "https://www.example-bank.test/cards/example",
+  );
 
   assert.equal(result.patch.annual_fee, undefined);
   assert.equal(result.benefits.length, 2);
   assert.match(result.benefits[0].evidence, /10% cashback/i);
   assert.equal(result.benefits[0].confidence >= 0.9, true);
-  assert.equal(typeof result.benefits[0].dedupeKey, 'string');
+  assert.equal(typeof result.benefits[0].dedupeKey, "string");
   assert.equal(result.benefits[0].cap, 500);
-  assert.equal(result.benefits[0].period, 'statement month');
+  assert.equal(result.benefits[0].period, "statement month");
   assert.match(result.benefits[0].fieldEvidence.cap, /capped at ₹500/i);
+});
+
+test("catalog field excerpts and nested benefit evidence remove visible and encoded URL secrets", () => {
+  const result = normalizeOfficialCatalogPage(
+    `
+    <html><body>
+      <h1>Privilege Credit Card</h1>
+      <p>Annual Fee ₹1,500; terms https://user:pass@www.axis.bank.in/card?token=secret#private</p>
+      <p>Get 10% cashback on dining. https%253A%252F%252Fuser%253Apass%2540www.axis.bank.in%252Fcard%253Fsession%253Dsecret</p>
+    </body></html>
+  `,
+    "https://www.axis.bank.in/cards/credit-card/privilege?session=source-secret",
+  );
+  const serialized = JSON.stringify(result);
+  assert.doesNotMatch(
+    serialized,
+    /user:pass|token|session|source-secret|secret#private/i,
+  );
+  assert.match(serialized, /Annual Fee/);
+});
+
+test("catalog normalization remains bound to the exact target card after redirects", () => {
+  assert.equal(
+    requireCatalogPageIdentity(
+      "<title>Privilege Credit Card | Axis Bank</title>",
+      "Axis Bank",
+      "Privilege",
+    ).cardName,
+    "Privilege",
+  );
+  for (
+    const html of [
+      "<title>Regalia Credit Card | HDFC Bank</title>",
+      "<title>Credit Cards | Axis Bank</title>",
+      "<title>Privilege Credit Card | Axis Bank</title><h1>Regalia Gold Credit Card</h1>",
+    ]
+  ) {
+    assert.throws(
+      () => requireCatalogPageIdentity(html, "Axis Bank", "Privilege"),
+      /identity_mismatch/,
+    );
+  }
+});
+
+test("catalog identity uses the fetched product URL to ignore unrelated header products", () => {
+  const html = `
+    <header>
+      <h1>Control Center Credit Card</h1>
+      <h2>Dining Credit Card</h2>
+      <h2>Travel Credit Card</h2>
+    </header>
+    <main>
+      <h1>IndianOil Axis Bank Credit Card</h1>
+      <p>Get 4% value back on fuel purchases.</p>
+    </main>
+  `;
+  assert.equal(
+    requireCatalogPageIdentity(
+      html,
+      "Axis Bank",
+      "IndianOil",
+      "https://www.axis.bank.in/cards/credit-card/indianoil-axis-bank-credit-card",
+    ).cardName,
+    "Indian Oil",
+  );
+});
+
+test("catalog enrichment passes an invocation deadline to its official fetch", async () => {
+  const source = await readFile(catalogEntrypoint, "utf8");
+  const call = source.match(
+    /fetchOfficialIssuerResource\(\{([\s\S]*?)\n\s*\}\)/,
+  );
+  assert.ok(call, "catalog official fetch caller was not found");
+  assert.match(call[1], /deadlineAt(?:\s*:|\s*,)/);
+  assert.match(call[1], /allowedQueryParameters\s*:/);
+  assert.match(call[1], /robotsCache(?:\s*:|\s*,)/);
+});
+
+test("catalog enrichment leaves benefit staging to the authoritative benefits-v6 worker", async () => {
+  const source = await readFile(catalogEntrypoint, "utf8");
+  assert.doesNotMatch(
+    source,
+    /from\(["']card_benefits_staging["']\)[\s\S]{0,120}\.insert\(/,
+    "catalog-v1 created orphaned or duplicate benefit review rows",
+  );
+  assert.doesNotMatch(source, /official-catalog-v1/);
+});
+
+test("catalog lifecycle observations create review evidence without directly changing acquisition state", async () => {
+  const source = await readFile(catalogEntrypoint, "utf8");
+  assert.match(source, /catalogLifecycleObservationAction\(/);
+  assert.match(source, /proposeCatalogLifecycleReview\(/);
+  assert.match(
+    source,
+    /suggestedAction:\s*lifecycleAction/,
+  );
+  assert.match(source, /lifecycleAction\s*!==\s*["']observe_current["']/);
+  assert.match(source, /source_status:\s*410/);
+  assert.match(
+    source,
+    /lifecycleAction\s*===\s*["']reactivate["']/,
+  );
+  assert.match(source, /["']exact_card_reappearance["']/);
+  assert.match(source, /["']strong_explicit_discontinuation["']/);
+  assert.match(source, /identity_validated:\s*true/);
+  assert.match(
+    source,
+    /strongGoneObservation[\s\S]*proposeCatalogLifecycleReview[\s\S]*["']strong_gone_observation["'][\s\S]*source_status:\s*410/,
+  );
+  assert.doesNotMatch(source, /is_discontinued\s*:/);
+  assert.doesNotMatch(source, /\.update\(\{[\s\S]{0,180}is_discontinued/);
+});
+
+test("catalog conflicts stage a versioned approvable job instead of reusing terminal discovery work", async () => {
+  const source = await readFile(catalogEntrypoint, "utf8");
+  const queue = source.match(
+    /async function queueConflictReview[\s\S]*?\n\}/,
+  )?.[0] ?? "";
+  assert.match(
+    queue,
+    /submitted_url_hash[\s\S]*final_url_hash[\s\S]*semanticProductHash/i,
+  );
+  assert.match(queue, /content_hash:\s*contentHash/i);
+  assert.match(queue, /stageCatalogIdentityReview\(db/i);
+  assert.doesNotMatch(
+    queue,
+    /from\(["'](?:card_discovery_jobs|card_catalog_review_queue)["']\)[\s\S]*\.(?:insert|update)\(/i,
+    "catalog review staging is split across Edge writes",
+  );
+  assert.doesNotMatch(
+    queue,
+    /discovery_job_id:\s*job\.discovery_job_id/,
+    "catalog review is pinned to an unrelated terminal discovery job",
+  );
+  assert.doesNotMatch(
+    source,
+    /includes\(message\)\s*&&\s*claimed\.discovery_job_id/,
+    "lifecycle evidence still depends on a stale legacy discovery link",
+  );
+  assert.match(queue, /semantic_product_hash:\s*semanticProductHash/i);
+  assert.match(queue, /expectedJobStatus:\s*null/i);
+  assert.match(queue, /expectedJobUpdatedAt:\s*null/i);
 });
