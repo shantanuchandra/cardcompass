@@ -105,7 +105,10 @@ Deno.test("identity list uses a bounded queue query and excludes raw evidence", 
       authorization: "excluded",
     },
     existing_candidates: [{ id: MERGE_ID, card_name: "Premier", secret: "x" }],
-    validation_warnings: [{ code: "ambiguous_match", raw: "excluded" }],
+    validation_warnings: [
+      "legacy_warning",
+      { code: "ambiguous_match", raw: "excluded" },
+    ],
     confidence: 0.81,
     review_reason: "possible duplicate",
     created_at: "2026-08-18T09:00:00Z",
@@ -157,6 +160,10 @@ Deno.test("identity list uses a bounded queue query and excludes raw evidence", 
     id: MERGE_ID,
     card_name: "Premier",
   }]);
+  assertEquals(output.items[0].validation_warnings, [
+    { code: "legacy_warning" },
+    { code: "ambiguous_match" },
+  ]);
   assertEquals(output.items[0].discovery_job.evidence, { source_url: null });
   assertEquals(fake.calls.at(-1), { method: "range", args: [0, 50] });
 });

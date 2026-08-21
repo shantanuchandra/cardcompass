@@ -325,6 +325,13 @@ function presentCandidate(value: unknown): JsonRecord {
   return output;
 }
 
+function validationCode(value: unknown): JsonRecord | null {
+  const code = typeof value === "string"
+    ? safeText(value, 100)
+    : safeText(asRecord(value)?.code, 100);
+  return code === null ? null : { code };
+}
+
 function presentIdentityRow(value: unknown) {
   const row = asRecord(value) ?? {};
   const discovery = asRecord(row.card_discovery_jobs) ?? {};
@@ -337,9 +344,8 @@ function presentIdentityRow(value: unknown) {
       ? row.existing_candidates.slice(0, MAX_LIST_ITEMS).map(presentCandidate)
       : [],
     validation_warnings: Array.isArray(row.validation_warnings)
-      ? row.validation_warnings.slice(0, MAX_LIST_ITEMS).map((warning) => ({
-        code: safeText(asRecord(warning)?.code, 100),
-      }))
+      ? row.validation_warnings.slice(0, MAX_LIST_ITEMS)
+        .map(validationCode).filter((warning) => warning !== null)
       : [],
     confidence: safeNumber(row.confidence),
     review_reason: safeText(row.review_reason, 500),
@@ -462,7 +468,7 @@ function presentBenefitDiff(value: unknown): JsonRecord {
 
 function validationCodes(value: unknown): JsonRecord[] {
   return (Array.isArray(value) ? value : []).slice(0, MAX_LIST_ITEMS)
-    .map((item) => ({ code: safeText(asRecord(item)?.code, 100) }));
+    .map(validationCode).filter((item) => item !== null);
 }
 
 function presentAdminBenefitJob(value: unknown): JsonRecord {
