@@ -183,6 +183,16 @@ test("catalog enrichment passes an invocation deadline to its official fetch", a
   assert.match(call[1], /robotsCache(?:\s*:|\s*,)/);
 });
 
+test("catalog enrichment leaves benefit staging to the authoritative benefits-v6 worker", async () => {
+  const source = await readFile(catalogEntrypoint, "utf8");
+  assert.doesNotMatch(
+    source,
+    /from\(["']card_benefits_staging["']\)[\s\S]{0,120}\.insert\(/,
+    "catalog-v1 created orphaned or duplicate benefit review rows",
+  );
+  assert.doesNotMatch(source, /official-catalog-v1/);
+});
+
 test("catalog lifecycle observations create review evidence without directly changing acquisition state", async () => {
   const source = await readFile(catalogEntrypoint, "utf8");
   assert.match(source, /catalogLifecycleObservationAction\(/);

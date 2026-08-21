@@ -276,27 +276,6 @@ export async function processCatalogEnrichmentJob(
 
     const compared = diffCatalogFields(catalog, normalized.patch);
 
-    if (normalized.benefits.length > 0) {
-      const { error } = await db.from("card_benefits_staging").insert({
-        card_id: claimed.card_id,
-        source_url: page.finalUrl,
-        extracted_data: {
-          request_type: "official_card_enrichment",
-          benefits: normalized.benefits,
-        },
-        status: "pending",
-        validation_version: "official-catalog-v1",
-        calculated_confidence: Math.min(
-          ...normalized.benefits.map((benefit) => benefit.confidence),
-        ),
-        validation_reasons: [{ code: "official_issuer_source" }],
-        validation_warnings: [],
-        source_evidence: normalized.evidence,
-        validated_at: new Date().toISOString(),
-      });
-      if (error) throw error;
-    }
-
     const proposedCatalogFields = Object.fromEntries(
       Object.entries(normalized.patch).map(([field, proposal]) => [
         field,
