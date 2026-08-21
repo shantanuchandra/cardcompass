@@ -36,11 +36,21 @@ compile until a bounded paginated Auth lookup existed; its injected page loader
 proves that only the case-normalized exact randomized email contributes a
 recoverable ID.
 
+A consolidated review then exposed a second benefit-marker gap: the staged
+proposal uses its own dedupe key, but only the pre-created active benefit key
+was collision-checked, recovered after a possible response loss, and asserted
+absent after cleanup. Three injected regressions failed against no-op safety
+boundaries: either occupied key was accepted, neither key contributed a
+recoverable ID, and a proposal-key orphan passed the residue check. One shared
+two-key contract now queries both exact keys at preflight, records only IDs
+returned by each exact-key recovery query after the recovery gate opens, and
+requires both keys to be absent after dependency-ordered ID cleanup.
+
 Final focused offline result:
 
 ```text
 flutter test --no-pub test/supabase/benefit_enrichment_integration_test.dart
-9 passed, 0 failed, 1 hosted integration skipped with the exact missing-gate list
+12 passed, 0 failed, 1 hosted integration skipped with the exact missing-gate list
 ```
 
 ## Exact target and opt-in
@@ -63,14 +73,16 @@ Each live invocation will generate a UTC-microsecond marker plus 128 bits of
 `Random.secure()` entropy. The marker scopes issuer, card, source URL, benefit
 dedupe, proposal dedupe, evidence, and a hashed confirmed auth identity.
 
-Before the first mutation, exact database-marker queries and a bounded Auth
-admin scan for the exact randomized email prove there is no collision. Only
-then is marker recovery enabled. Every returned card, benefit, mapping,
+Before the first mutation, exact database-marker queries—including independent
+queries for the active-benefit and staged-proposal dedupe keys—and a bounded
+Auth admin scan for the exact randomized email prove there is no collision.
+Only then is marker recovery enabled. Every returned card, benefit, mapping,
 enrichment-job, staging, URL-key, and auth-user identity is recorded. If a
 database response is lost after a commit, exact unique-marker queries recover
-IDs; an Auth response loss is recovered through bounded pagination retaining
-only the exact randomized email match. Recovery never deletes by a marker or
-email. Deletes use only the recorded IDs in dependency order:
+IDs; both benefit keys are recovered independently into that exact-ID ledger.
+An Auth response loss is recovered through bounded pagination retaining only
+the exact randomized email match. Recovery never deletes by a marker or email.
+Deletes use only the recorded IDs in dependency order:
 
 1. `card_benefit_mapping.mapping_id`
 2. `card_catalog_enrichment_jobs.id`
@@ -148,7 +160,9 @@ claim RPC could perform parser-wide lease recovery in a shared parser lane,
 and sequential cleanup could stop after the first failure. Both were repaired
 with retained offline regressions. The fix-round review reported no critical,
 important, or minor findings and marked Phase D ready for the later guarded
-live gate.
+live gate. The later consolidated review identified the proposal-dedupe
+coverage gap described above; its collision, recovery, and orphan-residue
+regressions are now retained in the focused harness.
 
 ## Offline verification
 
@@ -163,7 +177,7 @@ flutter test --no-pub test/supabase/card_catalog_url_identity_test.dart \
 
 node --test --test-concurrency=1 test/supabase/*_test.js \
   test/supabase/*.test.mjs
-300 passed, 0 failed, 0 skipped
+301 passed, 0 failed, 0 skipped
 ```
 
 The originally copied `*.test.js` command matched no files under zsh because

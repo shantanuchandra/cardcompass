@@ -100,18 +100,20 @@ Do not run a broader `flutter test test/supabase/` with hosted credentials.
 Each invocation generates a UTC-microsecond run ID plus 128 bits of secure
 random entropy. The run ID is embedded in the issuer, card name, source URL,
 benefit dedupe key, proposal key, and a hashed randomized confirmed auth email.
-The harness first proves those markers are absent. Marker recovery is disabled
+The harness first proves those markers are absent, querying the active-benefit
+and staged-proposal dedupe keys independently. Marker recovery is disabled
 until that collision preflight succeeds.
 
 Every returned card, benefit, mapping, enrichment-job, staging, URL-key, and
 auth-user identity is recorded. If a database response is lost after a commit,
 recovery queries use only the exact unique run markers, convert the results
-into exact IDs, and then delete by those IDs. Auth recovery uses bounded admin
-pagination, retains only the exact randomized email match, and deletes only its
-returned ID. Dependency cleanup order is mapping, job, staging, URL key,
-benefit, card, then the exact auth user. The final assertions require zero rows
-for every recorded ID, every unique database marker, and the randomized Auth
-email.
+into exact IDs, and then delete by those IDs. Both benefit dedupe keys are
+recovered independently into the same exact-ID ledger. Auth recovery uses
+bounded admin pagination, retains only the exact randomized email match, and
+deletes only its returned ID. Dependency cleanup order is mapping, job,
+staging, URL key, benefit, card, then the exact auth user. The final assertions
+require zero rows for every recorded ID, both benefit dedupe keys, every other
+unique database marker, and the randomized Auth email.
 
 Claiming never uses the shared `benefits-v5` or `benefits-v6` lane. A
 collision-checked randomized parser marker isolates the queue-wide claim RPC;

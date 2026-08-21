@@ -283,6 +283,64 @@ List<Map<String, dynamic>> _rows(dynamic value) => (value as List)
     .map((item) => Map<String, dynamic>.from(item as Map))
     .toList(growable: false);
 
+typedef _BenefitRowsByDedupeKey =
+    Future<List<Map<String, dynamic>>> Function(String dedupeKey);
+
+List<String> _benefitDedupeKeys(_RunFixture fixture) =>
+    List<String>.unmodifiable(<String>[
+      fixture.benefitDedupeKey,
+      fixture.proposalDedupeKey,
+    ]);
+
+Future<void> _assertNoBenefitDedupeCollision(
+  _RunFixture fixture, {
+  required _BenefitRowsByDedupeKey loadByDedupeKey,
+}) async {
+  final occupiedKeys = <String>[];
+  for (final dedupeKey in _benefitDedupeKeys(fixture)) {
+    if ((await loadByDedupeKey(dedupeKey)).isNotEmpty) {
+      occupiedKeys.add(dedupeKey);
+    }
+  }
+  if (occupiedKeys.isNotEmpty) {
+    throw StateError(
+      'run benefit dedupe marker collision: ${occupiedKeys.join(', ')}',
+    );
+  }
+}
+
+Future<void> _recoverExactBenefitIds(
+  _RunFixture fixture,
+  _FixtureLedger ledger, {
+  required _BenefitRowsByDedupeKey loadByDedupeKey,
+}) async {
+  if (!ledger.markerRecoveryAllowed) {
+    throw StateError('run markers were not cleared for benefit recovery');
+  }
+  for (final dedupeKey in _benefitDedupeKeys(fixture)) {
+    for (final benefit in await loadByDedupeKey(dedupeKey)) {
+      ledger.record(_FixtureTable.benefits, benefit['benefit_id'].toString());
+    }
+  }
+}
+
+Future<void> _assertNoBenefitDedupeResiduals(
+  _RunFixture fixture, {
+  required _BenefitRowsByDedupeKey loadByDedupeKey,
+}) async {
+  final residualKeys = <String>[];
+  for (final dedupeKey in _benefitDedupeKeys(fixture)) {
+    if ((await loadByDedupeKey(dedupeKey)).isNotEmpty) {
+      residualKeys.add(dedupeKey);
+    }
+  }
+  if (residualKeys.isNotEmpty) {
+    throw StateError(
+      'run benefit dedupe marker retained: ${residualKeys.join(', ')}',
+    );
+  }
+}
+
 Future<void> _expectPermissionDenied(
   Future<dynamic> Function() operation, {
   required String reason,
@@ -462,10 +520,25 @@ Future<List<Map<String, dynamic>>> _selectExact(
   );
 }
 
+Future<List<Map<String, dynamic>>> _selectBenefitsByDedupeKey(
+  SupabaseClient service,
+  String dedupeKey,
+) async => _rows(
+  await service
+      .from('benefits')
+      .select('benefit_id')
+      .eq('dedupe_key', dedupeKey),
+);
+
 Future<void> _assertNoMarkerCollision(
   SupabaseClient service,
   _RunFixture fixture,
 ) async {
+  await _assertNoBenefitDedupeCollision(
+    fixture,
+    loadByDedupeKey: (dedupeKey) =>
+        _selectBenefitsByDedupeKey(service, dedupeKey),
+  );
   final collisions = <String, List<Map<String, dynamic>>>{
     'card_catalog': _rows(
       await service
@@ -473,12 +546,6 @@ Future<void> _assertNoMarkerCollision(
           .select('id')
           .eq('card_name', fixture.cardName)
           .eq('bank', fixture.issuer),
-    ),
-    'benefits': _rows(
-      await service
-          .from('benefits')
-          .select('benefit_id')
-          .eq('dedupe_key', fixture.benefitDedupeKey),
     ),
     'card_catalog_enrichment_jobs': _rows(
       await service
@@ -538,15 +605,12 @@ Future<void> _recoverExactCreatedIds(
   for (final card in cards) {
     ledger.record(_FixtureTable.cardCatalog, card['id'].toString());
   }
-  final benefits = _rows(
-    await service
-        .from('benefits')
-        .select('benefit_id')
-        .eq('dedupe_key', fixture.benefitDedupeKey),
+  await _recoverExactBenefitIds(
+    fixture,
+    ledger,
+    loadByDedupeKey: (dedupeKey) =>
+        _selectBenefitsByDedupeKey(service, dedupeKey),
   );
-  for (final benefit in benefits) {
-    ledger.record(_FixtureTable.benefits, benefit['benefit_id'].toString());
-  }
   final jobs = _rows(
     await service
         .from('card_catalog_enrichment_jobs')
@@ -636,12 +700,10 @@ Future<void> _verifyZeroResidualRows(
         .eq('bank', fixture.issuer),
     isEmpty,
   );
-  expect(
-    await service
-        .from('benefits')
-        .select('benefit_id')
-        .eq('dedupe_key', fixture.benefitDedupeKey),
-    isEmpty,
+  await _assertNoBenefitDedupeResiduals(
+    fixture,
+    loadByDedupeKey: (dedupeKey) =>
+        _selectBenefitsByDedupeKey(service, dedupeKey),
   );
   expect(
     await service
@@ -824,6 +886,113 @@ void main() {
     ledger.allowMarkerRecoveryAfterClearPreflight();
     expect(ledger.markerRecoveryAllowed, isTrue);
   });
+
+  test('benefit preflight rejects either occupied exact dedupe key', () async {
+    final fixture = _RunFixture(
+      '20260821t010203456789z-000102030405060708090a0b0c0d0e0f',
+    );
+    for (final occupiedKey in <String>[
+      fixture.benefitDedupeKey,
+      fixture.proposalDedupeKey,
+    ]) {
+      final queriedKeys = <String>[];
+      await expectLater(
+        _assertNoBenefitDedupeCollision(
+          fixture,
+          loadByDedupeKey: (dedupeKey) async {
+            queriedKeys.add(dedupeKey);
+            return dedupeKey == occupiedKey
+                ? <Map<String, dynamic>>[
+                    <String, dynamic>{'benefit_id': 'occupied-id'},
+                  ]
+                : const <Map<String, dynamic>>[];
+          },
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'collision marker',
+            contains(occupiedKey),
+          ),
+        ),
+      );
+      expect(queriedKeys, <String>[
+        fixture.benefitDedupeKey,
+        fixture.proposalDedupeKey,
+      ]);
+    }
+  });
+
+  test(
+    'benefit recovery records exact ids returned for both run keys',
+    () async {
+      final fixture = _RunFixture(
+        '20260821t010203456789z-000102030405060708090a0b0c0d0e0f',
+      );
+      final ledger = _FixtureLedger(fixture.runId)
+        ..allowMarkerRecoveryAfterClearPreflight();
+      final queriedKeys = <String>[];
+
+      await _recoverExactBenefitIds(
+        fixture,
+        ledger,
+        loadByDedupeKey: (dedupeKey) async {
+          queriedKeys.add(dedupeKey);
+          return <Map<String, dynamic>>[
+            <String, dynamic>{
+              'benefit_id': dedupeKey == fixture.benefitDedupeKey
+                  ? 'active-benefit-id'
+                  : 'published-proposal-id',
+            },
+          ];
+        },
+      );
+
+      expect(queriedKeys, <String>[
+        fixture.benefitDedupeKey,
+        fixture.proposalDedupeKey,
+      ]);
+      expect(ledger.idsFor(_FixtureTable.benefits), <String>{
+        'active-benefit-id',
+        'published-proposal-id',
+      });
+    },
+  );
+
+  test(
+    'benefit residue check catches a published proposal regression',
+    () async {
+      final fixture = _RunFixture(
+        '20260821t010203456789z-000102030405060708090a0b0c0d0e0f',
+      );
+      final queriedKeys = <String>[];
+
+      await expectLater(
+        _assertNoBenefitDedupeResiduals(
+          fixture,
+          loadByDedupeKey: (dedupeKey) async {
+            queriedKeys.add(dedupeKey);
+            return dedupeKey == fixture.proposalDedupeKey
+                ? <Map<String, dynamic>>[
+                    <String, dynamic>{'benefit_id': 'orphaned-proposal-id'},
+                  ]
+                : const <Map<String, dynamic>>[];
+          },
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'residual marker',
+            contains(fixture.proposalDedupeKey),
+          ),
+        ),
+      );
+      expect(queriedKeys, <String>[
+        fixture.benefitDedupeKey,
+        fixture.proposalDedupeKey,
+      ]);
+    },
+  );
 
   test('randomized auth identity remains valid and run scoped', () {
     final fixture = _RunFixture(
