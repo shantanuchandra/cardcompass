@@ -104,7 +104,11 @@ Deno.test("identity list uses a bounded queue query and excludes raw evidence", 
       raw_body: "excluded",
       authorization: "excluded",
     },
-    existing_candidates: [{ id: MERGE_ID, card_name: "Premier", secret: "x" }],
+    existing_candidates: [{
+      card_id: MERGE_ID,
+      card_name: "Premier",
+      secret: "x",
+    }],
     validation_warnings: [
       "legacy_warning",
       { code: "ambiguous_match", raw: "excluded" },

@@ -314,8 +314,10 @@ function safeEvidence(value: unknown): JsonRecord {
 function presentCandidate(value: unknown): JsonRecord {
   const row = asRecord(value) ?? {};
   const output: JsonRecord = {};
+  const id = safeText(row.id ?? row.card_id, 100);
+  if (id !== null) output.id = id;
   for (
-    const field of ["id", "bank", "issuer", "card_name", "network"] as const
+    const field of ["bank", "issuer", "card_name", "network"] as const
   ) {
     const text = safeText(row[field], field === "card_name" ? 300 : 200);
     if (text !== null) output[field] = text;
