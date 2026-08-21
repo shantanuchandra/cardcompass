@@ -253,6 +253,41 @@ Deno.test("global navigation terms do not crowd out product-scoped required sour
   );
 });
 
+Deno.test("large primary pages stop before supporting fetches once required evidence is invalid", async () => {
+  const product = "https://www.idfcfirst.bank.in/credit-card/wealth";
+  const ownTerms = `${product}/terms-and-conditions`;
+  let fetchCount = 0;
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "IDFC FIRST Bank",
+    primary: resource(
+      product,
+      `<h1>FIRST Wealth Credit Card</h1>${
+        "public navigation ".repeat(40_000)
+      }` +
+        `<a href="https://www.visameetandgreet.com/terms-and-conditions">Terms</a>` +
+        `<a href="${ownTerms}">Card terms</a>`,
+    ),
+    identityLabels: ["Wealth", "FIRST Wealth Credit Card"],
+    fetchOfficialIssuerResource: async (input) => {
+      fetchCount += 1;
+      return resource(input.url, "FIRST Wealth Credit Card terms");
+    },
+  });
+
+  assert(fetchCount === 0, "decisively incomplete large page kept fetching");
+  assert(
+    collected.requiredSourceSelectionOverflow,
+    "invalid required evidence did not fail the bounded selection",
+  );
+  assert(
+    collected.attempts.some((attempt) =>
+      attempt.role === "required_supporting" &&
+      attempt.errorCode === "invalid_source_url"
+    ),
+    "invalid required source evidence was dropped by the fail-fast path",
+  );
+});
+
 Deno.test("a late required anchor hint is classified without prefix slicing", async () => {
   const product = "https://www.axis.bank.in/cards/credit-card/privilege";
   const required = "https://www.axis.bank.in/support/document.pdf";

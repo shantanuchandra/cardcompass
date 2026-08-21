@@ -28,6 +28,7 @@ import {
 
 const MAX_SUPPORTING_LINKS = 8;
 const MAX_SUPPORTING_DEPTH = 2;
+const MAX_LARGE_INCOMPLETE_PRIMARY_CHARS = 512 * 1024;
 const pilotReplayFunctionalQueryKeys = new Set([
   "document",
   "file",
@@ -594,6 +595,26 @@ export async function collectSupportingBenefitDocuments(
       errorCode: candidate.rejectionCode,
       attemptedAt: new Date().toISOString(),
     });
+  }
+  if (
+    primaryReplayLinks.overflow &&
+    (input.primary.text?.length ?? 0) > MAX_LARGE_INCOMPLETE_PRIMARY_CHARS
+  ) {
+    for (const candidate of initialCandidates) {
+      if (
+        !candidate.rejectionCode &&
+        sourceRole(candidate, exactSet.has(candidate.url)) ===
+          "required_supporting"
+      ) {
+        rememberRequiredSource(candidate.url);
+      }
+    }
+    return {
+      documents,
+      attempts,
+      expectedRequiredSourceKeys: [...expectedRequiredSourceKeys].sort(),
+      requiredSourceSelectionOverflow: true,
+    };
   }
   const uniqueInitial = initialCandidates.filter((candidate) =>
     !candidate.rejectionCode
