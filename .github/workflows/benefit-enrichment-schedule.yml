@@ -18,7 +18,7 @@ jobs:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       BENEFIT_ENRICHMENT_CRON_SECRET: ${{ secrets.BENEFIT_ENRICHMENT_CRON_SECRET }}
     steps:
-      - name: Initialize the reviewed five-card v6 pilot
+      - name: Process one reviewed v6 pilot card
         shell: bash
         run: |
           set -euo pipefail
@@ -29,7 +29,7 @@ jobs:
             -X POST \
             -H 'Content-Type: application/json' \
             -H "x-cardcompass-cron-secret: ${BENEFIT_ENRICHMENT_CRON_SECRET}" \
-            --data '{"action":"initialize_pilot","parserVersion":"benefits-v6","candidates":[{"id":"f73c07e2-3385-4330-ba2b-1409d2c1ee8a","issuer":"Axis Bank","active":true,"approvedUrl":true,"profile":"straightforward"},{"id":"70886874-05b0-447c-834b-577e2ffe90d9","issuer":"HDFC Bank","active":true,"approvedUrl":true,"profile":"redirect_or_js"},{"id":"6acbfb1d-8103-4b37-ba3f-df0634dfafac","issuer":"SBI Card","active":true,"approvedUrl":true,"profile":"terms_linked"},{"id":"8cbddc7f-14bc-46e5-a724-be6ab724cb84","issuer":"ICICI Bank","active":true,"approvedUrl":false,"profile":"known_invalid"},{"id":"b71803f9-2120-4ee3-8f99-5c1e9313953f","issuer":"IDFC FIRST Bank","active":true,"approvedUrl":true,"profile":"additional_valid"}]}' \
+            --data '{"runMode":"pilot"}' \
             --output "$response_file" \
             "${SUPABASE_URL}/functions/v1/benefit-enrichment-batch"
 
