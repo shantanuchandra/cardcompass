@@ -74,3 +74,4 @@ ios/
 .firecrawl/
 .superpowers/brainstorm/
 .worktrees/
+node_modules/
