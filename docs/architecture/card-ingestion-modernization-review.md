@@ -4,6 +4,21 @@
 **Basis:** effective schema reconstructed from ordered migrations plus current Edge Function code
 **Constraint:** improve reliability and coverage with the smallest practical database change
 
+## Rollout status — 2026-08-21
+
+Tasks 1–11 are implemented and the guarded hosted database validation is
+complete. The exact hosted project is `cardcompass`
+(`prbcoxqobhjnnfnxevxf`), migrations are applied through `20260821160000`, and
+the Task 11 isolated two-session concurrency/rollback rehearsal passed 17/17
+with zero residue. The scheduled ingestion runtime control remains paused.
+
+Task 12 is in dark deployment. Its operational contract is defined in
+[`docs/runbooks/card-ingestion-v6-rollout.md`](../runbooks/card-ingestion-v6-rollout.md).
+The workflows fail closed behind absent/false repository variables as well as
+the audited database pause. A one-issuer manual smoke is allowed; the five-card
+pilot, schedule enablement, issuer ramp, secret changes, and removal of v5
+compatibility remain separate approval gates.
+
 ## Executive verdict
 
 The architecture has a good safety core: first-party-only fetches, bounded redirects, leases, idempotent staging, evidence retention, and human approval before live benefit writes. Those parts should be kept.

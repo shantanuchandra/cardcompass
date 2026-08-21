@@ -4,6 +4,15 @@ on:
   schedule:
     - cron: "17 2 * * *"
   workflow_dispatch:
+    inputs:
+      run_mode:
+        description: "Use manual only for a reviewed one-issuer smoke"
+        required: true
+        default: scheduled
+        type: choice
+        options:
+          - scheduled
+          - manual
 
 concurrency:
   group: cardcompass-issuer-crawl
@@ -11,11 +20,13 @@ concurrency:
 
 jobs:
   discover-issuer-cards:
+    if: github.event_name == 'workflow_dispatch' || vars.CARD_DISCOVERY_SCHEDULE_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
       SUPABASE_FUNCTION_URL: ${{ secrets.SUPABASE_FUNCTION_URL }}
       BENEFIT_ENRICHMENT_CRON_SECRET: ${{ secrets.BENEFIT_ENRICHMENT_CRON_SECRET }}
+      DISCOVERY_RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_mode || 'scheduled' }}
     steps:
       - name: Trigger scheduled issuer discovery
         shell: bash
@@ -28,12 +39,16 @@ jobs:
             -X POST \
             -H 'Content-Type: application/json' \
             -H "x-cardcompass-cron-secret: ${BENEFIT_ENRICHMENT_CRON_SECRET}" \
-            --data '{"action":"issuer_discovery","runMode":"scheduled"}' \
+            --data "{\"action\":\"issuer_discovery\",\"runMode\":\"${DISCOVERY_RUN_MODE}\"}" \
             --output "$response_file" \
             "${SUPABASE_FUNCTION_URL}"
 
           node -e '
             const payload = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+            if (payload?.status === "paused") {
+              console.log("Issuer discovery is paused by the database runtime control");
+              process.exit(0);
+            }
             if (!payload || typeof payload.runId !== "string" ||
                 payload.action !== "issuer_discovery" ||
                 !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(payload.runId)) {

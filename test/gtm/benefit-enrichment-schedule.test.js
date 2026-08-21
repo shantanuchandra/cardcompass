@@ -19,6 +19,10 @@ test("scheduler invokes scheduled enrichment safely with its dedicated credentia
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(
     workflow,
+    /if:\s*github\.event_name == 'workflow_dispatch' \|\| vars\.CARD_INGESTION_V6_SCHEDULE_ENABLED == 'true'/,
+  );
+  assert.match(
+    workflow,
     /concurrency:\s*\n\s*group:\s*cardcompass-issuer-crawl\s*\n\s*cancel-in-progress:\s*false/,
   );
   assert.match(workflow, /timeout-minutes:\s*5/);
@@ -33,9 +37,11 @@ test("scheduler invokes scheduled enrichment safely with its dedicated credentia
     /curl\s+--fail-with-body\s+--connect-timeout\s+10\s+--max-time\s+240\s+--retry\s+2/,
   );
   assert.match(workflow, /-X\s+POST/);
-  assert.match(workflow, /\{\\?"mode\\?":\\?"scheduled\\?"\}/);
+  assert.match(workflow, /\{\\?"runMode\\?":\\?"scheduled\\?"\}/);
   assert.match(workflow, /JSON\.parse/);
   assert.match(workflow, /runId/);
+  assert.match(workflow, /payload\?\.status === "paused"/);
+  assert.match(workflow, /Scheduled enrichment is paused/);
   const referencedSecrets = [
     ...workflow.matchAll(/\bsecrets\.([A-Z0-9_]+)/g),
   ].map((match) => match[1]).sort();

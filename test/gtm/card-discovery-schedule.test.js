@@ -29,6 +29,14 @@ test("daily issuer discovery uses the shared non-cancelling crawl lane and exist
   assert.match(discovery, /workflow_dispatch:/);
   assert.match(
     discovery,
+    /run_mode:[\s\S]*type:\s*choice[\s\S]*options:[\s\S]*- scheduled[\s\S]*- manual/,
+  );
+  assert.match(
+    discovery,
+    /if:\s*github\.event_name == 'workflow_dispatch' \|\| vars\.CARD_DISCOVERY_SCHEDULE_ENABLED == 'true'/,
+  );
+  assert.match(
+    discovery,
     /curl\s+--fail-with-body\s+--connect-timeout\s+10\s+--max-time\s+240/,
   );
   assert.match(
@@ -37,8 +45,9 @@ test("daily issuer discovery uses the shared non-cancelling crawl lane and exist
   );
   assert.match(
     discovery,
-    /\{"action":"issuer_discovery","runMode":"scheduled"\}/,
+    /DISCOVERY_RUN_MODE/,
   );
+  assert.match(discovery, /payload\?\.status === "paused"/);
   assert.match(discovery, /SUPABASE_FUNCTION_URL/);
   assert.doesNotMatch(
     discovery,

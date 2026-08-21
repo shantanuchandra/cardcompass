@@ -11,6 +11,7 @@ concurrency:
 
 jobs:
   enrich-benefits:
+    if: github.event_name == 'workflow_dispatch' || vars.CARD_INGESTION_V6_SCHEDULE_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -28,12 +29,16 @@ jobs:
             -X POST \
             -H 'Content-Type: application/json' \
             -H "x-cardcompass-cron-secret: ${BENEFIT_ENRICHMENT_CRON_SECRET}" \
-            --data '{"mode":"scheduled"}' \
+            --data '{"runMode":"scheduled"}' \
             --output "$response_file" \
             "${SUPABASE_URL}/functions/v1/benefit-enrichment-batch"
 
           node -e '
             const payload = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+            if (payload?.status === "paused") {
+              console.log("Scheduled enrichment is paused by the database runtime control");
+              process.exit(0);
+            }
             if (!payload || typeof payload.runId !== "string" ||
                 !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(payload.runId)) {
               throw new Error("Batch response is missing a valid runId");
