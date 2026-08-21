@@ -18,7 +18,7 @@ jobs:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       BENEFIT_ENRICHMENT_CRON_SECRET: ${{ secrets.BENEFIT_ENRICHMENT_CRON_SECRET }}
     steps:
-      - name: Trigger a scheduled enrichment batch
+      - name: Trigger one manual issuer-discovery dark smoke
         shell: bash
         run: |
           set -euo pipefail
@@ -29,7 +29,7 @@ jobs:
             -X POST \
             -H 'Content-Type: application/json' \
             -H "x-cardcompass-cron-secret: ${BENEFIT_ENRICHMENT_CRON_SECRET}" \
-            --data '{"runMode":"scheduled"}' \
+            --data '{"action":"issuer_discovery","runMode":"manual"}' \
             --output "$response_file" \
             "${SUPABASE_URL}/functions/v1/benefit-enrichment-batch"
 
