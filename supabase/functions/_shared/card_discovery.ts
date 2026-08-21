@@ -597,25 +597,43 @@ const relationshipCardLabels = new Set([
   "addon",
   "companion",
   "partner",
+  "cobranded",
 ]);
 
 const bodyIdentityPrefixTokens = new Set([
   "a",
   "an",
   "and",
+  "annual",
   "about",
+  "before",
+  "cashback",
+  "cardmembers",
+  "credited",
   "each",
+  "earned",
+  "following",
   "for",
   "fees",
+  "fee",
   "charges",
   "conditions",
   "benefits",
   "of",
+  "on",
+  "opt",
   "or",
   "the",
   "terms",
+  "renewal",
+  "membership",
+  "their",
   "to",
+  "transactions",
+  "using",
+  "value",
   "with",
+  "you",
 ]);
 
 function targetBodyIdentityLabels(
@@ -684,6 +702,14 @@ function targetBodyIdentityLabels(
       ) continue;
       const label = `${candidateWords.join(" ")} Card`;
       const key = identityKey(label, issuer);
+      const expectedIndex = expectedKeys.findIndex((expectedKey) =>
+        key === expectedKey || key.endsWith(expectedKey)
+      );
+      if (expectedIndex >= 0) {
+        labels.push(expectedProducts[expectedIndex]);
+        if (labels.length === 16) return labels;
+        continue;
+      }
       if (
         !key || relationshipCardLabels.has(key) ||
         !strongExpectedIdentity(label, issuer)

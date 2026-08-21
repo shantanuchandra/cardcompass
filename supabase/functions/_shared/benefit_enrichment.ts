@@ -402,7 +402,7 @@ function readableText(value: string): string {
 const replayBenefitSignal =
   /(?:cashback|cash\s+back|reward|points?|miles?|discount|waiver|lounge|insurance|movie|fuel|dining|travel|spend|annual\s+fee|joining\s+fee|interest|apr|valid|expires?|effective|cap(?:ped)?|maximum|minimum|threshold|per\s+(?:month|quarter|year|annum|week|day)|\b\d+(?:\.\d+)?\s*%|(?:₹|rs\.?|inr)\s*\d)/i;
 const replayDirectPii =
-  /(?:[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|\+?(?:\d[()\s.-]*){10,}|\b[A-Z]{5}\d{4}[A-Z]\b|\bname\s*[:=#-]\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}|(?:customer|account|card|payment|pan|phone|mobile)\s*(?:(?:name|number|no\.?|id)\s*[:=#-]?|[:=#])\s*\S+|relationship\s+manager\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/i;
+  /(?:[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|\b[A-Z]{5}\d{4}[A-Z]\b|\bname\s*[:=#-]\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}|(?:customer|account|card|payment|pan|phone|mobile)\s*(?:(?:number|no\.?|id)\s*[:=#-]?|[:=#])\s*(?:[x*#-]*\d[\d()\s.-]{3,}|[a-z0-9_-]{8,})|relationship\s+manager\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/i;
 const replayCardIdentitySignal =
   /\b(?:amex|american\s+express|(?:credit\s+)?card|mastercard|rupay|visa)\b/i;
 const MAX_REPLAY_FACTS = 256;
@@ -430,6 +430,7 @@ const commercialTitleWords = new Set([
   "discount",
   "domestic",
   "earn",
+  "earned",
   "enjoy",
   "exclusive",
   "fee",
@@ -472,8 +473,15 @@ const commercialTitleWords = new Set([
   "zero",
   "apr",
   "renewal",
+  "redemption",
 ]);
 const publicBenefitSubjectWords = new Set([
+  "a",
+  "all",
+  "an",
+  "and",
+  "auto",
+  "be",
   "applicant",
   "applicants",
   "cardholder",
@@ -486,6 +494,30 @@ const publicBenefitSubjectWords = new Set([
   "users",
   "cashback",
   "card",
+  "current",
+  "date",
+  "each",
+  "eligible",
+  "earned",
+  "every",
+  "for",
+  "month",
+  "months",
+  "next",
+  "not",
+  "previous",
+  "quarter",
+  "quarters",
+  "spend",
+  "spends",
+  "statement",
+  "the",
+  "value",
+  "transaction",
+  "transactions",
+  "will",
+  "year",
+  "years",
 ]);
 
 const htmlEntityCharacters: Record<string, string> = {
@@ -646,7 +678,9 @@ export function normalizedBenefitPrivacyProbe(value: string): {
     [...normalized].map((character) => asciiConfusables[character] ?? character)
       .join(""),
   );
-  const namedHtmlEntityOverflow = /&[a-z][a-z0-9]{1,31};?/i.test(normalized);
+  const namedHtmlEntityOverflow = /&[a-z][a-z0-9]{1,31};/i.test(normalized) ||
+    /&(?:amp|apos|colon|commat|gt|lt|nbsp|num|percnt|quest|quot|sol)(?![a-z0-9])/i
+      .test(normalized);
   const residualUnicodeDigitOverflow = /\p{Nd}/u.test(
     normalized.replace(/[0-9]/g, ""),
   );
@@ -700,19 +734,10 @@ function hasUnknownPersonLikeSpan(
   identityPhrases: readonly string[],
 ): boolean {
   const probe = maskKnownIdentityPhrases(value, identityPhrases);
-  return [...probe.matchAll(/\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){1,3}\b/g)]
-    .some((match) => {
-      // Unknown product names are deliberately retained for the real card
-      // identity classifier. A title ending in "Card" is an ambiguity fact,
-      // not a person-name exception.
-      if (replayCardIdentitySignal.test(match[0])) return false;
-      return match[0].split(/\s+/).some((word) =>
-        !commercialTitleWords.has(word.toLowerCase())
-      );
-    }) ||
-    /\b(?:for|to)\s+\p{Lu}[\p{L}\p{M}'-]{2,}\b/u.test(probe) ||
+  return /\b(?:cash\s*back|rewards?|points?|miles?|discount|waiver|lounge|insurance|benefit|offer)\s+(?:for|to)\s+\p{Lu}[\p{L}\p{M}'-]{2,}\b/u
+    .test(probe) ||
     [...probe.matchAll(
-      /(?<![\p{L}\p{M}])([\p{L}][\p{L}\p{M}'-]{2,}(?:\s+[\p{L}][\p{L}\p{M}'-]{2,}){0,3})\s+(?:(?:gets?|receives?)\b|will\s+(?:call|contact)\b|is\s+the\s+(?:customer|cardholder|member)\b)/giu,
+      /(?<![\p{L}\p{M}])([\p{L}][\p{L}\p{M}'-]{2,}(?:\s+[\p{L}][\p{L}\p{M}'-]{2,}){0,3})\s+(?:(?:gets|receives?)\b|will\s+(?:call|contact)\b|is\s+the\s+(?:customer|cardholder|member)\b)/giu,
     )]
       .some((match) => {
         const words = match[1].toLowerCase().split(/\s+/);
@@ -723,18 +748,31 @@ function hasUnknownPersonLikeSpan(
         );
       }) ||
     [...probe.matchAll(
-      /(?<![\p{L}\p{M}])(?:for|to)\s+([\p{L}][\p{L}\p{M}'-]{1,}(?:\s+[\p{L}][\p{L}\p{M}'-]{1,}){0,3}?)(?=\s+(?:is|gets?|receives?|will)\b|\s*[.,;:!?]|\s*$)/giu,
+      /(?<![\p{L}\p{M}])(?:cash\s*back|rewards?|points?|miles?|discount|waiver|lounge|insurance|benefit|offer)\s+(?:for|to)\s+([\p{L}][\p{L}\p{M}'-]{1,}(?:\s+[\p{L}][\p{L}\p{M}'-]{1,}){0,3}?)(?=\s+(?:is|gets|receives?|will)\b|\s*[.,;:!?]|\s*$)/giu,
     )].some((match) =>
       match[1].toLowerCase().split(/\s+/).some((word) =>
         !publicBenefitSubjectWords.has(word) &&
         !commercialTitleWords.has(word) &&
         !/^knownidentity\d+$/.test(word)
       )
-    ) ||
-    (replayBenefitSignal.test(probe) &&
-      [...probe].some((character) =>
-        character.codePointAt(0)! > 0x7f && /\p{L}/u.test(character)
-      ));
+    );
+}
+
+function hasSensitiveNumericData(value: string): boolean {
+  return /(?<!\d)\d{10,}(?!\d)/.test(value) ||
+    /\b(?:call|contact|phone|mobile|helpline|assistance)\b[^\n]{0,64}\+?(?:\d[()\s.-]*){10,}/i
+      .test(value) ||
+    /\b(?:pay|payment|account|card|reference|pan)\b[^\n]{0,64}(?:\d[()\s.-]*){10,}/i
+      .test(value) ||
+    /(?<!\d)\d{4}(?:[-.]\d{4}){2,3}(?!\d)/.test(value);
+}
+
+function isPublicIssuerContactFragment(value: string): boolean {
+  return /\b(?:travel\s+assistance|customer\s+care|helpline)\b/i.test(value) &&
+    hasSensitiveNumericData(value) &&
+    !/\b(?:account|card|payment|pan|reference|customer\s+name)\b/i.test(
+      value,
+    );
 }
 
 export function containsPrivateBenefitData(
@@ -752,12 +790,10 @@ export function containsPrivateBenefitData(
     )
     .replace(/\b[0-9a-f]{64}\b/gi, "[digest]");
   return /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i.test(probe) ||
-    /(?<![a-z0-9+])\+?(?:\d[()\s.-]*){10,}(?![a-z0-9])/i.test(
-      numericProbe,
-    ) ||
+    hasSensitiveNumericData(numericProbe) ||
     /\b[A-Z]{5}\d{4}[A-Z]\b/i.test(probe) ||
     /\bname\s*[:=#-]\s*[a-z]{2,}(?:\s+[a-z]{2,}){0,3}\b/i.test(probe) ||
-    /(?:customer|account|card|payment|pan|phone|mobile)\s*(?:(?:name|number|no\.?|id)\s*[:=#-]|[:=#])\s*[^,;.\n]{2,128}/i
+    /(?:customer|account|card|payment|pan|phone|mobile)\s*(?:(?:number|no\.?|id)\s*[:=#-]?|[:=#])\s*(?:[x*#-]*\d[\d()\s.-]{3,}|[a-z0-9_-]{8,})/i
       .test(probe) ||
     /relationship\s+manager\s+[a-z]{2,}(?:\s+[a-z]{2,}){1,3}/i
       .test(probe) ||
@@ -811,10 +847,17 @@ export function canonicalBenefitReplayFactEnvelope(
       continue;
     }
     if (
-      replayDirectPii.test(fragment) ||
+      replayDirectPii.test(fragment) || hasSensitiveNumericData(fragment) ||
       containsPrivateBenefitData(fragment, context)
     ) {
-      factOverflow = true;
+      // Public issuer assistance numbers are not customer data, but they are
+      // also not benefit facts. Omit the whole fragment without persisting the
+      // number or blocking an otherwise public official observation.
+      if (isPublicIssuerContactFragment(fragment)) continue;
+      if (
+        replayBenefitSignal.test(fragment) ||
+        replayBenefitSignal.test(rawFragment)
+      ) factOverflow = true;
       continue;
     }
     if (seen.has(fragment)) continue;
@@ -862,7 +905,7 @@ function decimal(value: string | undefined): number | undefined {
 
 function money(text: string): number | undefined {
   const matched = text.match(
-    /(?:₹|rs\.?|inr)\s*([0-9][0-9,]*(?:\.\d{1,2})?)\s*(lakh|lac|lacs|crore|crores)?/i,
+    /(?:₹|rs\.?|inr)\s*,?\s*([0-9][0-9,]*(?:\.\d{1,2})?)\s*(lakh|lac|lacs|crore|crores)?/i,
   );
   const value = decimal(matched?.[1]);
   if (value === undefined) return undefined;
@@ -872,12 +915,15 @@ function money(text: string): number | undefined {
 
 function period(text: string): string | undefined {
   const matched = text.match(
-    /\bper\s+(statement\s+month|calendar\s+month|month|quarter|year|annum|week|day)\b/i,
+    /\bper\s+(statement\s+month|calendar\s+month|billing\s+cycle|month|quarter|year|annum|week|day)\b/i,
   )?.[1] ?? text.match(
     /\bin\s+(?:a|one|each)\s+(calendar\s+month|month|quarter|year|week|day)\b/i,
   )?.[1];
   if (!matched) return undefined;
-  return normalize(matched).replace("annum", "year");
+  return normalize(matched).replace("annum", "year").replace(
+    "billing cycle",
+    "statement month",
+  );
 }
 
 function exclusions(text: string): string[] {
@@ -980,7 +1026,7 @@ function parseCashback(text: string): ParsedFields | null {
   if (rate === undefined && fixedValue === undefined) return null;
   const cap = money(
     text.match(
-      /\b(?:capp?ed\s+(?:at|to)|maximum\s+(?:of\s+)?|up\s+to)\s*((?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d{1,2})?)/i,
+      /\b(?:capp?ed\s+(?:at|to)|maximum\s+(?:of\s+)?|up\s+to)\s*((?:₹|rs\.?|inr)\s*,?\s*[0-9][0-9,]*(?:\.\d{1,2})?)/i,
     )?.[1] ?? "",
   );
   const restriction = text.match(
@@ -1000,7 +1046,7 @@ function parseCashback(text: string): ParsedFields | null {
 
 function parseRewards(text: string): ParsedFields | null {
   const matched = text.match(
-    /\b(?:earn|get)\s+([0-9]+(?:\.\d+)?)\s+reward\s+points?\b/i,
+    /\b(?:earn(?:ing|s)?|get(?:ting)?)\s+([0-9]+(?:\.\d+)?)\s+reward\s+points?\b/i,
   );
   if (!matched) return null;
   const thresholdMatch = text.match(
@@ -1163,7 +1209,11 @@ function parseFuelSurchargeWaiver(text: string): ParsedFields | null {
   if (!/\bfuel\s+surcharge\s+waiv(?:er|ed)\b/i.test(text)) return null;
   const rate = decimal(
     text.match(/\b([0-9]+(?:\.\d+)?)\s*%\s*fuel\s+surcharge\s+waiv(?:er|ed)\b/i)
-      ?.[1],
+      ?.[1] ??
+      text.match(
+        /\bfuel\s+surcharge\s+waiv(?:er|ed)\s+(?:of\s+)?([0-9]+(?:\.\d+)?)\s*%/i,
+      )
+        ?.[1],
   );
   const cap = cappedAmount(text);
   if (rate === undefined && cap === undefined) return null;
@@ -1256,10 +1306,10 @@ function parseConciergeAccess(text: string): ParsedFields | null {
 function parseFeeWaiver(text: string): ParsedFields | null {
   if (
     !/\b(?:annual|renewal|membership)\s+fee\b/i.test(text) ||
-    !/\bwaiv(?:er|ed|er\s+of|ed\s+off)\b/i.test(text)
+    !/\b(?:waiv(?:er|ed|er\s+of|ed\s+off)|reversal)\b/i.test(text)
   ) return null;
   const thresholdText = text.match(
-    /\bspends?\s+(?:of|above|over)\s+((?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d+)?\s*(?:lakh|lac|lacs|crore|crores)?)/i,
+    /\bspends?\s+(?:(?:of|above|over)\s+|more\s+than\s+)((?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d+)?\s*(?:lakh|lac|lacs|crore|crores)?)/i,
   )?.[1];
   const threshold = money(thresholdText ?? "");
   if (threshold === undefined) return null;
@@ -1411,7 +1461,9 @@ function parseMovieBenefit(text: string): ParsedFields | null {
   const partners = moviePartners(text);
   const percent = decimal(
     text.match(/\b([0-9]+(?:\.\d+)?)\s*%\s*(?:off|discount)\b/i)?.[1] ??
-      text.match(/\bdiscount(?:ed)?\s+(?:of\s+)?([0-9]+(?:\.\d+)?)\s*%\b/i)
+      text.match(
+        /\bdiscount(?:ed)?\s+(?:(?:of|up\s*to|upto)\s+)?([0-9]+(?:\.\d+)?)\s*%/i,
+      )
         ?.[1],
   );
   if (percent !== undefined) {
@@ -1534,7 +1586,7 @@ function parseMovieBenefit(text: string): ParsedFields | null {
 function parseLounge(text: string): ParsedFields | null {
   if (!/\b(?:airport\s+)?lounges?\b/i.test(text)) return null;
   const beforeLounge = text.match(
-    /\b([0-9]+)\s+(?:complimentary\s+)?(?:airport\s+)?lounge\s+(?:access\s+)?visits?\b/i,
+    /\b([0-9]+)\s+(?:complimentary\s+)?(?:(?:domestic|international)\s+)?(?:airport\s+)?lounge\s+(?:access\s+)?visits?\b/i,
   )?.[1];
   const afterLounge = text.match(
     /\b(?:airport\s+)?lounge\s+access\s*:\s*([0-9]+)\s+complimentary\s+visits?\b/i,
@@ -1789,14 +1841,19 @@ function conflictSubjectKey(
 export function offerSubjectForProposal(
   benefit: Pick<BenefitProposal, "category" | "valueType" | "sourceExcerpt">,
 ): string {
-  const text = normalize(benefit.sourceExcerpt);
+  const text = normalize(benefit.sourceExcerpt)
+    .replace(/\bonline\s*\/\s*offline\b/gi, "general")
+    .replace(
+      /\b(?:except(?:\s+for)?|excluding|excludes?|not\s+(?:valid|eligible)(?:\s+for)?|does\s+not\s+apply(?:\s+to)?)\b[\s\S]*$/i,
+      " ",
+    );
   const category = canonicalBenefitCategory(benefit.category) ??
     normalize(benefit.category);
   const subjectCategory = category === "points" ? "rewards" : category;
   const qualifier = benefit.valueType === "lounge_access"
-    ? (/\bdomestic\b/.test(text)
+    ? (/\bdomestic\b/.test(text) || /\b(?:in|across)\s+india\b/.test(text)
       ? "domestic"
-      : /\binternational\b/.test(text)
+      : /\b(?:international|global)\b/.test(text)
       ? "international"
       : "general")
     : category === "insurance"
@@ -1818,6 +1875,9 @@ export function offerSubjectForProposal(
       "movies",
       "movie",
       "online",
+      "e-shopping",
+      "e shopping",
+      "upi",
       "international",
       "utility",
     ].map((term) => ({ term, index: text.search(new RegExp(`\\b${term}\\b`)) }))
@@ -1831,10 +1891,256 @@ export function offerSubjectForProposal(
     groceries: "grocery",
     movie: "movie",
     movies: "movie",
+    "e-shopping": "online",
+    "e shopping": "online",
   } as Record<string, string>)[qualifier] ?? qualifier;
   return `${subjectCategory}:${
     normalize(benefit.valueType ?? "benefit")
   }:${canonicalQualifier}`;
+}
+
+function cashbackScopeFingerprint(benefit: ParsedBenefit): string | null {
+  const text = normalize(benefit.sourceExcerpt).replace(
+    /\b(?:except(?:\s+for)?|excluding|excludes?|not\s+(?:valid|eligible)(?:\s+for)?|does\s+not\s+apply(?:\s+to)?)\b[\s\S]*$/i,
+    " ",
+  );
+  const scopes = [
+    ["dining", /\b(?:dining|dineout)\b/],
+    ["fuel", /\bfuel\b/],
+    ["grocery", /\bgrocer(?:y|ies)\b/],
+    ["travel", /\btravel\b/],
+    ["movie", /\bmovies?\b/],
+    ["online", /\b(?:online|e[ -]?shopping)\b/],
+    ["international", /\binternational\b/],
+    ["utility", /\butility\b/],
+  ] as const;
+  const matched = scopes.filter(([, pattern]) => pattern.test(text)).map(
+    ([scope]) => scope,
+  );
+  return matched.length === 0 ? null : [...new Set(matched)].sort().join("|");
+}
+
+function comparableTerms(value: unknown): string | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const normalized = value.map((item) => normalize(String(item))).filter(
+    Boolean,
+  ).sort();
+  return normalized.length === 0 ? null : JSON.stringify(normalized);
+}
+
+function comparableExclusions(value: unknown): string | null {
+  const canonical = canonicalExclusions(value);
+  const serialized = stableCanonicalJson(canonical);
+  const empty = stableCanonicalJson(canonicalExclusions([]));
+  return serialized === empty ? null : serialized;
+}
+
+function compatibleOptional(
+  left: unknown,
+  right: unknown,
+): boolean {
+  return left == null || right == null || left === right;
+}
+
+function compatibleCashbackObservation(
+  left: ParsedBenefit,
+  right: ParsedBenefit,
+): boolean {
+  if (
+    left.category !== right.category || left.valueType !== right.valueType ||
+    left.rate !== right.rate || left.value !== right.value
+  ) return false;
+  for (
+    const key of [
+      "cap",
+      "threshold",
+      "frequency",
+      "period",
+      "effectiveFrom",
+      "effectiveTo",
+    ] as const
+  ) {
+    if (!compatibleOptional(left[key], right[key])) return false;
+  }
+  return compatibleOptional(
+    cashbackScopeFingerprint(left),
+    cashbackScopeFingerprint(right),
+  ) && compatibleOptional(
+    comparableTerms(left.partners),
+    comparableTerms(right.partners),
+  ) && compatibleOptional(
+    comparableExclusions(left.exclusions),
+    comparableExclusions(right.exclusions),
+  );
+}
+
+function comparableRewardScope(benefit: ParsedBenefit): string | null {
+  const scope = comparableTerms(benefit.restrictions);
+  if (scope == null) return null;
+  const terms = JSON.parse(scope) as string[];
+  const normalized = terms.join(" ").toLowerCase();
+  const explicitCategories = [
+    "dining",
+    "travel",
+    "international",
+    "upi",
+    "fuel",
+    "grocery",
+    "groceries",
+    "movies",
+    "movie",
+    "utility",
+  ].filter((term) => new RegExp(`\\b${term}\\b`).test(normalized))
+    .map((term) =>
+      term === "groceries" ? "grocery" : term === "movie" ? "movies" : term
+    );
+  if (explicitCategories.length > 0) {
+    return JSON.stringify([...new Set(explicitCategories)].sort());
+  }
+  return terms.every((term) =>
+      /^(?:your spends|all (?:other )?eligible spends(?: categories)?(?: \(online\/offline\))?)$/i
+        .test(term)
+    )
+    ? null
+    : scope;
+}
+
+function compatibleRewardMultiplierObservation(
+  left: ParsedBenefit,
+  right: ParsedBenefit,
+): boolean {
+  if (
+    left.category !== right.category || left.valueType !== right.valueType ||
+    left.rate !== right.rate || left.value !== right.value
+  ) return false;
+  for (
+    const key of [
+      "cap",
+      "threshold",
+      "frequency",
+      "period",
+      "effectiveFrom",
+      "effectiveTo",
+    ] as const
+  ) {
+    if (!compatibleOptional(left[key], right[key])) return false;
+  }
+  return compatibleOptional(
+    comparableRewardScope(left),
+    comparableRewardScope(right),
+  ) &&
+    compatibleOptional(
+      comparableTerms(left.partners),
+      comparableTerms(right.partners),
+    ) && compatibleOptional(
+      comparableExclusions(left.exclusions),
+      comparableExclusions(right.exclusions),
+    );
+}
+
+function compatibleAccessObservation(
+  left: ParsedBenefit,
+  right: ParsedBenefit,
+): boolean {
+  if (
+    left.category !== right.category || left.valueType !== right.valueType ||
+    left.rate !== right.rate || left.value !== right.value
+  ) return false;
+  for (
+    const key of [
+      "cap",
+      "threshold",
+      "frequency",
+      "period",
+      "effectiveFrom",
+      "effectiveTo",
+    ] as const
+  ) {
+    if (!compatibleOptional(left[key], right[key])) return false;
+  }
+  return compatibleOptional(
+    comparableTerms(left.restrictions),
+    comparableTerms(right.restrictions),
+  ) && compatibleOptional(
+    comparableTerms(left.partners),
+    comparableTerms(right.partners),
+  ) && compatibleOptional(
+    comparableExclusions(left.exclusions),
+    comparableExclusions(right.exclusions),
+  );
+}
+
+function observationStrength(benefit: ParsedBenefit): number {
+  return [
+        benefit.cap,
+        benefit.threshold,
+        benefit.frequency,
+        benefit.period,
+        benefit.effectiveFrom,
+        benefit.effectiveTo,
+        cashbackScopeFingerprint(benefit),
+        comparableTerms(benefit.partners),
+        comparableExclusions(benefit.exclusions),
+      ].filter((item) => item != null).length * 10 +
+    Math.min(9, benefit.restrictions.join(" ").length);
+}
+
+function strongestObservation<T extends ParsedBenefit>(matches: T[]): T {
+  return [...matches].sort((left, right) =>
+    observationStrength(right) - observationStrength(left) ||
+    left.sourceUrl.localeCompare(right.sourceUrl)
+  )[0];
+}
+
+function groupV6Observations(
+  benefits: Array<ParsedBenefit & { offerSubject: string }>,
+): Array<Array<ParsedBenefit & { offerSubject: string }>> {
+  const exact = new Map<
+    string,
+    Array<ParsedBenefit & { offerSubject: string }>
+  >();
+  const clustered = benefits.filter((benefit) =>
+    [
+      "cashback",
+      "reward_multiplier",
+      "fuel_surcharge_waiver",
+      "lounge_access",
+      "golf_access",
+    ].includes(benefit.valueType ?? "")
+  ).sort((left, right) =>
+    observationStrength(right) - observationStrength(left) ||
+    left.sourceUrl.localeCompare(right.sourceUrl)
+  );
+  const other = benefits.filter((benefit) =>
+    ![
+      "cashback",
+      "reward_multiplier",
+      "fuel_surcharge_waiver",
+      "lounge_access",
+      "golf_access",
+    ].includes(benefit.valueType ?? "")
+  );
+  for (const benefit of other) {
+    const key = `${benefit.offerSubject}:${stableHash(conditionKey(benefit))}`;
+    exact.set(key, [...(exact.get(key) ?? []), benefit]);
+  }
+  const clusters: Array<Array<ParsedBenefit & { offerSubject: string }>> = [];
+  for (const benefit of clustered) {
+    const cluster = clusters.find((items) =>
+      items[0].valueType === benefit.valueType &&
+      items[0].offerSubject === benefit.offerSubject &&
+      items.every((item) =>
+        benefit.valueType === "cashback"
+          ? compatibleCashbackObservation(item, benefit)
+          : benefit.valueType === "reward_multiplier"
+          ? compatibleRewardMultiplierObservation(item, benefit)
+          : compatibleAccessObservation(item, benefit)
+      )
+    );
+    if (cluster) cluster.push(benefit);
+    else clusters.push([benefit]);
+  }
+  return [...exact.values(), ...clusters];
 }
 
 function sourceIdentity(benefit: BenefitComparisonProposal): string {
@@ -2014,37 +2320,51 @@ export async function extractGroundedBenefitsV6(
     !/\b(?:no\s+longer\s+available|discontinued)\b/i.test(
       benefit.sourceExcerpt,
     ) &&
+    !/^(?:q\.?\s*\d+[.)]?\s*)?(?:what|which|how|when|where|why|can|will|does|is|are)\b[^?]*\?\s*$/i
+      .test(benefit.sourceExcerpt) &&
+    !/(?:\b(?:not|never)\s+(?:eligible|applicable|qualif(?:y|ies))\b[\s\S]*\bcashback\b|\bcashback\b[\s\S]*\b(?:not|never)\s+(?:eligible|applicable|qualif(?:y|ies))\b)/i
+      .test(benefit.sourceExcerpt) &&
+    !/\b(?:not\s+included\s+in|excluded\s+from|ineligible\s+for)\b[\s\S]*\b[0-9]+(?:\.\d+)?\s*[x×]\s+rewards?\s+points?\b/i
+      .test(benefit.sourceExcerpt) &&
+    !/\b(?:transaction\s+amounting|capping\s+reached)\b/i.test(
+      benefit.sourceExcerpt,
+    ) &&
+    !/^\s*capp?ing\s+(?:for|of)\s+(?:the\s+)?[0-9]+(?:\.[0-9]+)?\s*%\s*cashback\s*:?\s*$/i
+      .test(benefit.sourceExcerpt) &&
+    !/^\s*[0-9]+(?:\.[0-9]+)?\s*[x×]\s+rewards?\s+points?\s*$/i
+      .test(benefit.sourceExcerpt) &&
+    !/^\s*[0-9]+(?:\.[0-9]+)?\s*%\s+cashback\s*[:.]?\s*$/i
+      .test(benefit.sourceExcerpt) &&
+    !/^\s*earlier\s*,/i.test(benefit.sourceExcerpt) &&
+    !(benefit.valueType === "lounge_access" &&
+      /\btotals?\s+up\s+to\b/i.test(benefit.sourceExcerpt) &&
+      /\bdomestic\b/i.test(benefit.sourceExcerpt) &&
+      /\binternational\b/i.test(benefit.sourceExcerpt)) &&
+    !/\b(?:are|is)\s+(?:stated|listed|provided)\s+(?:as|below)(?:\s+below)?\s*:?\s*$/i
+      .test(benefit.sourceExcerpt) &&
+    !/\b(?:categories|category\s+codes?|mccs?|merchants?)\b[\s\S]*\b(?:detailed|identified|listed|stated)\b[\s\S]*\b(?:basis|below)\b/i
+      .test(benefit.sourceExcerpt) &&
     !/\bup\s+to\s+(?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d{1,2})?\s+cashback\b/i
       .test(benefit.sourceExcerpt)
   );
-  const grouped = new Map<
-    string,
-    Array<ParsedBenefit & { offerSubject: string }>
-  >();
-  for (const benefit of canonical) {
-    const offerSubject = offerSubjectForProposal(benefit);
-    const key = `${offerSubject}:${stableHash(conditionKey(benefit))}`;
-    grouped.set(key, [
-      ...(grouped.get(key) ?? []),
-      { ...benefit, offerSubject },
-    ]);
-  }
-  const projected = [...grouped.values()].map((matches) => {
-    const representative = [...matches].sort((left, right) =>
-      left.sourceUrl.localeCompare(right.sourceUrl)
-    )[0];
+  const grouped = groupV6Observations(canonical.map((benefit) => ({
+    ...benefit,
+    offerSubject: offerSubjectForProposal(benefit),
+  })));
+  const projected = grouped.map((matches) => {
+    const representative = strongestObservation(matches);
     const sourceUrls = [
-      ...new Set(matches.map((item) =>
-        item.sourceUrl
-      )),
+      ...new Set(matches.map((item) => item.sourceUrl)),
     ]
       .sort();
     const sourceIdentities = [
-      ...new Set(matches.flatMap((item) =>
-        /^[0-9a-f]{64}$/i.test(item.sourceIdentity ?? "")
-          ? [item.sourceIdentity!.toLowerCase()]
-          : []
-      )),
+      ...new Set(
+        matches.flatMap((item) =>
+          /^[0-9a-f]{64}$/i.test(item.sourceIdentity ?? "")
+            ? [item.sourceIdentity!.toLowerCase()]
+            : []
+        ),
+      ),
     ].sort();
     return {
       ...representative,

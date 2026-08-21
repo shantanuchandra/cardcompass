@@ -1,4 +1,5 @@
 import { canonicalOfficialUrl } from "./card_discovery.ts";
+import { extractText as extractUnpdfText, getDocumentProxy } from "unpdf";
 
 declare const officialRobotsCacheBrand: unique symbol;
 export type OfficialRobotsCache = {
@@ -140,6 +141,9 @@ function decodePdfLiteral(value: string): string {
 }
 
 const MAX_EXTRACTED_PDF_TEXT_BYTES = 1_000_000;
+const MAX_INFLATED_PDF_STREAM_BYTES = 8_000_000;
+const MAX_PDF_PAGES = 64;
+const MAX_PDF_IMAGE_PIXELS = 4_194_304;
 
 type PdfTextBudget = { bytes: number };
 type PdfInflateBudget = { bytes: number };
@@ -223,7 +227,7 @@ async function inflatePdfStream(
         if (done) break;
         length += value.length;
         budget.bytes += value.length;
-        if (budget.bytes > MAX_EXTRACTED_PDF_TEXT_BYTES) {
+        if (budget.bytes > MAX_INFLATED_PDF_STREAM_BYTES) {
           await reader.cancel();
           throw new OfficialFetchError("oversized");
         }
@@ -245,7 +249,7 @@ async function inflatePdfStream(
   }
 }
 
-async function extractPdfText(bytes: Uint8Array): Promise<string> {
+async function extractLegacyPdfText(bytes: Uint8Array): Promise<string> {
   const raw = new TextDecoder("latin1").decode(bytes);
   if (!raw.startsWith("%PDF-")) throw new Error("unsupported_content");
   const budget: PdfTextBudget = { bytes: 0 };
@@ -263,9 +267,101 @@ async function extractPdfText(bytes: Uint8Array): Promise<string> {
     .replace(/\s+/g, " ").trim();
 }
 
+function boundedPdfText(value: string): string {
+  // PDF.js retains useful text-line boundaries. Keep them: flattening a table
+  // turns adjacent monetary values into phone/card-number shaped runs and also
+  // makes unrelated product rows look like one benefit sentence.
+  const normalized = value.replace(/\r\n?/g, "\n")
+    .replace(/[\u0000-\u0009\u000b-\u001f]+/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (
+    new TextEncoder().encode(normalized).byteLength >
+      MAX_EXTRACTED_PDF_TEXT_BYTES
+  ) throw new OfficialFetchError("oversized");
+  return normalized;
+}
+
+async function extractPdfText(bytes: Uint8Array): Promise<string> {
+  let document: Awaited<ReturnType<typeof getDocumentProxy>> | undefined;
+  try {
+    document = await getDocumentProxy(bytes.slice(), {
+      disableFontFace: true,
+      maxImageSize: MAX_PDF_IMAGE_PIXELS,
+      useSystemFonts: false,
+      verbosity: 0,
+    });
+    if (document.numPages < 1 || document.numPages > MAX_PDF_PAGES) {
+      throw new OfficialFetchError("oversized");
+    }
+    const extracted = await extractUnpdfText(document, { mergePages: true });
+    const text = Array.isArray(extracted.text)
+      ? extracted.text.join("\n")
+      : extracted.text;
+    const normalized = boundedPdfText(text);
+    if (normalized) return normalized;
+  } catch (error) {
+    if (error instanceof OfficialFetchError) throw error;
+    // Retain the bounded legacy parser for malformed but locally readable
+    // issuer fixtures and older PDFs that PDF.js cannot resolve.
+  } finally {
+    await document?.cleanup();
+  }
+  return await extractLegacyPdfText(bytes);
+}
+
 export async function officialResourceText(
   resource: OfficialFetchResult,
 ): Promise<string> {
+  if (resource.contentType === "application/json") {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(
+        resource.bytes
+          ? new TextDecoder().decode(resource.bytes)
+          : resource.text ?? "",
+      );
+    } catch {
+      throw new OfficialFetchError("unsupported_content");
+    }
+    const values: string[] = [];
+    let nodes = 0;
+    let bytes = 0;
+    const retain = (value: unknown): void => {
+      nodes += 1;
+      if (nodes > 16_384) throw new OfficialFetchError("oversized");
+      if (typeof value === "string") {
+        const normalized = value.replace(/\r\n?/g, "\n").trim();
+        if (!normalized) return;
+        const visible = normalized.replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ").trim();
+        if (
+          /^(?:what|which|how|when|where|why|can|will|does|is|are)\b[^?]*\?$/i
+            .test(visible)
+        ) return;
+        bytes += new TextEncoder().encode(normalized).byteLength;
+        if (bytes > MAX_EXTRACTED_PDF_TEXT_BYTES) {
+          throw new OfficialFetchError("oversized");
+        }
+        values.push(normalized);
+        return;
+      }
+      if (Array.isArray(value)) {
+        for (const item of value) retain(item);
+        return;
+      }
+      if (value && typeof value === "object") {
+        for (const item of Object.values(value as Record<string, unknown>)) {
+          retain(item);
+        }
+      }
+    };
+    retain(parsed);
+    if (values.length === 0) throw new OfficialFetchError("empty_shell");
+    return values.join("\n");
+  }
   if (resource.contentType !== "application/pdf") return resource.text ?? "";
   if (!resource.bytes) return "";
   try {
@@ -310,11 +406,13 @@ const DEFAULT_TIMEOUT_MS = 12_000;
 const MAX_REDIRECTS = 4;
 const CONTENT_POLICIES: Record<OfficialContentPurpose, ContentPolicy> = {
   document: {
-    accept: "text/html,application/xhtml+xml,application/pdf;q=0.8",
+    accept:
+      "text/html,application/xhtml+xml,application/pdf;q=0.8,application/json;q=0.7",
     contentTypes: new Set([
       "text/html",
       "application/xhtml+xml",
       "application/pdf",
+      "application/json",
     ]),
   },
   html: {
@@ -613,7 +711,7 @@ const MAX_QUERY_KEY_LENGTH = 64;
 const MAX_QUERY_VALUE_LENGTH = 512;
 
 function isTrackingQueryKey(key: string): boolean {
-  return /^utm_/i.test(key) || ["gclid", "fbclid"].includes(
+  return /^utm_/i.test(key) || ["gclid", "fbclid", "sfvrsn"].includes(
     key.toLowerCase(),
   );
 }

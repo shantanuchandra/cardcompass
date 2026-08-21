@@ -939,6 +939,47 @@ Deno.test("pilot replay reruns required-link and card-identity classifiers from 
   );
 });
 
+Deno.test("pilot replay binds a privacy-minimized supporting body to its exact product resource", async () => {
+  const compute = task10BatchModule.computePilotReplayEvidence;
+  const sourceUrl =
+    "https://issuer.example/credit-cards/issuer-example-rewards-card-terms.pdf";
+  const sourceKey = sourceIdentityDigest(sourceUrl);
+  const attempts = [{
+    url: sourceUrl,
+    role: "primary",
+    status: "success",
+    httpStatus: 200,
+    contentHash: "a".repeat(64),
+    finalResourceIdentityHash: sourceKey,
+    attemptedAt: "2026-08-20T00:00:00.000Z",
+    logicalSourceKey: sourceKey,
+  }];
+  const replay = await compute({
+    jobId: "11111111-1111-4111-8111-111111111111",
+    cardId: "22222222-2222-4222-8222-222222222222",
+    parserVersion: "benefits-v6",
+    runMode: "pilot",
+    sourceManifestHash: await computeSourceManifestHash(attempts as never),
+    expectedRequiredSourceKeys: [],
+    requiredSourceSelectionOverflow: false,
+    attempts,
+    documents: [{
+      sourceUrl,
+      finalUrl: sourceUrl,
+      text:
+        "Following transactions using Issuer Example Rewards Card qualify for 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    issuer: "Issuer Example",
+    identityLabels: ["Issuer Example Rewards Card"],
+    primarySourceUrl: sourceUrl,
+  });
+  assert(
+    replay.deterministicReplayPassed === true,
+    "exact product resource context did not survive replay",
+  );
+});
+
 Deno.test("pilot replay persists canonical functional resources and recomputes every opaque identity", async () => {
   const compute = task10BatchModule.computePilotReplayEvidence;
   assert(typeof compute === "function", "computed pilot replay is missing");

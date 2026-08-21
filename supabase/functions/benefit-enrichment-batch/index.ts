@@ -2130,6 +2130,7 @@ export async function computePilotReplayEvidence(input: {
           document.text,
           replayInput.context.issuer,
           replayInput.context.identity_labels,
+          document.finalUrl ?? document.sourceUrl,
         ).status !== "match"
       ) throw new Error("pilot_card_identity_mismatch");
     }

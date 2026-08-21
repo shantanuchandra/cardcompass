@@ -253,6 +253,282 @@ Deno.test("global navigation terms do not crowd out product-scoped required sour
   );
 });
 
+Deno.test("issuer-owned card terms supersede external partner terms without manufacturing overflow", async () => {
+  const product =
+    "https://www.hdfc.bank.in/credit-cards/swiggy-hdfc-bank-credit-card";
+  const productTerms =
+    `${product}/pdf/terms-and-conditions-swiggy-hdfc-bank-credit-card.pdf`;
+  const fees = `${product}/fees-and-charges`;
+  const externalPartnerTerms = "https://www.swiggy.com/terms-and-conditions";
+  const fetched: string[] = [];
+  const maxBytes: number[] = [];
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "HDFC Bank",
+    primary: resource(
+      product,
+      `<h1>Swiggy HDFC Bank Credit Card</h1>
+       ${"public product details ".repeat(26_000)}
+       <p>Swiggy One membership terms are available
+         <a href="${externalPartnerTerms}">here</a>.</p>
+       <a href="${productTerms}">Card terms and conditions</a>
+       <a href="${fees}">Fees and charges</a>`,
+    ),
+    identityLabels: ["Swiggy", "Swiggy HDFC Bank Credit Card"],
+    fetchOfficialIssuerResource: async (input) => {
+      fetched.push(input.url);
+      maxBytes.push(input.maxBytes ?? 0);
+      return resource(
+        input.url,
+        "Swiggy HDFC Bank Credit Card terms, fees, and membership conditions",
+      );
+    },
+  });
+
+  assert(
+    JSON.stringify(fetched.sort()) ===
+      JSON.stringify([fees, productTerms].sort()),
+    `external partner terms blocked issuer-owned sources: ${fetched.join(",")}`,
+  );
+  assert(
+    maxBytes.length === 2 &&
+      maxBytes.every((value) => value === 2 * 1024 * 1024),
+    `issuer supporting fetch limit was not the bounded 2 MiB policy: ${
+      maxBytes.join(",")
+    }`,
+  );
+  assert(
+    !collected.attempts.some((attempt) =>
+      attempt.requestedUrl === externalPartnerTerms
+    ),
+    "external partner terms entered the issuer fetch manifest",
+  );
+  assert(
+    collected.expectedRequiredSourceKeys.length === 2 &&
+      collected.expectedRequiredSourceKeys.includes(
+        sourceIdentityDigest(productTerms),
+      ) &&
+      collected.expectedRequiredSourceKeys.includes(sourceIdentityDigest(fees)),
+    "issuer-owned terms were not the exact required manifest",
+  );
+  assert(
+    collected.requiredSourceSelectionOverflow === false &&
+      classifyRequiredReplaySourceKeys(collected.documents).overflow === false,
+    "redundant external terms manufactured required-source overflow",
+  );
+  assert(
+    JSON.stringify(
+      classifyRequiredReplaySourceKeys(collected.documents).keys,
+    ) === JSON.stringify([...collected.expectedRequiredSourceKeys].sort()),
+    "replay reintroduced external terms superseded by issuer-owned evidence",
+  );
+  assert(
+    assessCrawlCompleteness(
+      collected.attempts,
+      "2026-08-17T00:01:00.000Z",
+    ).complete,
+    "complete issuer-owned terms did not complete the crawl",
+  );
+});
+
+Deno.test("an external required link remains decisive without issuer-owned evidence", () => {
+  const primary = "https://issuer.example/card";
+  const external = "https://partner.example/card-terms";
+  const classified = classifyRequiredReplaySourceKeys([{
+    sourceUrl: primary,
+    finalUrl: primary,
+    contentHash: "a".repeat(64),
+    text: "Issuer Example Credit Card",
+    replayLinks: [{
+      href: external,
+      resourceUrl: external,
+      anchorText: "Card terms and conditions",
+      resourceIdentityHash: sourceIdentityDigest(external),
+      queryPolicy: "functional_only",
+    }],
+  }]);
+  assert(
+    classified.keys.length === 1 &&
+      classified.keys[0] === sourceIdentityDigest(external),
+    "an unsupported external required source was silently ignored",
+  );
+});
+
+Deno.test("card-scoped PDF identity tolerates bounded inter-glyph spacing", async () => {
+  const product =
+    "https://www.hdfc.bank.in/credit-cards/swiggy-hdfc-bank-credit-card";
+  const productTerms =
+    `${product}/pdf/terms-and-conditions-swiggy-hdfc-bank-credit-card.pdf`;
+  const pdf =
+    "%PDF-1.4\nBT (S w i g g y H D F C B a n k C r e d i t C a r d earns 10 percent cashback.) Tj ET\n%%EOF";
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "HDFC Bank",
+    primary: resource(
+      product,
+      `<h1>Swiggy HDFC Bank Credit Card</h1>
+       <a href="${productTerms}">Card terms and conditions</a>`,
+    ),
+    identityLabels: ["Swiggy", "Swiggy HDFC Bank Credit Card"],
+    fetchOfficialIssuerResource: async () =>
+      resource(productTerms, pdf, "application/pdf"),
+  });
+
+  const termAttempt = collected.attempts.find((attempt) =>
+    attempt.requestedUrl === productTerms
+  );
+  assert(
+    termAttempt?.status === "success",
+    `exact card PDF identity was not proven: ${termAttempt?.errorCode}`,
+  );
+  assert(
+    collected.documents.some((document) => document.sourceUrl === productTerms),
+    "exact card PDF was not retained after identity validation",
+  );
+});
+
+Deno.test("an exact-card PDF retains late bounded benefit facts", async () => {
+  const product =
+    "https://www.hdfc.bank.in/credit-cards/swiggy-hdfc-bank-credit-card";
+  const productTerms = `${product}/terms.pdf`;
+  const pdf = `%PDF-1.4\nBT (${
+    [
+      "Swiggy HDFC Bank Credit Card terms and conditions.",
+      ...Array.from({ length: 12 }, (_, index) =>
+        `General condition ${index + 1} applies to account usage.`),
+      "Get 10% cashback on food delivery spends up to Rs. 1,500 per month.",
+    ].join(" ")
+  }) Tj ET\n%%EOF`;
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "HDFC Bank",
+    primary: resource(
+      product,
+      `<h1>Swiggy HDFC Bank Credit Card</h1>
+       <a href="${productTerms}">Card terms and conditions</a>`,
+    ),
+    identityLabels: ["Swiggy", "Swiggy HDFC Bank Credit Card"],
+    fetchOfficialIssuerResource: async () =>
+      resource(productTerms, pdf, "application/pdf"),
+  });
+
+  const supporting = collected.documents.find((document) =>
+    document.sourceUrl === productTerms
+  );
+  assert(
+    supporting?.text.includes("10% cashback") === true,
+    "late exact-card PDF evidence was silently truncated",
+  );
+});
+
+Deno.test("card-scoped PDF evidence excludes remote rival product sections", async () => {
+  const product =
+    "https://www.hdfc.bank.in/credit-cards/swiggy-hdfc-bank-credit-card";
+  const productTerms = `${product}/terms.pdf`;
+  const pdf =
+    "%PDF-1.4\nBT (Axis Privilege Credit Card earns 5% cashback. General issuer prose. More general issuer prose. Another unrelated section. Swiggy HDFC Bank Credit Card earns 10% cashback on food orders. The Swiggy cashback cap is 1500 per month.) Tj ET\n%%EOF";
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "HDFC Bank",
+    primary: resource(
+      product,
+      `<h1>Swiggy HDFC Bank Credit Card</h1>
+       <a href="${productTerms}">Card terms</a>`,
+    ),
+    identityLabels: ["Swiggy", "Swiggy HDFC Bank Credit Card"],
+    fetchOfficialIssuerResource: async () =>
+      resource(productTerms, pdf, "application/pdf"),
+  });
+
+  const supporting = collected.documents.find((document) =>
+    document.sourceUrl === productTerms
+  );
+  assert(
+    supporting?.text.includes("Swiggy HDFC Bank Credit Card") === true &&
+      !supporting.text.includes("Axis Privilege Credit Card"),
+    `remote rival PDF section survived product scoping: ${supporting?.text}`,
+  );
+});
+
+Deno.test("an exact-family PDF cannot waive a sibling product ambiguity", async () => {
+  const product =
+    "https://www.hdfc.bank.in/credit-cards/swiggy-hdfc-bank-credit-card";
+  const upgrade = `${product}/faq-swiggy-card-upgrade.pdf`;
+  const fetched: string[] = [];
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "HDFC Bank",
+    primary: resource(
+      product,
+      `<h1>Swiggy HDFC Bank Credit Card</h1>
+       <a href="${upgrade}">Swiggy card FAQ</a>`,
+    ),
+    identityLabels: ["Swiggy", "Swiggy HDFC Bank Credit Card"],
+    fetchOfficialIssuerResource: async (input) => {
+      fetched.push(input.url);
+      return resource(
+        input.url,
+        "%PDF-1.4\nBT (Swiggy HDFC Bank Credit Card terms. If you opt for the Swiggy BLCK Card, different fees apply.) Tj ET\n%%EOF",
+        "application/pdf",
+      );
+    },
+  });
+
+  assert(
+    collected.documents.every((document) => document.sourceUrl !== upgrade),
+    "a sibling-product PDF entered target benefit evidence",
+  );
+  assert(
+    fetched.length === 0 &&
+      collected.attempts.every((attempt) => attempt.requestedUrl !== upgrade),
+    "a related upgrade document consumed the target benefit crawl budget",
+  );
+});
+
+Deno.test("card-specific required terms supersede redundant generic issuer MITC", async () => {
+  const product =
+    "https://www.hdfc.bank.in/credit-cards/swiggy-hdfc-bank-credit-card";
+  const productTerms =
+    `${product}/pdf/terms-and-conditions-swiggy-hdfc-bank-credit-card.pdf`;
+  const genericMitc =
+    "https://www.hdfc.bank.in/credit-cards/personal-mitc/mitc-in-english.pdf";
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "HDFC Bank",
+    primary: resource(
+      product,
+      `<h1>Swiggy HDFC Bank Credit Card</h1>
+       <a href="${genericMitc}">Most Important Terms and Conditions</a>
+       <a href="${productTerms}">Card terms and conditions</a>`,
+    ),
+    identityLabels: ["Swiggy", "Swiggy HDFC Bank Credit Card"],
+    fetchOfficialIssuerResource: async (input) =>
+      resource(
+        input.url,
+        input.url === productTerms
+          ? "Swiggy HDFC Bank Credit Card terms and conditions"
+          : "HDFC Bank general credit card terms",
+      ),
+  });
+
+  const genericAttempt = collected.attempts.find((attempt) =>
+    attempt.requestedUrl === genericMitc
+  );
+  assert(
+    genericAttempt === undefined,
+    `redundant generic MITC was still fetched: ${
+      JSON.stringify(genericAttempt)
+    }`,
+  );
+  assert(
+    collected.expectedRequiredSourceKeys.length === 1 &&
+      collected.expectedRequiredSourceKeys[0] ===
+        sourceIdentityDigest(productTerms),
+    "generic MITC remained in the exact required-source manifest",
+  );
+  assert(
+    assessCrawlCompleteness(
+      collected.attempts,
+      "2026-08-17T00:01:00.000Z",
+    ).complete,
+    "optional generic MITC failure made the card-specific crawl incomplete",
+  );
+});
+
 Deno.test("primary product scope excludes global header navigation from links and benefits", async () => {
   const product = "https://www.axis.bank.in/credit-cards/ace-credit-card";
   const productTerms = `${product}/terms-and-conditions`;
@@ -353,9 +629,140 @@ Deno.test("a title-only main shell does not hide product sections outside main",
   );
 });
 
+Deno.test("related-product cards below the target section never enter primary evidence", async () => {
+  const product =
+    "https://www.axis.bank.in/cards/credit-card/indianoil-axis-bank-credit-card";
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    primary: resource(
+      product,
+      `<main>
+        <h1>IndianOil Axis Bank Credit Card</h1>
+        <p>Enjoy 1% fuel surcharge waiver on fuel transactions.</p>
+        <section id="allCards" class="cards-for-you">
+          <h2>Related Products</h2>
+          <article><h3>Fibe Axis Bank Credit Card</h3>
+            <p>Get up to 3% cashback on every transaction.</p>
+          </article>
+        </section>
+      </main>`,
+    ),
+    identityLabels: ["IndianOil Axis Bank Credit Card"],
+    maximumLinks: 0,
+  });
+
+  const retained = collected.documents[0]?.text ?? "";
+  assert(
+    retained.includes("1% fuel surcharge waiver"),
+    "target evidence was lost",
+  );
+  assert(
+    !retained.includes("Fibe") && !retained.includes("3% cashback"),
+    "related-product evidence survived target scoping",
+  );
+  const proposals = await extractGroundedBenefitsV6(
+    collected.documents,
+    "benefits-v6",
+    "00000000-0000-4000-8000-000000000001",
+  );
+  assert(
+    proposals.length === 1 && proposals[0].category === "fuel",
+    "a related card manufactured a target benefit",
+  );
+});
+
+Deno.test("Sitefinity cache-buster queries are discarded before required PDF fetch", async () => {
+  const product =
+    "https://www.axis.bank.in/cards/credit-card/indianoil-axis-bank-credit-card";
+  const terms =
+    "https://www.axis.bank.in/docs/default-source/default-document-library/credit-cards/terms-and-conditions-indian-oil-credit-card.pdf";
+  const fetched: string[] = [];
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    primary: resource(
+      product,
+      `<h1>IndianOil Axis Bank Credit Card</h1>
+       <a href="${terms}?sfvrsn=213fdc9a_1">Terms and Conditions</a>`,
+    ),
+    identityLabels: ["IndianOil Axis Bank Credit Card"],
+    fetchOfficialIssuerResource: async (input) => {
+      fetched.push(input.url);
+      return resource(
+        input.url,
+        "IndianOil Axis Bank Credit Card terms. Enjoy 1% fuel surcharge waiver.",
+        "application/pdf",
+      );
+    },
+  });
+
+  assert(
+    fetched.length === 1 && fetched[0] === terms,
+    `cache buster was preserved or terms were not fetched: ${
+      fetched.join(",")
+    }`,
+  );
+  assert(
+    !collected.requiredSourceSelectionOverflow,
+    "a public cache-buster manufactured required-source overflow",
+  );
+});
+
+Deno.test("official embedded product JSON is discovered and retained as benefit evidence", async () => {
+  const product =
+    "https://www.sbicard.com/en/personal/credit-cards/sbi-card-elite.html";
+  const productJson =
+    "https://www.sbicard.com/json/templatedata/product/card/data/en/personal/sbi-card-elite.json";
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "SBI Card",
+    primary: resource(
+      product,
+      `<main><h1>SBI Card ELITE</h1>
+       <div data-component="productDetail"
+            data-path="/templatedata/product/card/data/en/personal/sbi-card-elite.json"></div>
+       </main>`,
+    ),
+    identityLabels: ["SBI Card ELITE"],
+    fetchOfficialIssuerResource: async (input) => {
+      assert(
+        input.url === productJson,
+        `unexpected product JSON URL ${input.url}`,
+      );
+      return resource(
+        input.url,
+        JSON.stringify({
+          title: "SBI Card ELITE",
+          benefits: [
+            "5X Reward Points on dining, departmental stores and grocery spends",
+            "1% Fuel Surcharge Waiver across all petrol pumps",
+            "2 complimentary domestic airport lounge visits every quarter",
+          ],
+        }),
+        "application/json",
+      );
+    },
+  });
+
+  assert(
+    collected.documents.some((document) => document.sourceUrl === productJson),
+    "the official product JSON was not retained",
+  );
+  const proposals = await extractGroundedBenefitsV6(
+    collected.documents,
+    "benefits-v6",
+    "00000000-0000-4000-8000-000000000001",
+  );
+  assert(
+    ["fuel", "points", "travel"].every((category) =>
+      proposals.some((proposal) => proposal.category === category)
+    ),
+    `embedded product benefits were not extracted: ${
+      proposals.map((item) => item.category).join(",")
+    }`,
+  );
+});
+
 Deno.test("large primary pages stop before supporting fetches once required evidence is invalid", async () => {
   const product = "https://www.idfcfirst.bank.in/credit-card/wealth";
-  const ownTerms = `${product}/terms-and-conditions`;
   let fetchCount = 0;
   const collected = await collectSupportingBenefitDocuments({
     issuer: "IDFC FIRST Bank",
@@ -364,8 +771,7 @@ Deno.test("large primary pages stop before supporting fetches once required evid
       `<h1>FIRST Wealth Credit Card</h1>${
         "public navigation ".repeat(40_000)
       }` +
-        `<a href="https://www.visameetandgreet.com/terms-and-conditions">Terms</a>` +
-        `<a href="${ownTerms}">Card terms</a>`,
+        `<a href="https://www.visameetandgreet.com/terms-and-conditions">Terms</a>`,
     ),
     identityLabels: ["Wealth", "FIRST Wealth Credit Card"],
     fetchOfficialIssuerResource: async (input) => {
@@ -685,13 +1091,12 @@ Deno.test("supporting crawl follows relevant official links to depth two and ret
   );
   assert(documents.length === 5, "primary/supporting evidence was lost");
   assert(
-    attempts.length === 6 &&
-      attempts.some((attempt) =>
-        attempt.role === "required_supporting" &&
-        attempt.status === "failed" &&
-        attempt.requestedUrl === "https://evil.example/fees"
+    attempts.length === 5 &&
+      attempts.slice(1).every((attempt) =>
+        attempt.status === "success" &&
+        !attempt.requestedUrl.startsWith("https://evil.example/")
       ),
-    "successful or rejected required source attempts were not retained",
+    "issuer-owned successes were lost or a redundant external link entered the manifest",
   );
   const pdfDocument = documents.find((document) => document.sourceUrl === pdf);
   assert(

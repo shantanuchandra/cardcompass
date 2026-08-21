@@ -172,6 +172,28 @@ test("expected credit-card assessment ignores unrelated debit-card body labels",
   assert.equal(assessment.identity?.cardName, "Zenith Plus");
 });
 
+test("privacy-minimized card prose keeps grammar out of product identity", () => {
+  const expected = cardDiscovery.assessOfficialCardIdentity(
+    [
+      "Swiggy HDFC Bank Credit Card terms and benefits.",
+      "Following transactions using Swiggy HDFC Bank Credit Card qualify.",
+      "Cashback earned with the co-branded Card appears as statement credit.",
+      "The Annual Fee of the card is Rs. 4,999 plus taxes.",
+    ].join("\n"),
+    "HDFC Bank",
+    ["Swiggy", "Swiggy HDFC Bank Credit Card"],
+  );
+  assert.equal(expected.status, "match");
+  assert.deepEqual(expected.candidateKeys, ["swiggy"]);
+
+  const sibling = cardDiscovery.assessOfficialCardIdentity(
+    "Swiggy HDFC Bank Credit Card terms. If you opt for the Swiggy BLCK Card, different fees apply.",
+    "HDFC Bank",
+    ["Swiggy", "Swiggy HDFC Bank Credit Card"],
+  );
+  assert.equal(sibling.status, "ambiguous");
+});
+
 test("superscript plus and written Plus identify one Zenith+ product", () => {
   const assessment = cardDiscovery.assessOfficialCardIdentity(
     `<title>Apply for Zenith⁺ Plus Metal Credit Card | AU Small Finance Bank</title>

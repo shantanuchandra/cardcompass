@@ -79,6 +79,65 @@ function joinBytes(parts) {
   return joined;
 }
 
+function pdfWithHexText(value) {
+  const hex = [...new TextEncoder().encode(value)].map((byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
+  const content = `BT /F1 12 Tf 72 720 Td <${hex}> Tj ET`;
+  const objects = [
+    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+    "4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\nendobj\n",
+    `5 0 obj\n<< /Length ${content.length} >>\nstream\n${content}\nendstream\nendobj\n`,
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [];
+  for (const object of objects) {
+    offsets.push(new TextEncoder().encode(pdf).length);
+    pdf += object;
+  }
+  const xrefOffset = new TextEncoder().encode(pdf).length;
+  pdf += "xref\n0 6\n0000000000 65535 f \n";
+  for (const offset of offsets) {
+    pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf +=
+    `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return new TextEncoder().encode(pdf);
+}
+
+function pdfWithHexTextLines(values) {
+  const operators = values.map((value, index) => {
+    const hex = [...new TextEncoder().encode(value)].map((byte) =>
+      byte.toString(16).padStart(2, "0")
+    ).join("");
+    return `${index === 0 ? "72 720 Td" : "0 -18 Td"} <${hex}> Tj`;
+  }).join(" ");
+  const content = `BT /F1 12 Tf ${operators} ET`;
+  const objects = [
+    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+    "4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\nendobj\n",
+    `5 0 obj\n<< /Length ${content.length} >>\nstream\n${content}\nendstream\nendobj\n`,
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [];
+  for (const object of objects) {
+    offsets.push(new TextEncoder().encode(pdf).length);
+    pdf += object;
+  }
+  const xrefOffset = new TextEncoder().encode(pdf).length;
+  pdf += "xref\n0 6\n0000000000 65535 f \n";
+  for (const offset of offsets) {
+    pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf +=
+    `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return new TextEncoder().encode(pdf);
+}
+
 async function rejectsWith(input, code) {
   await assert.rejects(
     () => fetchOfficialIssuerResource(input),
@@ -113,6 +172,46 @@ test("extracts benefit text from safely fetched PDF bytes", async () => {
   assert.match(text, /2 complimentary lounge visits per quarter/i);
 });
 
+test("extracts hex-encoded text from a bounded issuer PDF", async () => {
+  const pdf = pdfWithHexText(
+    "Swiggy HDFC Bank Credit Card earns 10% cashback on eligible spends.",
+  );
+  const text = await officialResourceText({
+    submittedUrl: officialUrl,
+    finalUrl: officialUrl,
+    canonicalUrl: officialUrl,
+    contentType: "application/pdf",
+    bytes: pdf,
+    text: "",
+    contentHash: "pdf-hash",
+    retrievedAt: "2026-08-17T00:00:00.000Z",
+  });
+
+  assert.match(text, /Swiggy HDFC Bank Credit Card earns 10% cashback/i);
+});
+
+test("PDF extraction preserves table row boundaries before privacy and benefit parsing", async () => {
+  const pdf = pdfWithHexTextLines([
+    "Swiggy HDFC Bank Credit Card value chart",
+    "Monthly spends Rs 15000",
+    "Annual savings Rs 18000",
+    "Earn 10% cashback up to Rs 1500 per month",
+  ]);
+  const text = await officialResourceText({
+    submittedUrl: officialUrl,
+    finalUrl: officialUrl,
+    canonicalUrl: officialUrl,
+    contentType: "application/pdf",
+    bytes: pdf,
+    text: "",
+    contentHash: "pdf-hash",
+    retrievedAt: "2026-08-17T00:00:00.000Z",
+  });
+
+  assert.match(text, /value chart\nMonthly spends/);
+  assert.match(text, /Annual savings[^\n]*\nEarn 10% cashback/);
+});
+
 test("PDF extraction reports explicit overflow instead of slicing a late fact", async () => {
   const filler = "x".repeat(1_000_100);
   const lateFact = "Late benefit earns 17% cashback on travel.";
@@ -135,9 +234,40 @@ test("PDF extraction reports explicit overflow instead of slicing a late fact", 
   );
 });
 
+test("PDF extraction permits bounded content streams above the retained text budget", async () => {
+  const first = await deflateBytes(
+    `q ${"0 ".repeat(650_000)} BT (Earn 5% cashback on dining.) Tj ET Q`,
+  );
+  const second = await deflateBytes(
+    `q ${"1 ".repeat(650_000)} BT (Get 2 lounge visits per quarter.) Tj ET Q`,
+  );
+  const encode = (value) => new TextEncoder().encode(value);
+  const pdf = joinBytes([
+    encode("%PDF-1.4\n<</Filter /FlateDecode>>\nstream\n"),
+    first,
+    encode("\nendstream\n<</Filter /FlateDecode>>\nstream\n"),
+    second,
+    encode("\nendstream\n%%EOF"),
+  ]);
+
+  const text = await officialResourceText({
+    submittedUrl: officialUrl,
+    finalUrl: officialUrl,
+    canonicalUrl: officialUrl,
+    contentType: "application/pdf",
+    bytes: pdf,
+    text: "",
+    contentHash: "pdf-hash",
+    retrievedAt: "2026-08-17T00:00:00.000Z",
+  });
+
+  assert.match(text, /5% cashback on dining/i);
+  assert.match(text, /2 lounge visits per quarter/i);
+});
+
 test("PDF extraction bounds aggregate decompressed bytes across every stream", async () => {
-  const first = await deflateBytes("x".repeat(600_000));
-  const second = await deflateBytes("y".repeat(600_000));
+  const first = await deflateBytes("x".repeat(4_100_000));
+  const second = await deflateBytes("y".repeat(4_100_000));
   const encode = (value) => new TextEncoder().encode(value);
   const pdf = joinBytes([
     encode("%PDF-1.4\n<</Filter /FlateDecode>>\nstream\n"),
@@ -148,17 +278,16 @@ test("PDF extraction bounds aggregate decompressed bytes across every stream", a
   ]);
 
   await assert.rejects(
-    () =>
-      officialResourceText({
-        submittedUrl: officialUrl,
-        finalUrl: officialUrl,
-        canonicalUrl: officialUrl,
-        contentType: "application/pdf",
-        bytes: pdf,
-        text: "",
-        contentHash: "pdf-hash",
-        retrievedAt: "2026-08-17T00:00:00.000Z",
-      }),
+    () => officialResourceText({
+      submittedUrl: officialUrl,
+      finalUrl: officialUrl,
+      canonicalUrl: officialUrl,
+      contentType: "application/pdf",
+      bytes: pdf,
+      text: "",
+      contentHash: "pdf-hash",
+      retrievedAt: "2026-08-17T00:00:00.000Z",
+    }),
     (error) => error instanceof Error && error.message === "oversized",
   );
 });
@@ -243,24 +372,34 @@ test("sanitizes malformed redirect locations into the redirect rejection code", 
   );
 });
 
-test("allows HTML, XHTML, and PDF by default while reserving XML for sitemap fetches", async () => {
+test("allows bounded issuer documents including product JSON while reserving XML for sitemaps", async () => {
   for (
     const contentType of [
       "text/html",
       "application/xhtml+xml",
       "application/pdf",
+      "application/json",
     ]
   ) {
     const result = await fetchOfficialIssuerResource({
       issuer,
       url: officialUrl,
       fetchImpl: async () =>
-        response("issuer content", {
+        response(contentType === "application/json"
+          ? JSON.stringify({ title: "White Reserve", benefit: "Get 10% cashback" })
+          : "issuer content", {
           headers: { "content-type": contentType },
         }),
       resolveHost: publicDns,
     });
     assert.equal(result.contentType, contentType);
+    if (contentType === "application/json") {
+      assert.match(result.text, /White Reserve/);
+      assert.match(result.text, /Get 10% cashback/);
+      const repeated = await officialResourceText(result);
+      assert.match(repeated, /White Reserve/);
+      assert.match(repeated, /Get 10% cashback/);
+    }
   }
   await rejectsWith(
     {
@@ -289,18 +428,6 @@ test("allows HTML, XHTML, and PDF by default while reserving XML for sitemap fet
   });
   assert.equal(sitemap.contentType, "application/xml");
   assert.match(sitemapAccept, /application\/xml/);
-  await rejectsWith(
-    {
-      issuer,
-      url: officialUrl,
-      fetchImpl: async () =>
-        response('{"not":"issuer content"}', {
-          headers: { "content-type": "application/json" },
-        }),
-      resolveHost: publicDns,
-    },
-    "unsupported_content",
-  );
 });
 
 test("enforces the eight-megabyte declared and actual response limits", async () => {

@@ -28,6 +28,7 @@ import {
 
 const MAX_SUPPORTING_LINKS = 8;
 const MAX_SUPPORTING_DEPTH = 2;
+const MAX_SUPPORTING_RESOURCE_BYTES = 2 * 1024 * 1024;
 const MAX_LARGE_INCOMPLETE_PRIMARY_CHARS = 512 * 1024;
 const pilotReplayFunctionalQueryKeys = new Set([
   "document",
@@ -35,11 +36,13 @@ const pilotReplayFunctionalQueryKeys = new Set([
   "locale",
   "version",
 ]);
-const trackingQueryKey = /^(?:utm_.+|gclid|fbclid)$/i;
+const trackingQueryKey = /^(?:utm_.+|gclid|fbclid|sfvrsn)$/i;
 const relevantPath =
   /(?:credit[-_/ ]?cards?|cards?[-_/ ]?credit|benefits?|fees?|charges?|rewards?|terms?|conditions?|mitc)(?:$|[/?=&_.-])/i;
 const unsafePath =
   /(?:^|[/?=&_.-])(?:login|apply|application|track)(?:$|[/?=&_.-])/i;
+const relatedProductDocumentPath =
+  /(?:^|[/?=&_.-])(?:card[-_ ]?member[-_ ]?agreement|upgrade|conversion|migration)(?:$|[/?=&_.-])/i;
 const anchorPattern =
   /<a\b[^>]*\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a\s*>/gi;
 const requiredSourcePattern =
@@ -56,6 +59,10 @@ const semanticChromePattern =
 const semanticChromeRolePattern =
   /<([a-z][a-z0-9:-]*)\b[^>]*\brole\s*=\s*(?:"(?:banner|navigation|contentinfo|complementary)"|'(?:banner|navigation|contentinfo|complementary)'|(?:banner|navigation|contentinfo|complementary))[^>]*>[\s\S]*?<\/\1\s*>/gi;
 const mainContentPattern = /<main\b[^>]*>[\s\S]*?<\/main\s*>/gi;
+const relatedProductsBoundary =
+  /<(?:section\b[^>]*\bid\s*=\s*(?:"allCards"|'allCards'|allCards)[^>]*|h[1-6]\b[^>]*>\s*related\s+products\b)/i;
+const productDataComponentPattern =
+  /<[^>]*\bdata-component\s*=\s*(?:"productDetail"|'productDetail'|productDetail)[^>]*>/gi;
 
 const exactSupportingSources: Record<string, Record<string, string[]>> = {
   "SBI Card": {
@@ -160,7 +167,46 @@ function productScopedBenefitHtml(
     containsTargetProductIdentity(section, identityLabels) &&
     searchableHtmlText(section).length >= 80
   );
-  return targetMain ?? cleaned;
+  const productScope = targetMain ?? cleaned;
+  const relatedBoundary = productScope.search(relatedProductsBoundary);
+  return relatedBoundary > 0
+    ? productScope.slice(0, relatedBoundary)
+    : productScope;
+}
+
+function productScopedBenefitText(
+  text: string,
+  identityLabels: readonly string[],
+): string {
+  const fragments = text.split(/(?<=[.!?])\s+|\n+/).map((fragment) =>
+    fragment.replace(/\s+/g, " ").trim()
+  ).filter(Boolean);
+  if (fragments.length < 2) return text;
+  const targetIndexes = fragments.flatMap((fragment, index) =>
+    containsTargetProductIdentity(fragment, identityLabels) ? [index] : []
+  );
+  if (
+    targetIndexes.length === 0 ||
+    targetIndexes.length * 2 >= fragments.length
+  ) return text;
+  const retained = new Set<number>();
+  for (const index of targetIndexes) {
+    for (
+      let adjacent = Math.max(0, index - 2);
+      adjacent <= Math.min(fragments.length - 1, index + 2);
+      adjacent += 1
+    ) retained.add(adjacent);
+  }
+  return fragments.filter((_fragment, index) => retained.has(index)).join("\n");
+}
+
+function containsCompetingCreditCardPhrase(
+  text: string,
+  identityLabels: readonly string[],
+): boolean {
+  return [...text.matchAll(
+    /\b(?:[A-Z][A-Za-z0-9+&'-]*\s+){1,6}(?:Credit\s+)?Card\b/g,
+  )].some((match) => !containsTargetProductIdentity(match[0], identityLabels));
 }
 
 function exactSupportingUrls(issuer: string, labels: string[]): string[] {
@@ -180,6 +226,8 @@ type SourceCandidate = {
   anchorText: string;
   requiredHint: boolean;
   rejectionCode?: "unapproved_query" | "invalid_source_url";
+  unapprovedExternalHost?: boolean;
+  cardScoped?: boolean;
 };
 
 function requiredSourceHint(href: string, anchorText: string): boolean {
@@ -196,6 +244,61 @@ function sourceRole(
       candidate.requiredHint
     ? "required_supporting"
     : "supporting";
+}
+
+function normalizedSourcePath(value: string): string {
+  try {
+    return new URL(value).pathname.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  } catch {
+    return "";
+  }
+}
+
+function isCentralSupportRequiredSource(value: string): boolean {
+  try {
+    const path = new URL(value).pathname;
+    return centralSupportPath.test(path);
+  } catch {
+    return false;
+  }
+}
+
+function sourcePathMatchesIdentity(
+  value: string,
+  labels: readonly string[],
+): boolean {
+  const path = normalizedSourcePath(value);
+  return path.length > 0 && labels.some((label) => {
+    const tokens = identityTokens([label]);
+    return tokens.length > 0 && tokens.every((token) => path.includes(token));
+  });
+}
+
+function containsGlyphSpacedIdentity(
+  value: string,
+  labels: readonly string[],
+): boolean {
+  return labels.some((label) => {
+    const tokens = identityTokens([label]);
+    return tokens.length > 0 && tokens.every((token) => {
+      const pattern = [...token].map((character) =>
+        character.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      ).join("[^a-z0-9]*");
+      return new RegExp(`(?:^|[^a-z0-9])${pattern}(?:$|[^a-z0-9])`, "i")
+        .test(value);
+    });
+  });
+}
+
+function exactPdfSupportingIdentity(
+  resource: OfficialFetchResult,
+  text: string,
+  labels: readonly string[],
+): boolean {
+  if (resource.contentType !== "application/pdf") return false;
+  const sourceUrl = resource.finalResourceUrl ?? resource.finalUrl;
+  return sourcePathMatchesIdentity(sourceUrl, labels) &&
+    containsGlyphSpacedIdentity(text, labels);
 }
 
 export function canonicalRequiredReplayAnchorText(value: string): string {
@@ -437,12 +540,21 @@ function linkedUrls(
         centralCardRequiredPath.test(candidatePath) ||
         centralSupportPath.test(candidatePath) || crossHost);
     if (decisiveRequired && !contextualRequired) continue;
+    // Agreements and migration/upgrade FAQs describe account operation or a
+    // different product transition, not the current card's benefit contract.
+    // They remain eligible only when independently classified as required
+    // terms/fees evidence.
+    if (!decisiveRequired && relatedProductDocumentPath.test(candidatePath)) {
+      continue;
+    }
     if (contextualRequired && unsafePath.test(raw)) {
       candidates.set(`rejected:${raw}`, {
         url: raw,
         anchorText,
         requiredHint: true,
         rejectionCode: "invalid_source_url",
+        cardScoped: sameProductPath || namesTargetProduct,
+        ...(crossHost ? { unapprovedExternalHost: true } : {}),
       });
       continue;
     }
@@ -469,6 +581,8 @@ function linkedUrls(
         url,
         anchorText: anchorTexts.join(" ").slice(0, 256),
         requiredHint: existing?.requiredHint === true || decisiveRequired,
+        cardScoped: existing?.cardScoped === true || sameProductPath ||
+          namesTargetProduct,
       });
     } catch (error) {
       const code = sanitizedSourceErrorCode(error);
@@ -479,12 +593,63 @@ function linkedUrls(
         rejectionCode: code === "unapproved_query"
           ? "unapproved_query"
           : "invalid_source_url",
+        cardScoped: sameProductPath || namesTargetProduct,
+        ...(crossHost ? { unapprovedExternalHost: true } : {}),
       });
     }
   }
-  return [...candidates.values()].sort((left, right) =>
-    left.url.localeCompare(right.url)
+  for (const match of html.matchAll(productDataComponentPattern)) {
+    const tag = match[0];
+    const path = tag.match(
+      /\bdata-path\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i,
+    );
+    const rawPath = path?.[1] ?? path?.[2] ?? path?.[3] ?? "";
+    if (
+      !/^\/templatedata\/product\/card\/data\/[a-z0-9/_-]+\.json$/i.test(
+        rawPath,
+      )
+    ) continue;
+    try {
+      const raw = new URL(`/json${rawPath}`, baseUrl).toString();
+      if (
+        new URL(raw).hostname.toLowerCase() !==
+          new URL(baseUrl).hostname.toLowerCase()
+      ) continue;
+      const url = canonicalOfficialRequestUrl(
+        issuer,
+        raw,
+        approvedStoredQueryParameters(raw),
+      );
+      candidates.set(url, {
+        url,
+        anchorText: "product benefits",
+        requiredHint: false,
+        cardScoped: true,
+      });
+    } catch {
+      // An invalid embedded component path is not an operator-authored terms
+      // declaration, so it cannot manufacture required-source overflow.
+    }
+  }
+  const selected = [...candidates.values()];
+  const hasIssuerOwnedRequiredSource = selected.some((candidate) =>
+    !candidate.rejectionCode && !candidate.unapprovedExternalHost &&
+    sourceRole(candidate, false) === "required_supporting"
   );
+  const issuerOwned = selected.filter((candidate) =>
+    !(hasIssuerOwnedRequiredSource && candidate.rejectionCode &&
+      candidate.unapprovedExternalHost)
+  );
+  const hasCardScopedRequiredSource = issuerOwned.some((candidate) =>
+    !candidate.rejectionCode && candidate.cardScoped === true &&
+    sourceRole(candidate, false) === "required_supporting"
+  );
+  return issuerOwned.filter((candidate) =>
+    !(hasCardScopedRequiredSource && candidate.cardScoped !== true &&
+      !candidate.rejectionCode &&
+      !isCentralSupportRequiredSource(candidate.url) &&
+      sourceRole(candidate, false) === "required_supporting")
+  ).sort((left, right) => left.url.localeCompare(right.url));
 }
 
 async function benefitDocument(
@@ -632,6 +797,7 @@ export async function collectSupportingBenefitDocuments(
       url,
       anchorText: "curated exact source",
       requiredHint: true,
+      cardScoped: true,
     })),
     ...linkedUrls(
       input.issuer,
@@ -789,7 +955,7 @@ export async function collectSupportingBenefitDocuments(
           issuer: input.issuer,
           url: current.url,
           contentPurpose: "document",
-          maxBytes: 1024 * 1024,
+          maxBytes: MAX_SUPPORTING_RESOURCE_BYTES,
           deadlineAt: input.requestDeadlineAt,
           allowedQueryParameters: approvedStoredQueryParameters(current.url),
           robotsCache,
@@ -799,7 +965,7 @@ export async function collectSupportingBenefitDocuments(
           issuer: input.issuer,
           url: current.url,
           contentPurpose: "document",
-          maxBytes: 1024 * 1024,
+          maxBytes: MAX_SUPPORTING_RESOURCE_BYTES,
           parserVersion: input.parserVersion ?? "benefits-v6",
           maxAttempts: 3,
           maxBackoffMs: 30_000,
@@ -881,12 +1047,39 @@ export async function collectSupportingBenefitDocuments(
       });
       continue;
     }
-    const identityAssessment = assessOfficialCardIdentity(
+    const exactResourceUrl = resource.finalResourceUrl ?? resource.canonicalUrl;
+    const fullIdentityAssessment = assessOfficialCardIdentity(
       resourceText,
       input.issuer,
       input.identityLabels,
+      exactResourceUrl,
     );
-    if (identityAssessment.status !== "match") {
+    // Once the complete bounded PDF proves one exact product, retain all its
+    // terms. Section scoping is only a conflict-recovery lane for issuer PDFs
+    // that also contain sibling-card material; it must not erase late tables.
+    const scopedResourceText = resource.contentType === "application/pdf"
+      ? fullIdentityAssessment.status === "match" &&
+          !containsCompetingCreditCardPhrase(resourceText, input.identityLabels)
+        ? resourceText
+        : productScopedBenefitText(resourceText, input.identityLabels)
+      : productScopedBenefitHtml(resourceText, input.identityLabels);
+    const identityAssessment = fullIdentityAssessment.status === "match"
+      ? fullIdentityAssessment
+      : assessOfficialCardIdentity(
+        scopedResourceText,
+        input.issuer,
+        input.identityLabels,
+        exactResourceUrl,
+      );
+    if (
+      identityAssessment.status !== "match" &&
+      !(identityAssessment.status === "unproven" &&
+        exactPdfSupportingIdentity(
+          resource,
+          resourceText,
+          input.identityLabels,
+        ))
+    ) {
       attempts.push({
         requestedUrl: current.url,
         finalUrl: resource.canonicalUrl,
@@ -912,9 +1105,6 @@ export async function collectSupportingBenefitDocuments(
         input.primary.canonicalUrl,
       )
       : [];
-    const scopedResourceText = resource.contentType === "application/pdf"
-      ? resourceText
-      : productScopedBenefitHtml(resourceText, input.identityLabels);
     const document = await benefitDocument(
       resource,
       current.url,

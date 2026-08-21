@@ -5,7 +5,8 @@
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "npm:@supabase/auth-js@2.95.0": "2.95.0",
-    "npm:@supabase/supabase-js@2.95.0": "2.95.0"
+    "npm:@supabase/supabase-js@2.95.0": "2.95.0",
+    "npm:unpdf@1.8.1": "1.8.1"
   },
   "jsr": {
     "@std/assert@1.0.19": {
@@ -87,6 +88,9 @@
     "undici-types@8.3.0": {
       "integrity": "sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ=="
     },
+    "unpdf@1.8.1": {
+      "integrity": "sha512-xkURhy2SoGpOIH0a1gLHNkASPIQYonadDJs2AQwPEfUakafeD9EA1WTWWsaR++gfTCXJpV27W7tU1nXuk82UKQ=="
+    },
     "ws@8.21.3": {
       "integrity": "sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw=="
     }
@@ -154,7 +158,8 @@
   "workspace": {
     "dependencies": [
       "jsr:@std/assert@1",
-      "npm:@supabase/supabase-js@2.95.0"
+      "npm:@supabase/supabase-js@2.95.0",
+      "npm:unpdf@1.8.1"
     ]
   }
 }
