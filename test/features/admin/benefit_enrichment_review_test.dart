@@ -488,6 +488,7 @@ Map<String, dynamic> _legacyConflictJobJson(int groupCount) => {
                     '00000000-0000-4000-8000-${(group + 1).toString().padLeft(12, '0')}',
                 'dedupeKey': 'current-$group',
                 'title': 'Current $group',
+                'rate': 5 + group,
               },
             ],
             'proposed': [
@@ -495,11 +496,13 @@ Map<String, dynamic> _legacyConflictJobJson(int groupCount) => {
                 'dedupeKey': 'candidate-$group-a',
                 'title': 'Candidate $group A',
                 'description': 'First terms for group $group',
+                'rate': 10 + group,
               },
               {
                 'dedupeKey': 'candidate-$group-b',
                 'title': 'Candidate $group B',
                 'description': 'Second terms for group $group',
+                'rate': 20 + group,
               },
             ],
           },
@@ -2033,6 +2036,291 @@ void main() {
   );
 
   test(
+    'repository rejects contradictory nested proposal aliases while mapping',
+    () async {
+      final staging = _jobJson['staging'] as Map<String, dynamic>;
+      final extraction = staging['extracted_data'] as Map<String, dynamic>;
+      final diff = extraction['diff'] as Map<String, dynamic>;
+      final addition =
+          (diff['additions'] as List).single as Map<String, dynamic>;
+
+      for (final carrier in [
+        {...addition, 'dedupe_key': 'contradictory-dedupe'},
+        {...addition, 'dedupe_key': ''},
+        {
+          ...addition,
+          'valueConfig': {'cap': 500},
+          'value_config': {'cap': 900},
+        },
+        {
+          ...addition,
+          'valueConfig': {'cap': 500},
+          'value_config': null,
+        },
+      ]) {
+        final malformed = {
+          ..._jobJson,
+          'staging': {
+            ...staging,
+            'extracted_data': {
+              ...extraction,
+              'diff': {
+                ...diff,
+                'additions': [carrier],
+              },
+            },
+          },
+        };
+        final repository = AdminCatalogRepository(
+          _FakeApi(
+            AdminCatalogEntryResponse(200, {
+              'items': [malformed],
+              'counts': const {
+                'total': 1,
+                'by_status': <String, int>{},
+                'by_run_mode': <String, int>{},
+              },
+              'page': 1,
+              'limit': 25,
+              'has_more': false,
+            }),
+          ),
+        );
+
+        await expectLater(
+          repository.loadReviewPage(),
+          throwsA(isA<FormatException>()),
+        );
+      }
+
+      final exactCarrier = {
+        ...addition,
+        'dedupe_key': addition['dedupeKey'],
+        'valueConfig': {'cap': 500},
+        'value_config': {'cap': 500},
+      };
+      final exact = await AdminCatalogRepository(
+        _FakeApi(
+          AdminCatalogEntryResponse(200, {
+            'items': [
+              {
+                ..._jobJson,
+                'staging': {
+                  ...staging,
+                  'extracted_data': {
+                    ...extraction,
+                    'diff': {
+                      ...diff,
+                      'additions': [exactCarrier],
+                    },
+                  },
+                },
+              },
+            ],
+            'counts': const {
+              'total': 1,
+              'by_status': <String, int>{},
+              'by_run_mode': <String, int>{},
+            },
+            'page': 1,
+            'limit': 25,
+            'has_more': false,
+          }),
+        ),
+      ).loadReviewPage();
+      expect(
+        exact.items.single.staging.extractedData.diff.additions.single,
+        isA<BenefitProposal>()
+            .having((proposal) => proposal.dedupeKey, 'dedupe', 'dining-credit')
+            .having((proposal) => proposal.valueConfig['cap'], 'cap', 500),
+      );
+    },
+  );
+
+  test('repository rejects contradictory top-level decision aliases', () async {
+    final staging = _jobJson['staging'] as Map<String, dynamic>;
+    for (final decision in [
+      {
+        'action': 'approve',
+        'benefit_id': '11111111-1111-4111-8111-111111111111',
+        'current_benefit_id': '22222222-2222-4222-8222-222222222222',
+        'benefit': {'title': 'Dining credit'},
+      },
+      {
+        'action': 'approve',
+        'dedupe_key': 'dining-credit',
+        'dedupeKey': 'contradictory-dedupe',
+        'benefit': {'title': 'Dining credit'},
+      },
+      {
+        'action': 'edit',
+        'edited_benefit': {'title': 'Edited dining credit', 'rate': 12},
+        'editedBenefit': {'title': 'Contradictory edit', 'rate': 20},
+      },
+    ]) {
+      final repository = AdminCatalogRepository(
+        _FakeApi(
+          AdminCatalogEntryResponse(200, {
+            'items': [
+              {
+                ..._jobJson,
+                'staging': {
+                  ...staging,
+                  'benefit_decisions': [decision],
+                },
+              },
+            ],
+            'counts': const {
+              'total': 1,
+              'by_status': <String, int>{},
+              'by_run_mode': <String, int>{},
+            },
+            'page': 1,
+            'limit': 25,
+            'has_more': false,
+          }),
+        ),
+      );
+      await expectLater(
+        repository.loadReviewPage(),
+        throwsA(isA<FormatException>()),
+      );
+    }
+
+    final exact = BenefitReviewDecision.fromJson({
+      'action': 'edit',
+      'benefit_id': '11111111-1111-4111-8111-111111111111',
+      'current_benefit_id': '11111111-1111-4111-8111-111111111111',
+      'dedupe_key': 'dining-credit',
+      'dedupeKey': 'dining-credit',
+      'edited_benefit': {'title': 'Edited dining credit', 'rate': 12},
+      'editedBenefit': {'title': 'Edited dining credit', 'rate': 12},
+    });
+    expect(exact.liveBenefitId, '11111111-1111-4111-8111-111111111111');
+    expect(exact.dedupeKey, 'dining-credit');
+    expect(exact.editedBenefit?.rate, 12);
+  });
+
+  test(
+    'Flutter reads null-padded decision shapes emitted by the Edge presenter',
+    () {
+      final emptyPresentedBenefit = <String, dynamic>{
+        'valueConfig': {
+          'restrictions': <String>[],
+          'exclusions': {
+            'additional': {'source_terms': <String>[]},
+            'categories': <String>[],
+            'days': <String>[],
+            'mcc_codes': <String>[],
+            'merchants': <String>[],
+            'transaction_types': <String>[],
+          },
+        },
+        'partners': <String>[],
+        'regions': <String>[],
+        'exclusions': {
+          'additional': {'source_terms': <String>[]},
+          'categories': <String>[],
+          'days': <String>[],
+          'mcc_codes': <String>[],
+          'merchants': <String>[],
+          'transaction_types': <String>[],
+        },
+        'sourceUrl': null,
+        'sourceUrls': <String>[],
+        'sourceIdentities': <String>[],
+        'sourceExcerpt': null,
+        'contentHash': null,
+        'parserVersion': null,
+        'confidence': <String, dynamic>{},
+        'evidence': <String, dynamic>{},
+        'warnings': <String>[],
+      };
+
+      Map<String, dynamic> presenterDecision({
+        required String action,
+        String? benefitId,
+        String? dedupeKey,
+        Map<String, dynamic>? benefit,
+        Map<String, dynamic>? current,
+      }) => <String, dynamic>{
+        'action': action,
+        'reason': null,
+        'change_type': null,
+        'dedupe_key': dedupeKey,
+        'condition_hash': null,
+        'proposal_index': null,
+        'benefit_id': benefitId,
+        'existing_benefit_id': null,
+        'display_priority': null,
+        'is_primary': null,
+        'benefit': benefit ?? emptyPresentedBenefit,
+        'proposed': emptyPresentedBenefit,
+        'edited_benefit': emptyPresentedBenefit,
+        'current': current ?? emptyPresentedBenefit,
+      };
+
+      final canonical = BenefitReviewDecision.fromJson(
+        presenterDecision(
+          action: 'approve',
+          dedupeKey: 'canonical:airport-credit',
+          benefit: {
+            ...emptyPresentedBenefit,
+            'dedupeKey': 'canonical:airport-credit',
+            'title': 'Airport credit',
+          },
+        ),
+      );
+      final current = BenefitReviewDecision.fromJson(
+        presenterDecision(
+          action: 'reject',
+          benefitId: _v6LiveModificationId,
+          current: {
+            ...emptyPresentedBenefit,
+            'liveBenefitId': _v6LiveModificationId,
+            'title': 'Current airport credit',
+          },
+        ),
+      );
+      final global = BenefitReviewDecision.fromJson(
+        presenterDecision(action: 'reject'),
+      );
+
+      expect(canonical.liveBenefitId, isNull);
+      expect(canonical.dedupeKey, 'canonical:airport-credit');
+      expect(canonical.editedBenefit, isNull);
+      expect(current.liveBenefitId, _v6LiveModificationId);
+      expect(current.dedupeKey, isNull);
+      expect(current.editedBenefit, isNull);
+      expect(global.liveBenefitId, isNull);
+      expect(global.dedupeKey, isNull);
+      expect(global.editedBenefit, isNull);
+    },
+  );
+
+  test(
+    'decision presenter aliases reject mixed absent and meaningful values',
+    () {
+      expect(
+        () => BenefitReviewDecision.fromJson({
+          'action': 'reject',
+          'benefit_id': null,
+          'current_benefit_id': _v6LiveModificationId,
+        }),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => BenefitReviewDecision.fromJson({
+          'action': 'edit',
+          'edited_benefit': <String, dynamic>{},
+          'editedBenefit': {'title': 'Edited airport credit', 'rate': 12},
+        }),
+        throwsA(isA<FormatException>()),
+      );
+    },
+  );
+
+  test(
     'repository turns an expired admin session into an authorization requirement',
     () async {
       final repository = AdminCatalogRepository(
@@ -2187,14 +2475,27 @@ void main() {
           benefit: conflicts[1].proposed[0],
         ),
       ]);
+      await expectRejected([
+        BenefitReviewDecision(
+          action: 'approve',
+          benefit: conflicts[0].proposed[0],
+          proposed: conflicts[0].proposed[1],
+        ),
+        BenefitReviewDecision(
+          action: 'reject',
+          benefit: conflicts[1].proposed[0],
+        ),
+      ]);
 
       final api = _FakeApi(
         AdminCatalogEntryResponse(200, const {'success': true}),
       );
       await AdminCatalogRepository(api).editApprove(item, [
         BenefitReviewDecision(
-          action: 'approve',
+          action: 'edit',
           benefit: conflicts[0].proposed[1],
+          proposed: conflicts[0].proposed[1],
+          editedBenefit: conflicts[0].proposed[1].copyWith(rate: 21),
         ),
         BenefitReviewDecision(
           action: 'reject',
@@ -2214,8 +2515,12 @@ void main() {
       final decisions = body['decisions'] as List;
       expect(decisions, hasLength(4));
       expect(decisions[0], containsPair('dedupe_key', 'safe-addition'));
-      expect(decisions[1], containsPair('action', 'approve'));
+      expect(decisions[1], containsPair('action', 'edit'));
       expect(decisions[1], containsPair('benefit', isA<Map>()));
+      expect(
+        decisions[1],
+        containsPair('edited_benefit', containsPair('rate', 21)),
+      );
       expect(decisions[2], containsPair('action', 'reject'));
       expect(decisions[2], containsPair('benefit', isA<Map>()));
       expect(decisions[3], containsPair('action', 'reject'));
@@ -2271,6 +2576,30 @@ void main() {
     },
   );
 
+  test(
+    'repository rejects contradictory carriers before a normal edit',
+    () async {
+      final item = BenefitEnrichmentReview.fromJson(_jobJson);
+      final proposal = item.staging.extractedData.diff.additions.single;
+      final api = _FakeApi(
+        AdminCatalogEntryResponse(200, const {'success': true}),
+      );
+
+      await expectLater(
+        AdminCatalogRepository(api).editApprove(item, [
+          BenefitReviewDecision(
+            action: 'edit',
+            benefit: proposal,
+            proposed: proposal.copyWith(title: 'Contradictory original'),
+            editedBenefit: proposal.copyWith(title: 'Reviewed title', rate: 11),
+          ),
+        ]),
+        throwsA(isA<AdminCatalogRequestFailed>()),
+      );
+      expect(api.bodies, isEmpty);
+    },
+  );
+
   test('repository submits exact v6 retirement and edit identifiers', () async {
     final api = _FakeApi(
       AdminCatalogEntryResponse(200, const {'success': true}),
@@ -2303,7 +2632,7 @@ void main() {
     final decision = item.staging.decisions.single;
     await repository.editApprove(item, [
       decision.withEditedBenefit(
-        decision.proposed!.copyWith(description: 'Reviewed wording'),
+        decision.proposed!.copyWith(description: 'Reviewed wording', rate: 12),
       ),
     ]);
     final editDecision = (api.bodies.single['decisions'] as List).single as Map;
@@ -2313,6 +2642,7 @@ void main() {
       (editDecision['edited_benefit'] as Map)['benefitId'],
       'card-benefit-v2:$_v6CardId:${'a' * 64}',
     );
+    expect((editDecision['edited_benefit'] as Map)['rate'], 12);
     expect(editDecision, isNot(contains('change_type')));
   });
 
@@ -2367,6 +2697,70 @@ void main() {
       expect(
         openedUrls.single,
         Uri.parse('https://issuer.example/cards/astra'),
+      );
+    },
+  );
+
+  testWidgets(
+    'normal editor requires and submits a typed material rate change',
+    (tester) async {
+      tester.view.physicalSize = const Size(1000, 2000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final item = BenefitEnrichmentReview.fromJson(_v6JobJson);
+      final repository = _FakeRepository(
+        BenefitEnrichmentReviewPage.fromJson(const {
+          'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+          'page': 1,
+          'limit': 25,
+          'has_more': false,
+        }).copyWith(items: [item]),
+      );
+      await _pumpPanel(tester, repository);
+
+      final edit = find.text('Edit proposed changes');
+      await tester.ensureVisible(edit);
+      await tester.tap(edit);
+      await tester.pumpAndSettle();
+      final submit = find.widgetWithText(FilledButton, 'Approve edit');
+      expect(find.byKey(const ValueKey('normal-edit-rate')), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('normal-edit-title')),
+        'Reviewed dining points',
+      );
+      await tester.pump();
+      expect(tester.widget<FilledButton>(submit).onPressed, isNull);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('normal-edit-rate')),
+        'not-a-number',
+      );
+      await tester.pump();
+      expect(find.text('Enter a finite number.'), findsOneWidget);
+      expect(tester.widget<FilledButton>(submit).onPressed, isNull);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('normal-edit-rate')),
+        '12',
+      );
+      await tester.pump();
+      expect(tester.widget<FilledButton>(submit).onPressed, isNotNull);
+      await tester.tap(submit);
+      await tester.pumpAndSettle();
+
+      final decision = repository.submittedDecisions!.single;
+      expect(decision.action, 'edit');
+      expect(decision.editedBenefit?.rate, 12);
+      expect(decision.editedBenefit?.title, 'Reviewed dining points');
+      expect(
+        decision.editedBenefit?.conditionHash,
+        decision.proposed?.conditionHash,
+      );
+      expect(
+        decision.editedBenefit?.sourceIdentity,
+        decision.proposed?.sourceIdentity,
       );
     },
   );
@@ -2468,6 +2862,11 @@ void main() {
         find.byKey(const ValueKey('conflict-title-1')),
         'Reviewed candidate 1',
       );
+      expect(find.byKey(const ValueKey('conflict-rate-1')), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const ValueKey('conflict-rate-1')),
+        '12.5',
+      );
       await select(2, 'Reject alternative — Candidate 2 B');
       await tester.enterText(
         find.byKey(const ValueKey('conflict-reason-2')),
@@ -2499,6 +2898,7 @@ void main() {
       expect(decisions[1].action, 'edit');
       expect(decisions[1].benefit?.dedupeKey, 'candidate-1-a');
       expect(decisions[1].editedBenefit?.title, 'Reviewed candidate 1');
+      expect(decisions[1].editedBenefit?.rate, 12.5);
       expect(decisions[2].action, 'reject');
       expect(decisions[2].benefit?.dedupeKey, 'candidate-2-b');
       expect(decisions[2].reason, 'Contradicted by issuer terms');

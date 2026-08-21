@@ -1147,6 +1147,23 @@ Deno.test("benefit list returns evidence and confidence without page bodies or s
 Deno.test("benefit approval accepts only matching pending enrichment staging and approved decision actions", async () => {
   const handle = await handler();
   let rpcCalls = 0;
+  const lockedProposal = {
+    dedupeKey: "legacy:dining-credit",
+    title: "Dining credit",
+    description: "Get 10% cashback on dining spends.",
+    category: "cashback",
+    valueType: "cashback",
+    rate: 10,
+    restrictions: [],
+    exclusions: [],
+    sourceUrl: "https://issuer.example/card",
+    sourceExcerpt: "Get 10% cashback on dining spends.",
+    contentHash: "fixture-content",
+    parserVersion: "benefits-v5",
+    confidence: { rate: 0.9 },
+    evidence: { rate: "10% cashback" },
+    warnings: [],
+  };
   const db = withAuthenticatedUser({
     from(table: string) {
       return {
@@ -1185,23 +1202,7 @@ Deno.test("benefit approval accepts only matching pending enrichment staging and
               extracted_data: {
                 request_type: "official_benefit_enrichment",
                 parser_version: "benefits-v5",
-                proposals: [{
-                  dedupeKey: "legacy:dining-credit",
-                  title: "Dining credit",
-                  description: "Get 10% cashback on dining spends.",
-                  category: "cashback",
-                  valueType: "cashback",
-                  rate: 10,
-                  restrictions: [],
-                  exclusions: [],
-                  sourceUrl: "https://issuer.example/card",
-                  sourceExcerpt: "Get 10% cashback on dining spends.",
-                  contentHash: "fixture-content",
-                  parserVersion: "benefits-v5",
-                  confidence: { rate: 0.9 },
-                  evidence: { rate: "10% cashback" },
-                  warnings: [],
-                }],
+                proposals: [lockedProposal],
               },
             },
             error: null,
@@ -1262,10 +1263,7 @@ Deno.test("benefit approval accepts only matching pending enrichment staging and
         staging_id: "staging-1",
         decisions: [{
           action: "approve",
-          benefit: {
-            dedupeKey: "legacy:dining-credit",
-            title: "Dining credit",
-          },
+          benefit: lockedProposal,
         }],
       }),
       db,
@@ -1278,7 +1276,7 @@ Deno.test("benefit approval accepts only matching pending enrichment staging and
         decisions: [{
           action: "edit",
           edited_benefit: {
-            dedupeKey: "legacy:dining-credit",
+            ...lockedProposal,
             title: "Edited dining credit",
             rate: 12,
           },
@@ -1293,10 +1291,7 @@ Deno.test("benefit approval accepts only matching pending enrichment staging and
         staging_id: "staging-1",
         decisions: [{
           action: "approve",
-          benefit: {
-            dedupeKey: "legacy:dining-credit",
-            title: "Dining credit",
-          },
+          benefit: lockedProposal,
         }],
       }),
       db,
@@ -1308,10 +1303,7 @@ Deno.test("benefit approval accepts only matching pending enrichment staging and
         staging_id: "staging-1",
         decisions: [{
           action: "reject",
-          benefit: {
-            dedupeKey: "legacy:dining-credit",
-            title: "Dining credit",
-          },
+          benefit: lockedProposal,
         }],
       }),
       db,
@@ -2660,6 +2652,23 @@ Deno.test("v6 conflicting proposals require exactly one explicit resolution", as
   );
   assert(selected.length === 1, "explicit conflict selection was rejected");
 
+  const firstRate = Number(first.rate ?? 10);
+  const edited = await validateV6ApprovalDecisions(
+    [{
+      action: "edit",
+      benefit: first,
+      proposed: first,
+      edited_benefit: { ...first, rate: firstRate + 1 },
+    }],
+    extraction,
+    "card-1",
+  );
+  assert(
+    (edited[0].edited_benefit as Record<string, unknown>).rate ===
+      firstRate + 1,
+    "supported material conflict edit was rejected",
+  );
+
   let unresolved: unknown;
   try {
     await validateV6ApprovalDecisions(
@@ -2676,6 +2685,292 @@ Deno.test("v6 conflicting proposals require exactly one explicit resolution", as
         "conflicting_proposal_decisions",
     "conflict group completed without one proposed resolution",
   );
+});
+
+Deno.test("v5 and v6 validate every action-specific decision carrier", async () => {
+  const [v6Proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const [v5Proposal] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 10% cashback on dining spends.",
+    contentHash: "a".repeat(64),
+  }], "benefits-v5");
+  assert(v5Proposal, "v5 carrier fixture did not extract");
+
+  for (
+    const [validator, proposal, extraction] of [
+      [
+        validateV6ApprovalDecisions,
+        v6Proposal,
+        {
+          request_type: "official_benefit_enrichment",
+          parser_version: "benefits-v6",
+          proposals: [v6Proposal],
+        },
+      ],
+      [
+        validateV5ApprovalDecisions,
+        v5Proposal,
+        {
+          request_type: "official_benefit_enrichment",
+          parser_version: "benefits-v5",
+          proposals: [v5Proposal],
+        },
+      ],
+    ] as const
+  ) {
+    const rate = Number(proposal.rate ?? 10);
+    const contradictory = [
+      {
+        action: "approve",
+        benefit: proposal,
+        proposed: { ...proposal, title: "Contradictory proposal carrier" },
+      },
+      {
+        action: "approve",
+        benefit: proposal,
+        edited_benefit: { ...proposal, rate: rate + 1 },
+      },
+      {
+        action: "approve",
+        benefit: proposal,
+        current: { liveBenefitId: "11111111-1111-4111-8111-111111111111" },
+      },
+      {
+        action: "edit",
+        benefit: { ...proposal, title: "Contradictory original carrier" },
+        edited_benefit: { ...proposal, rate: rate + 1 },
+      },
+      {
+        action: "edit",
+        edited_benefit: { ...proposal, rate: rate + 1 },
+        editedBenefit: { ...proposal, rate: rate + 2 },
+      },
+    ];
+    for (const decision of contradictory) {
+      let error: unknown;
+      try {
+        await validator([decision], extraction, "card-1");
+      } catch (caught) {
+        error = caught;
+      }
+      assert(
+        error instanceof Error,
+        `${
+          String(proposal.dedupeKey)
+        } discarded contradictory carriers for ${decision.action}`,
+      );
+    }
+  }
+});
+
+Deno.test("v5 and v6 reject contradictory aliases inside every carrier action", async () => {
+  const [v6Proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const [v5Proposal] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 10% cashback on dining spends.",
+    contentHash: "a".repeat(64),
+  }], "benefits-v5");
+  assert(v5Proposal, "v5 nested-alias fixture did not extract");
+
+  for (
+    const [validator, proposal, parserVersion] of [
+      [validateV6ApprovalDecisions, v6Proposal, "benefits-v6"],
+      [validateV5ApprovalDecisions, v5Proposal, "benefits-v5"],
+    ] as const
+  ) {
+    const rate = Number(proposal.rate ?? 10);
+    const config = (proposal.valueConfig ?? {}) as Record<string, unknown>;
+    const extraction = {
+      request_type: "official_benefit_enrichment",
+      parser_version: parserVersion,
+      proposals: [proposal],
+    };
+    const contradictory = [
+      {
+        action: "approve",
+        benefit: {
+          ...proposal,
+          dedupe_key: "contradictory-nested-dedupe",
+        },
+      },
+      {
+        action: "approve",
+        benefit: { ...proposal, dedupe_key: "" },
+      },
+      {
+        action: "edit",
+        edited_benefit: {
+          ...proposal,
+          rate: rate + 1,
+          valueConfig: config,
+          value_config: { ...config, cap: 999 },
+        },
+      },
+      {
+        action: "edit",
+        edited_benefit: {
+          ...proposal,
+          rate: rate + 1,
+          value_config: null,
+        },
+      },
+      {
+        action: "reject",
+        benefit: {
+          ...proposal,
+          valueConfig: config,
+          value_config: { ...config, threshold: 999 },
+        },
+      },
+    ];
+    for (const decision of contradictory) {
+      let error: unknown;
+      try {
+        await validator([decision], extraction, "card-1");
+      } catch (caught) {
+        error = caught;
+      }
+      assert(
+        error instanceof Error,
+        `${
+          String(proposal.dedupeKey)
+        } accepted nested aliases for ${decision.action}`,
+      );
+    }
+    const exactAliases = await validator(
+      [{
+        action: "approve",
+        benefit: {
+          ...proposal,
+          dedupe_key: proposal.dedupeKey,
+          valueConfig: config,
+          value_config: config,
+        },
+      }],
+      extraction,
+      "card-1",
+    );
+    assert(
+      exactAliases.length === 1,
+      `${String(proposal.dedupeKey)} rejected identical nested aliases`,
+    );
+  }
+});
+
+Deno.test("v5 and v6 require exact nonempty decision aliases", async () => {
+  const [v6Proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const [v5Proposal] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 10% cashback on dining spends.",
+    contentHash: "a".repeat(64),
+  }], "benefits-v5");
+  assert(v5Proposal, "v5 alias fixture did not extract");
+  const liveBenefitId = "11111111-1111-4111-8111-111111111111";
+  const otherLiveBenefitId = "22222222-2222-4222-8222-222222222222";
+
+  for (
+    const [validator, proposal, parserVersion] of [
+      [validateV6ApprovalDecisions, v6Proposal, "benefits-v6"],
+      [validateV5ApprovalDecisions, v5Proposal, "benefits-v5"],
+    ] as const
+  ) {
+    const current = { ...proposal, liveBenefitId };
+    const extraction = {
+      request_type: "official_benefit_enrichment",
+      parser_version: parserVersion,
+      proposals: [proposal],
+      diff: { unchanged: [{ current, proposed: proposal }] },
+    };
+    const contradictory = [
+      {
+        action: "approve",
+        benefit: proposal,
+        dedupe_key: proposal.dedupeKey,
+        dedupeKey: "contradictory-dedupe",
+      },
+      { action: "approve", benefit: proposal, dedupe_key: null },
+      {
+        action: "reject",
+        benefit: proposal,
+        dedupe_key: proposal.dedupeKey,
+        dedupeKey: "contradictory-dedupe",
+      },
+      {
+        action: "reject",
+        current,
+        benefit_id: liveBenefitId,
+        current_benefit_id: otherLiveBenefitId,
+      },
+    ];
+    for (const decision of contradictory) {
+      let error: unknown;
+      try {
+        await validator([decision], extraction, "card-1");
+      } catch (caught) {
+        error = caught;
+      }
+      assert(
+        error instanceof Error,
+        `${
+          String(proposal.dedupeKey)
+        } accepted contradictory aliases for ${decision.action}`,
+      );
+    }
+    const exactDedupeAliases = await validator(
+      [{
+        action: "approve",
+        benefit: proposal,
+        dedupe_key: proposal.dedupeKey,
+        dedupeKey: proposal.dedupeKey,
+      }],
+      extraction,
+      "card-1",
+    );
+    assert(
+      exactDedupeAliases.length === 1,
+      `${String(proposal.dedupeKey)} rejected identical dedupe aliases`,
+    );
+    const exactCurrentAliases = await validator(
+      [{
+        action: "reject",
+        current,
+        benefit_id: liveBenefitId,
+        current_benefit_id: liveBenefitId,
+        dedupe_key: proposal.dedupeKey,
+        dedupeKey: proposal.dedupeKey,
+      }],
+      extraction,
+      "card-1",
+    );
+    assert(
+      exactCurrentAliases.length === 1,
+      `${String(proposal.dedupeKey)} rejected identical current aliases`,
+    );
+  }
 });
 
 Deno.test("v6 approval binds the full projection and edits preserve immutable fields", async () => {

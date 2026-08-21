@@ -46,6 +46,64 @@ bool _sameJson(Object? left, Object? right) {
   return left == right;
 }
 
+String? _proposalTextAlias(JsonMap json, List<String> keys) {
+  final present = keys.where(json.containsKey).toList(growable: false);
+  if (present.isEmpty) return null;
+  final values = present.map((key) => json[key]).toList(growable: false);
+  if (values.any((value) => value is! String)) {
+    throw const FormatException('Malformed benefit proposal alias.');
+  }
+  final strings = values.cast<String>();
+  if (strings.any((value) => value.trim().isEmpty || value != value.trim()) ||
+      strings.toSet().length != 1) {
+    throw const FormatException('Malformed benefit proposal alias.');
+  }
+  return strings.first;
+}
+
+String? _decisionTextAlias(JsonMap json, List<String> keys) {
+  final present = keys.where(json.containsKey).toList(growable: false);
+  if (present.isEmpty) return null;
+  final values = present.map((key) => json[key]).toList(growable: false);
+  if (values.every((value) => value == null)) return null;
+  if (values.any((value) => value is! String)) {
+    throw const FormatException('Malformed benefit decision alias.');
+  }
+  final strings = values.cast<String>();
+  if (strings.any((value) => value.trim().isEmpty || value != value.trim()) ||
+      strings.toSet().length != 1) {
+    throw const FormatException('Malformed benefit decision alias.');
+  }
+  return strings.first;
+}
+
+JsonMap _proposalConfigAlias(JsonMap json) {
+  const keys = ['valueConfig', 'value_config'];
+  final present = keys.where(json.containsKey).toList(growable: false);
+  if (present.isEmpty) return const <String, dynamic>{};
+  final values = present.map((key) => json[key]).toList(growable: false);
+  if (values.any((value) => value is! Map) ||
+      values.any((value) => !_sameJson(value, values.first))) {
+    throw const FormatException('Malformed benefit proposal alias.');
+  }
+  return Map<String, dynamic>.from(values.first as Map);
+}
+
+Object? _decisionCarrierAlias(JsonMap json, List<String> keys) {
+  final present = keys.where(json.containsKey).toList(growable: false);
+  if (present.isEmpty) return null;
+  final values = present.map((key) => json[key]).toList(growable: false);
+  if (values.any((value) => value != null && value is! Map)) {
+    throw const FormatException('Malformed benefit decision alias.');
+  }
+  if (values.every((value) => !_hasMeaningfulJson(value))) return null;
+  if (values.any((value) => value is! Map || !_hasMeaningfulJson(value)) ||
+      values.any((value) => !_sameJson(value, values.first))) {
+    throw const FormatException('Malformed benefit decision alias.');
+  }
+  return values.first;
+}
+
 BenefitProposal? _decisionProposal(Object? value) {
   if (value is! Map || !_hasMeaningfulJson(value)) return null;
   return BenefitProposal.fromJson(Map<String, dynamic>.from(value));
@@ -1096,46 +1154,50 @@ class BenefitProposal {
     this.warnings = const [],
   });
 
-  factory BenefitProposal.fromJson(JsonMap json) => BenefitProposal(
-    liveBenefitId: _text(json['liveBenefitId']),
-    benefitId: _text(json['benefitId']),
-    dedupeKey: _text(json['dedupeKey']),
-    conditionHash: _text(json['conditionHash']),
-    offerSubject: _text(json['offerSubject']),
-    title: _text(json['title']),
-    description: _text(json['description']),
-    category: _text(json['category']),
-    valueType: _text(json['valueType']),
-    value: json['value'],
-    rate: json['rate'],
-    cap: json['cap'],
-    threshold: json['threshold'],
-    frequency: _text(json['frequency']),
-    period: _text(json['period']),
-    valueConfig: _map(json['valueConfig'] ?? json['value_config']),
-    restrictions: (json['restrictions'] as List? ?? const [])
-        .whereType<String>()
-        .toList(growable: false),
-    exclusions: json['exclusions'],
-    partners: _strings(json['partners']),
-    regions: _strings(json['regions']),
-    effectiveFrom: _text(json['effectiveFrom']),
-    effectiveTo: _text(json['effectiveTo']),
-    sourceUrl: _text(json['sourceUrl']),
-    sourceUrls: _strings(json['sourceUrls']),
-    sourceIdentity: _text(json['sourceIdentity']),
-    sourceIdentities: _strings(json['sourceIdentities']),
-    sourceExcerpt: _text(json['sourceExcerpt']),
-    contentHash: _text(json['contentHash']),
-    parserVersion: _text(json['parserVersion']),
-    confidence: _map(
-      json['confidence'],
-    ).map((key, value) => MapEntry(key, value as num? ?? 0)),
-    evidence: _map(
-      json['evidence'],
-    ).map((key, value) => MapEntry(key, value.toString())),
-    warnings: _strings(json['warnings']),
-  );
+  factory BenefitProposal.fromJson(JsonMap json) {
+    final dedupeKey = _proposalTextAlias(json, ['dedupeKey', 'dedupe_key']);
+    final valueConfig = _proposalConfigAlias(json);
+    return BenefitProposal(
+      liveBenefitId: _text(json['liveBenefitId']),
+      benefitId: _text(json['benefitId']),
+      dedupeKey: dedupeKey,
+      conditionHash: _text(json['conditionHash']),
+      offerSubject: _text(json['offerSubject']),
+      title: _text(json['title']),
+      description: _text(json['description']),
+      category: _text(json['category']),
+      valueType: _text(json['valueType']),
+      value: json['value'],
+      rate: json['rate'],
+      cap: json['cap'],
+      threshold: json['threshold'],
+      frequency: _text(json['frequency']),
+      period: _text(json['period']),
+      valueConfig: valueConfig,
+      restrictions: (json['restrictions'] as List? ?? const [])
+          .whereType<String>()
+          .toList(growable: false),
+      exclusions: json['exclusions'],
+      partners: _strings(json['partners']),
+      regions: _strings(json['regions']),
+      effectiveFrom: _text(json['effectiveFrom']),
+      effectiveTo: _text(json['effectiveTo']),
+      sourceUrl: _text(json['sourceUrl']),
+      sourceUrls: _strings(json['sourceUrls']),
+      sourceIdentity: _text(json['sourceIdentity']),
+      sourceIdentities: _strings(json['sourceIdentities']),
+      sourceExcerpt: _text(json['sourceExcerpt']),
+      contentHash: _text(json['contentHash']),
+      parserVersion: _text(json['parserVersion']),
+      confidence: _map(
+        json['confidence'],
+      ).map((key, value) => MapEntry(key, value as num? ?? 0)),
+      evidence: _map(
+        json['evidence'],
+      ).map((key, value) => MapEntry(key, value.toString())),
+      warnings: _strings(json['warnings']),
+    );
+  }
 
   final String? liveBenefitId;
   final String? benefitId;
@@ -1172,41 +1234,44 @@ class BenefitProposal {
 
   String get label => title ?? dedupeKey ?? 'Untitled benefit';
 
-  BenefitProposal copyWith({String? title, String? description}) =>
-      BenefitProposal(
-        liveBenefitId: liveBenefitId,
-        benefitId: benefitId,
-        dedupeKey: dedupeKey,
-        conditionHash: conditionHash,
-        offerSubject: offerSubject,
-        title: title ?? this.title,
-        description: description ?? this.description,
-        category: category,
-        valueType: valueType,
-        value: value,
-        rate: rate,
-        cap: cap,
-        threshold: threshold,
-        frequency: frequency,
-        period: period,
-        valueConfig: valueConfig,
-        restrictions: restrictions,
-        exclusions: exclusions,
-        partners: partners,
-        regions: regions,
-        effectiveFrom: effectiveFrom,
-        effectiveTo: effectiveTo,
-        sourceUrl: sourceUrl,
-        sourceUrls: sourceUrls,
-        sourceIdentity: sourceIdentity,
-        sourceIdentities: sourceIdentities,
-        sourceExcerpt: sourceExcerpt,
-        contentHash: contentHash,
-        parserVersion: parserVersion,
-        confidence: confidence,
-        evidence: evidence,
-        warnings: warnings,
-      );
+  BenefitProposal copyWith({
+    String? title,
+    String? description,
+    Object? rate,
+  }) => BenefitProposal(
+    liveBenefitId: liveBenefitId,
+    benefitId: benefitId,
+    dedupeKey: dedupeKey,
+    conditionHash: conditionHash,
+    offerSubject: offerSubject,
+    title: title ?? this.title,
+    description: description ?? this.description,
+    category: category,
+    valueType: valueType,
+    value: value,
+    rate: rate ?? this.rate,
+    cap: cap,
+    threshold: threshold,
+    frequency: frequency,
+    period: period,
+    valueConfig: valueConfig,
+    restrictions: restrictions,
+    exclusions: exclusions,
+    partners: partners,
+    regions: regions,
+    effectiveFrom: effectiveFrom,
+    effectiveTo: effectiveTo,
+    sourceUrl: sourceUrl,
+    sourceUrls: sourceUrls,
+    sourceIdentity: sourceIdentity,
+    sourceIdentities: sourceIdentities,
+    sourceExcerpt: sourceExcerpt,
+    contentHash: contentHash,
+    parserVersion: parserVersion,
+    confidence: confidence,
+    evidence: evidence,
+    warnings: warnings,
+  );
 
   JsonMap toJson() => {
     if (liveBenefitId != null) 'liveBenefitId': liveBenefitId,
@@ -1332,24 +1397,33 @@ class BenefitReviewDecision {
     this.editedBenefit,
     this.current,
   });
-  factory BenefitReviewDecision.fromJson(JsonMap json) => BenefitReviewDecision(
-    action: _text(json['action']) ?? '',
-    reason: _text(json['reason']),
-    changeType: _text(json['change_type'] ?? json['changeType']),
-    proposalIndex: (json['proposal_index'] as num?)?.toInt(),
-    conditionHash: _text(json['condition_hash'] ?? json['conditionHash']),
-    liveBenefitId: _text(json['benefit_id'] ?? json['current_benefit_id']),
-    existingBenefitId: _text(json['existing_benefit_id']),
-    dedupeKey: _text(json['dedupe_key'] ?? json['dedupeKey']),
-    displayPriority: (json['display_priority'] as num?)?.toInt(),
-    isPrimary: json['is_primary'] as bool?,
-    benefit: _decisionProposal(json['benefit']),
-    proposed: _decisionProposal(json['proposed']),
-    editedBenefit: _decisionProposal(
-      json['edited_benefit'] ?? json['editedBenefit'],
-    ),
-    current: _decisionProposal(json['current']),
-  );
+  factory BenefitReviewDecision.fromJson(JsonMap json) {
+    final liveBenefitId = _decisionTextAlias(json, [
+      'benefit_id',
+      'current_benefit_id',
+    ]);
+    final dedupeKey = _decisionTextAlias(json, ['dedupe_key', 'dedupeKey']);
+    final editedBenefit = _decisionCarrierAlias(json, [
+      'edited_benefit',
+      'editedBenefit',
+    ]);
+    return BenefitReviewDecision(
+      action: _text(json['action']) ?? '',
+      reason: _text(json['reason']),
+      changeType: _text(json['change_type'] ?? json['changeType']),
+      proposalIndex: (json['proposal_index'] as num?)?.toInt(),
+      conditionHash: _text(json['condition_hash'] ?? json['conditionHash']),
+      liveBenefitId: liveBenefitId,
+      existingBenefitId: _text(json['existing_benefit_id']),
+      dedupeKey: dedupeKey,
+      displayPriority: (json['display_priority'] as num?)?.toInt(),
+      isPrimary: json['is_primary'] as bool?,
+      benefit: _decisionProposal(json['benefit']),
+      proposed: _decisionProposal(json['proposed']),
+      editedBenefit: _decisionProposal(editedBenefit),
+      current: _decisionProposal(json['current']),
+    );
+  }
   final String action;
   final String? reason;
   final String? changeType;

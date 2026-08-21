@@ -3,6 +3,20 @@ import 'package:flutter/material.dart';
 import '../data/admin_catalog_repository.dart';
 import '../models/benefit_enrichment_review.dart';
 
+num? _safeMaterialNumber(String raw) {
+  final value = raw.trim();
+  if (!RegExp(r'^-?\d+(?:\.\d{1,6})?$').hasMatch(value)) return null;
+  final parsed = num.tryParse(value);
+  if (parsed == null || !parsed.toDouble().isFinite) return null;
+  final absolute = parsed.abs();
+  if (parsed != 0 && (absolute < 0.000001 || absolute >= 1e21)) return null;
+  final coefficient = BigInt.tryParse(value.replaceAll('.', ''))?.abs();
+  if (coefficient == null || coefficient > BigInt.from(9007199254740991)) {
+    return null;
+  }
+  return parsed;
+}
+
 class BenefitEnrichmentReviewPanel extends StatefulWidget {
   const BenefitEnrichmentReviewPanel({
     required this.repository,
@@ -187,59 +201,100 @@ class _BenefitEnrichmentReviewPanelState
       );
       return;
     }
-    final title = TextEditingController(text: candidate.title);
-    final description = TextEditingController(text: candidate.description);
+    var title = candidate.title ?? '';
+    var description = candidate.description ?? '';
+    final stagedRate = candidate.rate;
+    if (stagedRate is! num) {
+      setState(
+        () => _actionError =
+            'This benefit has no numeric rate that can be edited safely.',
+      );
+      return;
+    }
+    var rate = stagedRate.toString();
     final edited = await showDialog<BenefitReviewDecision>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Edit benefit before approval'),
-        content: SizedBox(
-          width: 440,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: title,
-                decoration: const InputDecoration(labelText: 'Benefit title'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: description,
-                decoration: const InputDecoration(labelText: 'Description'),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(
-              context,
-              (decision ??
-                      BenefitReviewDecision(
-                        action: 'edit',
-                        liveBenefitId: candidate.liveBenefitId,
-                        dedupeKey: candidate.dedupeKey,
-                        benefit: candidate,
-                        proposed: candidate,
-                      ))
-                  .withEditedBenefit(
-                    candidate.copyWith(
-                      title: title.text.trim(),
-                      description: description.text.trim(),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final parsedRate = _safeMaterialNumber(rate);
+          final validTitle = title.trim().length >= 2;
+          final materialChange = parsedRate != null && parsedRate != stagedRate;
+          final invalidRate = rate.trim().isNotEmpty && parsedRate == null;
+          return AlertDialog(
+            title: const Text('Edit benefit before approval'),
+            content: SizedBox(
+              width: 440,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(
+                    key: const ValueKey('normal-edit-title'),
+                    initialValue: title,
+                    onChanged: (value) => setDialogState(() => title = value),
+                    decoration: const InputDecoration(
+                      labelText: 'Benefit title',
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    initialValue: description,
+                    onChanged: (value) =>
+                        setDialogState(() => description = value),
+                    decoration: const InputDecoration(labelText: 'Description'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    key: const ValueKey('normal-edit-rate'),
+                    initialValue: rate,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                      signed: true,
+                    ),
+                    onChanged: (value) => setDialogState(() => rate = value),
+                    decoration: InputDecoration(
+                      labelText: 'Rate',
+                      errorText: invalidRate ? 'Enter a finite number.' : null,
+                      helperText: materialChange
+                          ? 'Commercial term changed.'
+                          : 'Change the staged rate to submit.',
+                    ),
+                  ),
+                ],
+              ),
             ),
-            child: const Text('Approve edit'),
-          ),
-        ],
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: validTitle && materialChange
+                    ? () => Navigator.pop(
+                        context,
+                        (decision ??
+                                BenefitReviewDecision(
+                                  action: 'edit',
+                                  liveBenefitId: candidate.liveBenefitId,
+                                  dedupeKey: candidate.dedupeKey,
+                                  benefit: candidate,
+                                  proposed: candidate,
+                                ))
+                            .withEditedBenefit(
+                              candidate.copyWith(
+                                title: title.trim(),
+                                description: description.trim(),
+                                rate: parsedRate,
+                              ),
+                            ),
+                      )
+                    : null,
+                child: const Text('Approve edit'),
+              ),
+            ],
+          );
+        },
       ),
     );
-    title.dispose();
-    description.dispose();
     if (edited != null) {
       await _run(() => widget.repository.editApprove(item, [edited]));
     }
@@ -443,6 +498,7 @@ class _ConflictResolutionDialogState extends State<_ConflictResolutionDialog> {
   final _choices = <int, _ConflictChoice>{};
   final _titles = <int, TextEditingController>{};
   final _descriptions = <int, TextEditingController>{};
+  final _rates = <int, TextEditingController>{};
   final _reasons = <int, TextEditingController>{};
   final _rejectedCurrent = <String>{};
   final _currentReasons = <String, TextEditingController>{};
@@ -452,6 +508,7 @@ class _ConflictResolutionDialogState extends State<_ConflictResolutionDialog> {
     for (final controller in [
       ..._titles.values,
       ..._descriptions.values,
+      ..._rates.values,
       ..._reasons.values,
       ..._currentReasons.values,
     ]) {
@@ -485,10 +542,15 @@ class _ConflictResolutionDialogState extends State<_ConflictResolutionDialog> {
           group,
           () => TextEditingController(text: proposal.description),
         );
+        final rate = _rates.putIfAbsent(
+          group,
+          () => TextEditingController(text: proposal.rate?.toString()),
+        );
         if (previous?.action != action ||
             previous?.proposalIndex != proposalIndex) {
           title.text = proposal.title ?? '';
           description.text = proposal.description ?? '';
+          rate.text = proposal.rate?.toString() ?? '';
         }
       }
       if (action == _ConflictAction.reject) {
@@ -517,6 +579,15 @@ class _ConflictResolutionDialogState extends State<_ConflictResolutionDialog> {
       if (choice.action == _ConflictAction.edit &&
           (_titles[group]?.text.trim().length ?? 0) < 2) {
         return false;
+      }
+      if (choice.action == _ConflictAction.edit) {
+        final stagedRate = conflict.proposed[choice.proposalIndex].rate;
+        final editedRate = _safeMaterialNumber(_rates[group]?.text ?? '');
+        if (stagedRate is! num ||
+            editedRate == null ||
+            editedRate == stagedRate) {
+          return false;
+        }
       }
       if (choice.action == _ConflictAction.reject &&
           (_reasons[group]?.text.trim().length ?? 0) < 3) {
@@ -549,6 +620,7 @@ class _ConflictResolutionDialogState extends State<_ConflictResolutionDialog> {
           editedBenefit: proposal.copyWith(
             title: _titles[group]!.text.trim(),
             description: _descriptions[group]!.text.trim(),
+            rate: _safeMaterialNumber(_rates[group]!.text),
           ),
         ),
         _ConflictAction.reject => BenefitReviewDecision(
@@ -622,17 +694,23 @@ class _ConflictResolutionDialogState extends State<_ConflictResolutionDialog> {
                             proposalIndex += 1
                           )
                             for (final action in _ConflictAction.values)
-                              DropdownMenuItem(
-                                value: '${action.name}:$proposalIndex',
-                                child: Text(
-                                  _label(
-                                    action,
-                                    widget
-                                        .conflicts[group]
-                                        .proposed[proposalIndex],
+                              if (action != _ConflictAction.edit ||
+                                  widget
+                                          .conflicts[group]
+                                          .proposed[proposalIndex]
+                                          .rate
+                                      is num)
+                                DropdownMenuItem(
+                                  value: '${action.name}:$proposalIndex',
+                                  child: Text(
+                                    _label(
+                                      action,
+                                      widget
+                                          .conflicts[group]
+                                          .proposed[proposalIndex],
+                                    ),
                                   ),
                                 ),
-                              ),
                         ],
                         onChanged: (value) => _select(group, value),
                       )
@@ -717,6 +795,34 @@ class _ConflictResolutionDialogState extends State<_ConflictResolutionDialog> {
                         onChanged: (_) => setState(() {}),
                         decoration: const InputDecoration(
                           labelText: 'Description',
+                        ),
+                      ),
+                      TextField(
+                        key: ValueKey('conflict-rate-$group'),
+                        controller: _rates[group],
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                          signed: true,
+                        ),
+                        onChanged: (_) => setState(() {}),
+                        decoration: InputDecoration(
+                          labelText: 'Rate',
+                          errorText:
+                              (_rates[group]?.text.trim().isNotEmpty == true &&
+                                  _safeMaterialNumber(
+                                        _rates[group]?.text ?? '',
+                                      ) ==
+                                      null)
+                              ? 'Enter a finite number.'
+                              : null,
+                          helperText:
+                              _safeMaterialNumber(_rates[group]?.text ?? '') ==
+                                  widget
+                                      .conflicts[group]
+                                      .proposed[_choices[group]!.proposalIndex]
+                                      .rate
+                              ? 'Change the staged rate to submit.'
+                              : 'Commercial term changed.',
                         ),
                       ),
                     ],

@@ -3,6 +3,83 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/benefit_enrichment_review.dart';
 
+bool _sameDecisionJson(Object? left, Object? right) {
+  if (left is List && right is List) {
+    return left.length == right.length &&
+        List.generate(
+          left.length,
+          (index) => _sameDecisionJson(left[index], right[index]),
+        ).every((same) => same);
+  }
+  if (left is Map && right is Map) {
+    return left.length == right.length &&
+        left.keys.every(
+          (key) =>
+              right.containsKey(key) &&
+              _sameDecisionJson(left[key], right[key]),
+        );
+  }
+  return left == right;
+}
+
+Map<String, Object?> _approvalProjection(BenefitProposal proposal) => {
+  'benefitId': proposal.benefitId,
+  'dedupeKey': proposal.dedupeKey,
+  'conditionHash': proposal.conditionHash,
+  'offerSubject': proposal.offerSubject,
+  'title': proposal.title,
+  'description': proposal.description,
+  'category': proposal.category,
+  'valueType': proposal.valueType,
+  'value': proposal.value,
+  'rate': proposal.rate,
+  'cap': proposal.cap,
+  'threshold': proposal.threshold,
+  'frequency': proposal.frequency,
+  'period': proposal.period,
+  'valueConfig': proposal.valueConfig,
+  'restrictions': proposal.restrictions,
+  'exclusions': proposal.exclusions,
+  'partners': proposal.partners,
+  'regions': proposal.regions,
+  'effectiveFrom': proposal.effectiveFrom,
+  'effectiveTo': proposal.effectiveTo,
+  'sourceIdentity': proposal.sourceIdentity,
+  'sourceIdentities': proposal.sourceIdentities,
+};
+
+Map<String, Object?> _immutableEditProjection(BenefitProposal proposal) => {
+  'benefitId': proposal.benefitId,
+  'dedupeKey': proposal.dedupeKey,
+  'conditionHash': proposal.conditionHash,
+  'offerSubject': proposal.offerSubject,
+  'category': proposal.category,
+  'valueType': proposal.valueType,
+  'valueConfig': proposal.valueConfig,
+  'restrictions': proposal.restrictions,
+  'exclusions': proposal.exclusions,
+  'partners': proposal.partners,
+  'regions': proposal.regions,
+  'sourceIdentity': proposal.sourceIdentity,
+  'sourceIdentities': proposal.sourceIdentities,
+};
+
+Map<String, Object?> _materialEditProjection(BenefitProposal proposal) => {
+  'value': proposal.value,
+  'rate': proposal.rate,
+  'cap': proposal.cap,
+  'threshold': proposal.threshold,
+  'frequency': proposal.frequency,
+  'period': proposal.period,
+  'effectiveFrom': proposal.effectiveFrom,
+  'effectiveTo': proposal.effectiveTo,
+};
+
+Map<String, Object?> _currentProjection(BenefitProposal proposal) => {
+  'liveBenefitId': proposal.liveBenefitId,
+  ..._approvalProjection(proposal),
+};
+
 class AdminCatalogEntryResponse {
   const AdminCatalogEntryResponse(this.status, this.data);
 
@@ -137,6 +214,7 @@ class AdminCatalogRepository implements BenefitEnrichmentRepository {
     BenefitEnrichmentReview item,
     List<BenefitReviewDecision> decisions,
   ) async {
+    _validateDecisionCarriers(item, decisions);
     var submitted = decisions;
     if (item.hasConflicts) {
       _validateConflictResolutions(item, decisions);
@@ -279,6 +357,178 @@ class AdminCatalogRepository implements BenefitEnrichmentRepository {
         ),
       ),
     ];
+  }
+
+  void _validateDecisionCarriers(
+    BenefitEnrichmentReview item,
+    List<BenefitReviewDecision> decisions,
+  ) {
+    final diff = item.staging.extractedData.diff;
+    final diffCanonical = diff.canonicalProposals.toList(growable: false);
+    final canonicalTargets = diffCanonical.isNotEmpty
+        ? diffCanonical
+        : item.staging.extractedData.proposals;
+    final currentTargets = diff.currentProposals.toList(growable: false);
+    String? canonicalKey(BenefitProposal proposal) =>
+        proposal.benefitId ?? proposal.dedupeKey;
+    Never invalid() => throw AdminCatalogRequestFailed(
+      'Every decision carrier must match one exact staged benefit target.',
+    );
+
+    BenefitProposal lockedCanonical(List<BenefitProposal> carriers) {
+      if (carriers.isEmpty) invalid();
+      final keys = carriers.map(canonicalKey).whereType<String>().toSet();
+      if (keys.length != 1) invalid();
+      final matches = canonicalTargets
+          .where((target) => canonicalKey(target) == keys.single)
+          .toList(growable: false);
+      if (matches.length != 1) invalid();
+      return matches.single;
+    }
+
+    BenefitProposal lockedCurrent(List<BenefitProposal> carriers) {
+      if (carriers.isEmpty) invalid();
+      final ids = carriers
+          .map((carrier) => carrier.liveBenefitId)
+          .whereType<String>()
+          .toSet();
+      if (ids.length != 1) invalid();
+      final matches = currentTargets
+          .where((target) => target.liveBenefitId == ids.single)
+          .toList(growable: false);
+      if (matches.length != 1) invalid();
+      return matches.single;
+    }
+
+    BenefitProposal? linkedCurrent(BenefitProposal target) {
+      final key = canonicalKey(target);
+      final matches = [
+        ...diff.modifications,
+        ...diff.unchanged,
+      ].where((change) => canonicalKey(change.proposed) == key).toList();
+      return matches.length == 1 ? matches.single.current : null;
+    }
+
+    for (final decision in decisions) {
+      final action = decision.action.toLowerCase();
+      if (action == 'approve') {
+        if (decision.editedBenefit != null || decision.current != null) {
+          invalid();
+        }
+        final carriers = [
+          decision.benefit,
+          decision.proposed,
+        ].whereType<BenefitProposal>().toList(growable: false);
+        final target = lockedCanonical(carriers);
+        if (carriers.any(
+              (carrier) => !_sameDecisionJson(
+                _approvalProjection(carrier),
+                _approvalProjection(target),
+              ),
+            ) ||
+            (decision.dedupeKey != null &&
+                decision.dedupeKey != canonicalKey(target))) {
+          invalid();
+        }
+        final current = linkedCurrent(target);
+        if (decision.liveBenefitId != null &&
+            decision.liveBenefitId != current?.liveBenefitId) {
+          invalid();
+        }
+        continue;
+      }
+      if (action == 'edit') {
+        final edited = decision.editedBenefit;
+        if (edited == null || decision.current != null) invalid();
+        final originals = [
+          decision.benefit,
+          decision.proposed,
+        ].whereType<BenefitProposal>().toList(growable: false);
+        final target = lockedCanonical([...originals, edited]);
+        if (originals.isEmpty ||
+            originals.any(
+              (carrier) => !_sameDecisionJson(
+                _approvalProjection(carrier),
+                _approvalProjection(target),
+              ),
+            ) ||
+            !_sameDecisionJson(
+              _immutableEditProjection(edited),
+              _immutableEditProjection(target),
+            ) ||
+            _sameDecisionJson(
+              _materialEditProjection(edited),
+              _materialEditProjection(target),
+            ) ||
+            (decision.dedupeKey != null &&
+                decision.dedupeKey != canonicalKey(target))) {
+          invalid();
+        }
+        final current = linkedCurrent(target);
+        if (decision.liveBenefitId != null &&
+            decision.liveBenefitId != current?.liveBenefitId) {
+          invalid();
+        }
+        continue;
+      }
+      if (action == 'reject') {
+        if (decision.proposed != null || decision.editedBenefit != null) {
+          invalid();
+        }
+        if (decision.benefit != null) {
+          if (decision.current != null || decision.liveBenefitId != null) {
+            invalid();
+          }
+          final target = lockedCanonical([decision.benefit!]);
+          if (!_sameDecisionJson(
+                _approvalProjection(decision.benefit!),
+                _approvalProjection(target),
+              ) ||
+              (decision.dedupeKey != null &&
+                  decision.dedupeKey != canonicalKey(target))) {
+            invalid();
+          }
+          continue;
+        }
+        if (decision.current != null) {
+          final target = lockedCurrent([decision.current!]);
+          if (decision.liveBenefitId != target.liveBenefitId ||
+              !_sameDecisionJson(
+                _currentProjection(decision.current!),
+                _currentProjection(target),
+              ) ||
+              (decision.dedupeKey != null &&
+                  decision.dedupeKey != target.dedupeKey)) {
+            invalid();
+          }
+          continue;
+        }
+        invalid();
+      }
+      if (action == 'keep_existing' || action == 'retire') {
+        if (decision.proposed != null || decision.editedBenefit != null) {
+          invalid();
+        }
+        final carriers = [
+          decision.benefit,
+          decision.current,
+        ].whereType<BenefitProposal>().toList(growable: false);
+        final target = lockedCurrent(carriers);
+        if (carriers.any(
+              (carrier) => !_sameDecisionJson(
+                _currentProjection(carrier),
+                _currentProjection(target),
+              ),
+            ) ||
+            decision.liveBenefitId != target.liveBenefitId ||
+            (decision.dedupeKey != null &&
+                decision.dedupeKey != target.dedupeKey)) {
+          invalid();
+        }
+        continue;
+      }
+      invalid();
+    }
   }
 
   void _validateConflictResolutions(
