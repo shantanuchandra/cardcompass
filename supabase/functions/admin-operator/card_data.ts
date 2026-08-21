@@ -160,6 +160,9 @@ function safeProposedFields(value: unknown, strict = false): JsonRecord {
     invalidRequest();
   }
   const output: JsonRecord = {};
+  if (!strict && typeof row.cardName === "string") {
+    output.card_name = row.cardName.slice(0, 500);
+  }
   for (const field of proposedFieldNames) {
     const item = row[field];
     if (field.endsWith("_url")) {
@@ -337,10 +340,18 @@ function validationCode(value: unknown): JsonRecord | null {
 function presentIdentityRow(value: unknown) {
   const row = asRecord(value) ?? {};
   const discovery = asRecord(row.card_discovery_jobs) ?? {};
+  const proposed = safeProposedFields(row.proposed_fields);
   return {
     id: safeText(row.id, 100),
     status: safeText(row.status, 50),
-    proposed_fields: safeProposedFields(row.proposed_fields),
+    proposed_fields: proposed,
+    card: {
+      bank: safeText(proposed.bank ?? proposed.issuer ?? discovery.issuer, 200),
+      card_name: safeText(
+        proposed.card_name ?? proposed.name ?? discovery.proposed_product,
+        300,
+      ),
+    },
     source_evidence: safeEvidence(row.source_evidence),
     existing_candidates: Array.isArray(row.existing_candidates)
       ? row.existing_candidates.slice(0, MAX_LIST_ITEMS).map(presentCandidate)

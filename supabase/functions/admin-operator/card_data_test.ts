@@ -92,7 +92,7 @@ Deno.test("identity list uses a bounded queue query and excludes raw evidence", 
     id: IDENTITY_ID,
     status: "pending",
     proposed_fields: {
-      card_name: "Issuer Premier",
+      cardName: "Issuer Premier",
       issuer: "Issuer",
       network: "Visa",
       official_url: "https://issuer.example/card",
@@ -159,6 +159,10 @@ Deno.test("identity list uses a bounded queue query and excludes raw evidence", 
     issuer: "Issuer",
     network: "Visa",
     official_url: "https://issuer.example/card",
+  });
+  assertEquals(output.items[0].card, {
+    bank: "Issuer",
+    card_name: "Issuer Premier",
   });
   assertEquals(output.items[0].existing_candidates, [{
     id: MERGE_ID,
