@@ -3567,6 +3567,118 @@ Deno.test("quarantine retry preserves the terminal episode and a later concurren
   );
 });
 
+Deno.test("a recoverable pre-episode quarantine stays SQL-actionable and replays idempotently", async () => {
+  const selected = {
+    issuer: "Axis Bank",
+    canonical_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+  };
+  const producerId = "11111111-1111-4111-8111-111111111111";
+  const legacyIdentity = `issuer-discovery-quarantine-v1:${producerId}`;
+  const legacyReviewKey = await sha256TextFixture(
+    `issuer-discovery-quarantine:${producerId}:issuer_discovery_quarantine`,
+  );
+  const stableKey = await sha256TextFixture(
+    "issuer-directory-anchor:axis bank",
+  );
+  const producer = {
+    id: producerId,
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "Axis Bank",
+    dedupe_key: stableKey,
+    status: "failed",
+    failure_category: "issuer_discovery_quarantined",
+    attempt_count: 1,
+    next_retry_at: "2026-08-20T00:00:00.000Z",
+    created_at: "2026-08-19T00:00:00.000Z",
+    updated_at: "2026-08-19T00:00:00.000Z",
+    evidence: {
+      kind: "issuer_directory_anchor",
+      issuer: "Axis Bank",
+      canonical_url: selected.canonical_url,
+      run_date: "2026-08-19",
+      quarantine_reason: "transient_producer_state",
+      quarantine_fence: {
+        version: 1,
+        classification: "issuer_discovery_quarantine",
+        semantic_identity: legacyIdentity,
+        anchor_job_id: producerId,
+        issuer: "Axis Bank",
+        reason: "transient_producer_state",
+        retryable: true,
+        retryability_reason: "attempt_budget_reset_allowed",
+      },
+    },
+  };
+  const store = issuerSchedulerStore({
+    jobs: [producer, {
+      id: "22222222-2222-4222-8222-222222222222",
+      user_id: null,
+      discovery_source: "issuer_crawl",
+      issuer: "Axis Bank",
+      dedupe_key: legacyReviewKey,
+      status: "review_required",
+      review_item_id: "33333333-3333-4333-8333-333333333333",
+      failure_category: null,
+      attempt_count: 0,
+      next_retry_at: null,
+      created_at: "2026-08-19T00:00:01.000Z",
+      updated_at: "2026-08-19T00:00:01.000Z",
+      evidence: {
+        source_observation: { kind: "issuer_discovery_quarantine" },
+      },
+    }],
+  });
+  const claim = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-20T00:00:01.000Z"),
+  );
+
+  assert(claim.status === "quarantined", "persisted conflict was not fenced");
+  assert(store.rpcCalls.length === 1, "legacy quarantine was not staged once");
+  assert(
+    store.jobs.length === 2 &&
+      store.rpcCalls[0].args._dedupe_key === legacyReviewKey,
+    "pre-episode recovery abandoned or duplicated its existing review job",
+  );
+  const fence = producer.evidence.quarantine_fence as Record<string, unknown>;
+  const proposedObservation = (store.rpcCalls[0].args._proposed_fields as any)
+    .source_observation;
+  const evidenceObservation = (store.rpcCalls[0].args._source_evidence as any)
+    .source_observation;
+  assert(
+    fence.episode === null &&
+      fence.semantic_identity === legacyIdentity &&
+      proposedObservation.episode_identity === null &&
+      evidenceObservation.episode_identity === null &&
+      JSON.stringify(proposedObservation) ===
+        JSON.stringify(evidenceObservation),
+    "pre-episode recovery produced a fence/review shape rejected by the Task 7 legacy action branch",
+  );
+  assert(
+    proposedObservation.anchor_job_id === producerId &&
+      proposedObservation.reason === "transient_producer_state" &&
+      proposedObservation.retryable === true &&
+      proposedObservation.retryability_reason ===
+        "attempt_budget_reset_allowed",
+    "pre-episode recovery lost the exact Retry authority bound by Task 7",
+  );
+
+  const completedState = JSON.stringify(store.jobs);
+  const replay = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-20T00:00:02.000Z"),
+  );
+  assert(replay.status === "quarantined", "legacy quarantine replay reopened");
+  assert(
+    store.rpcCalls.length === 1 &&
+      JSON.stringify(store.jobs) === completedState,
+    "legacy quarantine replay restaged or rewrote completed recovery state",
+  );
+});
+
 Deno.test("quarantine conflict counts use the persisted fence reason instead of caller reclassification", async () => {
   const selected = {
     issuer: "Axis Bank",

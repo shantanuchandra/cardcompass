@@ -5281,28 +5281,28 @@ async function terminalizeIssuerDiscoveryBacklog(
       }
       const fence = value as Record<string, unknown>;
       const fenceReason = String(fence.reason ?? "");
-      const legacyEpisodeOne = fence.episode === undefined &&
-        fence.semantic_identity ===
-          `issuer-discovery-quarantine-v1:${String(row.id).slice(0, 64)}`;
-      const episode = legacyEpisodeOne ? 1 : fence.episode;
+      const legacyEpisodeOneIdentity = `issuer-discovery-quarantine-v1:${
+        String(row.id).slice(0, 64)
+      }`;
+      const legacyEpisodeOne = fence.semantic_identity ===
+          legacyEpisodeOneIdentity &&
+        (fence.episode === undefined || fence.episode === null ||
+          fence.episode === 1);
+      const episode = legacyEpisodeOne ? null : fence.episode;
       const fenceIssuer = String(fence.issuer ?? "").trim().replace(
         /\s+/g,
         " ",
       );
       if (
-        fence.version === 1 && typeof episode === "number" &&
-        Number.isInteger(episode) && episode >= 1 &&
-        episode <= 999_999 &&
+        fence.version === 1 &&
+        (episode === null ||
+          (typeof episode === "number" && Number.isInteger(episode) &&
+            episode >= 1 && episode <= 999_999)) &&
         fence.classification === "issuer_discovery_quarantine" &&
-        (fence.semantic_identity ===
+        (episode === null || fence.semantic_identity ===
             `issuer-discovery-quarantine-v1:${
               String(row.id).slice(0, 64)
-            }:${episode}` ||
-          (legacyEpisodeOne && episode === 1 &&
-            fence.semantic_identity ===
-              `issuer-discovery-quarantine-v1:${
-                String(row.id).slice(0, 64)
-              }`)) &&
+            }:${episode}`) &&
         fence.anchor_job_id === String(row.id).slice(0, 64) &&
         fenceIssuer.length >= 2 && fenceIssuer.length <= 120 &&
         [
@@ -5315,7 +5315,7 @@ async function terminalizeIssuerDiscoveryBacklog(
       ) {
         const expectedPolicy = buildFence(
           fenceReason as IssuerDiscoveryQuarantineReason,
-          episode,
+          episode ?? 1,
         );
         if (
           fence.retryable === expectedPolicy.retryable &&
@@ -5323,8 +5323,11 @@ async function terminalizeIssuerDiscoveryBacklog(
         ) {
           return {
             ...expectedPolicy,
+            episode,
             issuer: fenceIssuer,
-            semantic_identity: String(fence.semantic_identity),
+            semantic_identity: episode === null
+              ? legacyEpisodeOneIdentity
+              : String(fence.semantic_identity),
           };
         }
       }
@@ -5352,7 +5355,8 @@ async function terminalizeIssuerDiscoveryBacklog(
   const persistedFenceRequiresUpgrade = fence !== null && (
     persistedFence === null || persistedFence === undefined ||
     typeof persistedFence !== "object" || Array.isArray(persistedFence) ||
-    (persistedFence as Record<string, unknown>).episode === undefined
+    (fence.episode === null &&
+      (persistedFence as Record<string, unknown>).episode !== null)
   );
   if (
     String(row.status) !== "failed" ||
@@ -5413,15 +5417,11 @@ async function terminalizeIssuerDiscoveryBacklog(
     retryable: fence.retryable,
     retryability_reason: fence.retryability_reason,
     anchor_job_id: fence.anchor_job_id,
-    episode_identity: fence.semantic_identity,
+    episode_identity: fence.episode === null ? null : fence.semantic_identity,
     issuer: fence.issuer,
   };
   const semanticHash = await sha256Text(JSON.stringify(sourceObservation));
-  const legacyEpisodeOneIdentity = `issuer-discovery-quarantine-v1:${
-    String(row.id).slice(0, 64)
-  }`;
-  const reviewEpisodeIdentity = fence.semantic_identity ===
-      legacyEpisodeOneIdentity
+  const reviewEpisodeIdentity = fence.episode === null
     ? "issuer_discovery_quarantine"
     : fence.semantic_identity;
   const reviewDedupeKey = await sha256Text(
