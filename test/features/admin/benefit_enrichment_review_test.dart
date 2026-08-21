@@ -121,8 +121,7 @@ final _v6JobJson = <String, dynamic>{
           'dedupeKey': 'card-benefit-v2:$_v6CardId:${'a' * 64}',
           'conditionHash': 'a' * 64,
           'title': 'Dining points',
-          'description': '10 points per ₹100',
-          'valueConfig': {'rate': 10, 'period': 'transaction'},
+          'rate': 10,
         },
       },
     ],
@@ -1106,6 +1105,195 @@ void main() {
     },
   );
 
+  test('v6 staged decisions bind immutable partner and region scope', () {
+    final row = _v6DecisionLaneFixture();
+    final staging = row['staging'] as Map<String, dynamic>;
+    final decisions = (staging['benefit_decisions'] as List)
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+    final proposed = Map<String, dynamic>.from(decisions[1]['proposed'] as Map);
+
+    for (final mutation in [
+      {
+        ...proposed,
+        'partners': ['tampered partner'],
+      },
+      {
+        ...proposed,
+        'regions': ['tampered region'],
+      },
+    ]) {
+      final mutated = [...decisions];
+      mutated[1] = {...decisions[1], 'proposed': mutation};
+      expect(
+        () => BenefitEnrichmentReview.fromJson({
+          ...row,
+          'staging': {...staging, 'benefit_decisions': mutated},
+        }),
+        throwsA(isA<FormatException>()),
+      );
+    }
+  });
+
+  test(
+    'v6 rejects duplicate canonical and live diff targets before empty decision repair',
+    () {
+      final canonical = _v6DecisionLaneFixture();
+      final canonicalStaging = canonical['staging'] as Map<String, dynamic>;
+      final canonicalExtraction =
+          canonicalStaging['extracted_data'] as Map<String, dynamic>;
+      final canonicalDiff = canonicalExtraction['diff'] as Map<String, dynamic>;
+      final duplicateCanonical = Map<String, dynamic>.from(
+        (canonicalDiff['additions'] as List).single as Map,
+      );
+
+      final live = _v6DecisionLaneFixture();
+      final liveStaging = live['staging'] as Map<String, dynamic>;
+      final liveExtraction =
+          liveStaging['extracted_data'] as Map<String, dynamic>;
+      final liveDiff = liveExtraction['diff'] as Map<String, dynamic>;
+      final duplicateCurrent = Map<String, dynamic>.from(
+        ((liveDiff['modifications'] as List).single as Map)['current'] as Map,
+      );
+
+      for (final row in [
+        <String, dynamic>{
+          ...canonical,
+          'staging': {
+            ...canonicalStaging,
+            'benefit_decisions': const [],
+            'extracted_data': {
+              ...canonicalExtraction,
+              'diff': {
+                ...canonicalDiff,
+                'conflicts': [
+                  {
+                    'code': 'conflicting_proposed_terms',
+                    'current': const [],
+                    'proposed': [duplicateCanonical],
+                  },
+                ],
+              },
+            },
+          },
+        },
+        <String, dynamic>{
+          ...live,
+          'staging': {
+            ...liveStaging,
+            'benefit_decisions': const [],
+            'extracted_data': {
+              ...liveExtraction,
+              'diff': {
+                ...liveDiff,
+                'conflicts': [
+                  {
+                    'code': 'conflicting_current_terms',
+                    'current': [duplicateCurrent],
+                    'proposed': const [],
+                  },
+                ],
+              },
+            },
+          },
+        },
+      ]) {
+        expect(
+          () => BenefitEnrichmentReview.fromJson(row),
+          throwsA(isA<FormatException>()),
+        );
+      }
+    },
+  );
+
+  test(
+    'published approve and edit audit decisions require live UUID and key',
+    () {
+      final valid = _v6PublishedDecisionLaneFixture();
+      expect(() => BenefitEnrichmentReview.fromJson(valid), returnsNormally);
+
+      for (final action in ['approve', 'edit']) {
+        final row = _v6PublishedDecisionLaneFixture();
+        final staging = row['staging'] as Map<String, dynamic>;
+        final decisions = (staging['benefit_decisions'] as List)
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .toList();
+        decisions[0] = {...decisions[0], 'action': action}
+          ..remove('benefit_id');
+
+        expect(
+          () => BenefitEnrichmentReview.fromJson({
+            ...row,
+            'staging': {...staging, 'benefit_decisions': decisions},
+          }),
+          throwsA(isA<FormatException>()),
+        );
+      }
+
+      final sqlEdit = _v6PublishedDecisionLaneFixture();
+      final sqlEditStaging = sqlEdit['staging'] as Map<String, dynamic>;
+      final sqlEditDecisions = (sqlEditStaging['benefit_decisions'] as List)
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList();
+      sqlEditDecisions[0] = {...sqlEditDecisions[0], 'action': 'edit'};
+      expect(
+        () => BenefitEnrichmentReview.fromJson({
+          ...sqlEdit,
+          'staging': {...sqlEditStaging, 'benefit_decisions': sqlEditDecisions},
+        }),
+        returnsNormally,
+      );
+    },
+  );
+
+  test(
+    'reject decisions serialize canonical current and global targets distinctly',
+    () {
+      final canonical = BenefitProposal(
+        benefitId: 'card-benefit-v2:$_v6CardId:${'d' * 64}',
+        dedupeKey: 'card-benefit-v2:$_v6CardId:${'d' * 64}',
+        conditionHash: 'd' * 64,
+        title: 'Canonical target',
+      );
+      final current = const BenefitProposal(
+        liveBenefitId: _v6LiveModificationId,
+        dedupeKey: 'legacy:current-target',
+        title: 'Current target',
+      );
+      final canonicalWire = BenefitReviewDecision(
+        action: 'reject',
+        reason: 'Reject proposal',
+        dedupeKey: canonical.dedupeKey,
+        benefit: canonical,
+      ).toJson();
+      final currentWire = BenefitReviewDecision(
+        action: 'reject',
+        reason: 'Reject current',
+        liveBenefitId: _v6LiveModificationId,
+        current: current,
+      ).toJson();
+      final globalWire = const BenefitReviewDecision(
+        action: 'reject',
+        reason: 'Reject review',
+      ).toJson();
+
+      expect(canonicalWire, contains('benefit'));
+      expect(canonicalWire, isNot(contains('current')));
+      expect(canonicalWire, isNot(contains('proposed')));
+      expect(currentWire['benefit_id'], _v6LiveModificationId);
+      expect(currentWire, contains('current'));
+      expect(currentWire, isNot(contains('benefit')));
+      expect(globalWire.keys, unorderedEquals(['action', 'reason']));
+      expect(
+        () => BenefitReviewDecision(
+          action: 'reject',
+          proposed: canonical,
+        ).toJson(),
+        throwsStateError,
+      );
+    },
+  );
+
   test('repository preserves exact bound v6 decision identities', () async {
     final api = _FakeApi(
       AdminCatalogEntryResponse(200, const {'success': true}),
@@ -1822,14 +2010,32 @@ void main() {
         },
       });
 
-      await AdminCatalogRepository(api).approve(item);
+      await expectLater(
+        AdminCatalogRepository(api).approve(item),
+        throwsA(isA<AdminCatalogRequestFailed>()),
+      );
+      expect(api.bodies, isEmpty);
+    },
+  );
 
-      final decisions = api.bodies.single['decisions'] as List;
-      expect(decisions, hasLength(5));
-      expect(decisions.first, containsPair('change_type', 'addition'));
-      expect(decisions[1], containsPair('change_type', 'modification'));
-      expect(decisions[2], containsPair('action', 'keep_existing'));
-      expect(decisions.last, containsPair('dedupe_key', 'candidate'));
+  test(
+    'repository emits one global reject with no accidental target',
+    () async {
+      final api = _FakeApi(
+        AdminCatalogEntryResponse(200, const {'success': true}),
+      );
+
+      await AdminCatalogRepository(
+        api,
+      ).reject(BenefitEnrichmentReview.fromJson(_jobJson), 'Conflicting terms');
+
+      final body = api.bodies.single;
+      final decisions = body['decisions'] as List;
+      expect(decisions, hasLength(1));
+      expect(
+        decisions.single,
+        equals({'action': 'reject', 'reason': 'Conflicting terms'}),
+      );
     },
   );
 
@@ -1932,6 +2138,60 @@ void main() {
       );
     },
   );
+
+  testWidgets('conflicts disable generic bulk apply and require resolution', (
+    tester,
+  ) async {
+    final item = BenefitEnrichmentReview.fromJson({
+      ..._jobJson,
+      'staging': {
+        ...(_jobJson['staging'] as Map<String, dynamic>),
+        'benefit_decisions': const [],
+        'extracted_data': {
+          'parser_version': 'benefits-v1',
+          'diff': {
+            'conflicts': [
+              {
+                'code': 'conflicting_proposed_terms',
+                'current': [
+                  {'dedupeKey': 'current', 'title': 'Current terms'},
+                ],
+                'proposed': [
+                  {'dedupeKey': 'candidate-a', 'title': 'Candidate A'},
+                  {'dedupeKey': 'candidate-b', 'title': 'Candidate B'},
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+    final repository = _FakeRepository(
+      BenefitEnrichmentReviewPage.fromJson(const {
+        'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+        'page': 1,
+        'limit': 25,
+        'has_more': false,
+      }).copyWith(items: [item]),
+    );
+
+    await _pumpPanel(tester, repository);
+
+    final approve = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Approve benefit changes'),
+    );
+    expect(approve.onPressed, isNull);
+    expect(find.textContaining('Resolve each conflict'), findsOneWidget);
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.widgetWithText(OutlinedButton, 'Edit proposed changes'),
+          )
+          .onPressed,
+      isNotNull,
+    );
+    expect(repository.actions, isEmpty);
+  });
 
   testWidgets(
     'v6 panel shows completeness attempts identity migration and eligible retirement',

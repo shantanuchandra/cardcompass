@@ -28,6 +28,24 @@ bool _hasMeaningfulJson(Object? value) {
   return true;
 }
 
+bool _sameJson(Object? left, Object? right) {
+  if (identical(left, right)) return true;
+  if (left is List && right is List) {
+    return left.length == right.length &&
+        List.generate(
+          left.length,
+          (index) => index,
+        ).every((index) => _sameJson(left[index], right[index]));
+  }
+  if (left is Map && right is Map) {
+    return left.length == right.length &&
+        left.keys.every(
+          (key) => right.containsKey(key) && _sameJson(left[key], right[key]),
+        );
+  }
+  return left == right;
+}
+
 BenefitProposal? _decisionProposal(Object? value) {
   if (value is! Map || !_hasMeaningfulJson(value)) return null;
   return BenefitProposal.fromJson(Map<String, dynamic>.from(value));
@@ -213,6 +231,8 @@ class BenefitEnrichmentReview {
 
   bool get canReview =>
       status == 'staged' && staging.id != null && staging.status == 'pending';
+  bool get hasConflicts => staging.extractedData.diff.conflicts.isNotEmpty;
+  bool get canBulkApply => canReview && !hasConflicts;
   bool get isQuarantined => status == 'quarantined';
   bool get canQuarantine =>
       status == 'queued' || status == 'failed' || status == 'review_required';
@@ -297,6 +317,50 @@ class BenefitEnrichmentReview {
         left.benefitId == right.benefitId &&
         left.dedupeKey == right.dedupeKey &&
         left.conditionHash == right.conditionHash;
+
+    JsonMap approvalProjection(BenefitProposal proposal) => {
+      'benefitId': proposal.benefitId,
+      'dedupeKey': proposal.dedupeKey,
+      'conditionHash': proposal.conditionHash,
+      'offerSubject': proposal.offerSubject,
+      'title': proposal.title,
+      'description': proposal.description,
+      'category': proposal.category,
+      'valueType': proposal.valueType,
+      'value': proposal.value,
+      'rate': proposal.rate,
+      'cap': proposal.cap,
+      'threshold': proposal.threshold,
+      'frequency': proposal.frequency,
+      'period': proposal.period,
+      'valueConfig': proposal.valueConfig,
+      'restrictions': proposal.restrictions,
+      'exclusions': proposal.exclusions,
+      'partners': proposal.partners,
+      'regions': proposal.regions,
+      'effectiveFrom': proposal.effectiveFrom,
+      'effectiveTo': proposal.effectiveTo,
+      'sourceIdentity': proposal.sourceIdentity,
+      'sourceIdentities': proposal.sourceIdentities,
+    };
+
+    JsonMap immutableEditProjection(BenefitProposal proposal) => {
+      'benefitId': proposal.benefitId,
+      'dedupeKey': proposal.dedupeKey,
+      'conditionHash': proposal.conditionHash,
+      'offerSubject': proposal.offerSubject,
+      'category': proposal.category,
+      'valueType': proposal.valueType,
+      'valueConfig': proposal.valueConfig,
+      'restrictions': proposal.restrictions,
+      'exclusions': proposal.exclusions,
+      'partners': proposal.partners,
+      'regions': proposal.regions,
+      'sourceIdentity': proposal.sourceIdentity,
+      'sourceIdentities': proposal.sourceIdentities,
+    };
+
+    bool sameProjection(JsonMap left, JsonMap right) => _sameJson(left, right);
 
     bool sameCurrentIdentity(BenefitProposal left, BenefitProposal right) =>
         left.liveBenefitId == right.liveBenefitId &&
@@ -383,6 +447,15 @@ class BenefitEnrichmentReview {
           _V6CanonicalDecisionTarget(proposal: proposal, lane: 'conflict'),
         );
       }
+      for (final current in conflict.current) {
+        addCurrentTarget(
+          _V6CurrentDecisionTarget(current: current, lane: 'conflict'),
+        );
+      }
+    }
+    if (canonicalTargets.values.any((targets) => targets.length != 1) ||
+        currentTargets.values.any((targets) => targets.length != 1)) {
+      throw const FormatException('Malformed v6 decision identity.');
     }
 
     _V6CanonicalDecisionTarget exactCanonicalTarget(BenefitProposal proposal) {
@@ -436,7 +509,25 @@ class BenefitEnrichmentReview {
       BenefitProposal proposal,
     ) {
       final actual = exactCanonicalTarget(proposal);
-      if (actual.proposal.benefitId != expected.proposal.benefitId) {
+      if (actual.proposal.benefitId != expected.proposal.benefitId ||
+          !sameProjection(
+            approvalProjection(proposal),
+            approvalProjection(expected.proposal),
+          )) {
+        throw const FormatException('Malformed v6 decision identity.');
+      }
+    }
+
+    void requireEditableCanonicalTarget(
+      _V6CanonicalDecisionTarget expected,
+      BenefitProposal proposal,
+    ) {
+      final actual = exactCanonicalTarget(proposal);
+      if (actual.proposal.benefitId != expected.proposal.benefitId ||
+          !sameProjection(
+            immutableEditProjection(proposal),
+            immutableEditProjection(expected.proposal),
+          )) {
         throw const FormatException('Malformed v6 decision identity.');
       }
     }
@@ -474,21 +565,22 @@ class BenefitEnrichmentReview {
       final action = decision.action.toLowerCase();
       String decisionIdentity;
       if (action == 'approve' || action == 'edit') {
-        final primary = action == 'edit'
-            ? decision.editedBenefit ?? decision.benefit
-            : decision.benefit ?? decision.proposed;
+        final primary =
+            decision.benefit ?? decision.proposed ?? decision.editedBenefit;
         if (!publishedDecisionLane && primary == null) {
           throw const FormatException('Malformed v6 decision identity.');
         }
         final target = primary == null
             ? canonicalTargetForKey(decision.dedupeKey)
             : exactCanonicalTarget(primary);
-        for (final proposal in [
-          decision.benefit,
-          decision.proposed,
-          decision.editedBenefit,
-        ]) {
+        for (final proposal in [decision.benefit, decision.proposed]) {
           if (proposal != null) requireCanonicalTarget(target, proposal);
+        }
+        if (decision.editedBenefit != null) {
+          if (action != 'edit') {
+            throw const FormatException('Malformed v6 decision identity.');
+          }
+          requireEditableCanonicalTarget(target, decision.editedBenefit!);
         }
         if (decision.current != null) {
           final linkedCurrent = target.current;
@@ -506,6 +598,10 @@ class BenefitEnrichmentReview {
         }
         if (decision.existingBenefitId != null &&
             decision.existingBenefitId != target.current?.liveBenefitId) {
+          throw const FormatException('Malformed v6 decision identity.');
+        }
+        if (publishedDecisionLane &&
+            (decision.liveBenefitId == null || decision.dedupeKey == null)) {
           throw const FormatException('Malformed v6 decision identity.');
         }
         if (!publishedDecisionLane &&
@@ -943,6 +1039,8 @@ class BenefitProposal {
     this.valueConfig = const {},
     this.restrictions = const [],
     this.exclusions = const [],
+    this.partners = const [],
+    this.regions = const [],
     this.effectiveFrom,
     this.effectiveTo,
     this.sourceUrl,
@@ -978,6 +1076,8 @@ class BenefitProposal {
         .whereType<String>()
         .toList(growable: false),
     exclusions: json['exclusions'],
+    partners: _strings(json['partners']),
+    regions: _strings(json['regions']),
     effectiveFrom: _text(json['effectiveFrom']),
     effectiveTo: _text(json['effectiveTo']),
     sourceUrl: _text(json['sourceUrl']),
@@ -1014,6 +1114,8 @@ class BenefitProposal {
   final JsonMap valueConfig;
   final List<String> restrictions;
   final Object? exclusions;
+  final List<String> partners;
+  final List<String> regions;
   final String? effectiveFrom;
   final String? effectiveTo;
   final String? sourceUrl;
@@ -1049,6 +1151,8 @@ class BenefitProposal {
         valueConfig: valueConfig,
         restrictions: restrictions,
         exclusions: exclusions,
+        partners: partners,
+        regions: regions,
         effectiveFrom: effectiveFrom,
         effectiveTo: effectiveTo,
         sourceUrl: sourceUrl,
@@ -1082,6 +1186,8 @@ class BenefitProposal {
     if (valueConfig.isNotEmpty) 'valueConfig': valueConfig,
     if (restrictions.isNotEmpty) 'restrictions': restrictions,
     if (exclusions != null) 'exclusions': exclusions,
+    if (partners.isNotEmpty) 'partners': partners,
+    if (regions.isNotEmpty) 'regions': regions,
     if (effectiveFrom != null) 'effectiveFrom': effectiveFrom,
     if (effectiveTo != null) 'effectiveTo': effectiveTo,
     if (sourceUrl != null) 'sourceUrl': sourceUrl,
@@ -1228,19 +1334,66 @@ class BenefitReviewDecision {
         current: current,
       );
 
-  JsonMap toJson() => {
-    'action': action,
-    if (reason != null) 'reason': reason,
-    if (liveBenefitId != null) 'benefit_id': liveBenefitId,
-    if (benefit != null) 'benefit': benefit!.toJson(),
-    if (proposed != null) 'proposed': proposed!.toJson(),
-    if (editedBenefit != null) 'edited_benefit': editedBenefit!.toJson(),
-    if (current != null) 'current': current!.toJson(),
-    if (changeType != null) 'change_type': changeType,
-    if (dedupeKey != null) 'dedupe_key': dedupeKey,
-    if (displayPriority != null) 'display_priority': displayPriority,
-    if (isPrimary != null) 'is_primary': isPrimary,
-  };
+  JsonMap toJson() {
+    if (action.toLowerCase() == 'reject') {
+      if (proposed != null || editedBenefit != null) {
+        throw StateError(
+          'Reject targets must use benefit, current, or no target.',
+        );
+      }
+      if (benefit != null && current != null) {
+        throw StateError('A reject decision may have only one target.');
+      }
+      if (benefit != null) {
+        if (benefit!.liveBenefitId != null || liveBenefitId != null) {
+          throw StateError('Canonical reject targets cannot carry a live ID.');
+        }
+        return {
+          'action': action,
+          if (reason != null) 'reason': reason,
+          'benefit': benefit!.toJson(),
+          if (dedupeKey != null) 'dedupe_key': dedupeKey,
+        };
+      }
+      if (current != null) {
+        final currentLiveId = current!.liveBenefitId;
+        if (currentLiveId == null || liveBenefitId != currentLiveId) {
+          throw StateError(
+            'Current reject targets require their exact live benefit ID.',
+          );
+        }
+        if (dedupeKey != null && dedupeKey != current!.dedupeKey) {
+          throw StateError('Current reject target key does not match.');
+        }
+        return {
+          'action': action,
+          if (reason != null) 'reason': reason,
+          'benefit_id': currentLiveId,
+          'current': current!.toJson(),
+          if (dedupeKey != null) 'dedupe_key': dedupeKey,
+        };
+      }
+      if (liveBenefitId != null ||
+          existingBenefitId != null ||
+          dedupeKey != null) {
+        throw StateError('Global reject decisions cannot carry a target.');
+      }
+      return {'action': action, if (reason != null) 'reason': reason};
+    }
+    return {
+      'action': action,
+      if (reason != null) 'reason': reason,
+      if (liveBenefitId != null) 'benefit_id': liveBenefitId,
+      if (benefit != null) 'benefit': benefit!.toJson(),
+      if (proposed != null) 'proposed': proposed!.toJson(),
+      if (editedBenefit != null) 'edited_benefit': editedBenefit!.toJson(),
+      if (current != null) 'current': current!.toJson(),
+      if (changeType != null) 'change_type': changeType,
+      if (dedupeKey != null) 'dedupe_key': dedupeKey,
+      if (displayPriority != null) 'display_priority': displayPriority,
+      if (isPrimary != null) 'is_primary': isPrimary,
+    };
+  }
 }
 
 class BenefitJobHistory {

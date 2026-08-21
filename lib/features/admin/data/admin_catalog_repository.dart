@@ -123,34 +123,34 @@ class AdminCatalogRepository implements BenefitEnrichmentRepository {
   }
 
   @override
-  Future<void> approve(BenefitEnrichmentReview item) =>
-      _mutate('benefit-approve', item, decisions: _decisionsFor(item));
+  Future<void> approve(BenefitEnrichmentReview item) async {
+    if (item.hasConflicts) {
+      throw AdminCatalogRequestFailed(
+        'Conflicting proposals require one explicit edit or rejection.',
+      );
+    }
+    await _mutate('benefit-approve', item, decisions: _decisionsFor(item));
+  }
 
   @override
   Future<void> editApprove(
     BenefitEnrichmentReview item,
     List<BenefitReviewDecision> decisions,
-  ) => _mutate('benefit-edit-approve', item, decisions: decisions);
+  ) async {
+    if (item.hasConflicts &&
+        (decisions.length != 1 || decisions.single.action != 'edit')) {
+      throw AdminCatalogRequestFailed(
+        'A conflicting proposal requires exactly one explicit edit.',
+      );
+    }
+    await _mutate('benefit-edit-approve', item, decisions: decisions);
+  }
 
   @override
   Future<void> reject(BenefitEnrichmentReview item, String reason) => _mutate(
     'benefit-reject',
     item,
-    decisions: _decisionsFor(item)
-        .map(
-          (decision) => BenefitReviewDecision(
-            action: 'reject',
-            reason: reason,
-            changeType: decision.changeType,
-            liveBenefitId: decision.liveBenefitId,
-            dedupeKey: decision.dedupeKey,
-            displayPriority: decision.displayPriority,
-            isPrimary: decision.isPrimary,
-            benefit: decision.benefit,
-            proposed: decision.proposed,
-          ),
-        )
-        .toList(growable: false),
+    decisions: [BenefitReviewDecision(action: 'reject', reason: reason)],
     reason: reason,
   );
 
@@ -272,28 +272,6 @@ class AdminCatalogRepository implements BenefitEnrichmentRepository {
           benefit: change.current,
           proposed: change.proposed,
         ),
-      ),
-      ...diff.conflicts.expand(
-        (conflict) => [
-          ...conflict.current.map(
-            (benefit) => BenefitReviewDecision(
-              action: 'keep_existing',
-              changeType: 'conflict',
-              liveBenefitId: benefit.liveBenefitId,
-              dedupeKey: benefit.dedupeKey,
-              benefit: benefit,
-            ),
-          ),
-          ...conflict.proposed.map(
-            (benefit) => BenefitReviewDecision(
-              action: 'approve',
-              changeType: 'conflict',
-              dedupeKey: benefit.dedupeKey,
-              benefit: benefit,
-              proposed: benefit,
-            ),
-          ),
-        ],
       ),
     ];
   }

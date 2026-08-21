@@ -303,7 +303,7 @@ class _BenefitEnrichmentReviewPanelState
                     child: _BenefitReviewCard(
                       item: item,
                       onOpenUrl: widget.onOpenUrl,
-                      onApprove: !_mutating && item.canReview
+                      onApprove: !_mutating && item.canBulkApply
                           ? () async {
                               if (await _confirmApproval()) {
                                 await _run(
@@ -589,6 +589,10 @@ class _BenefitReviewCard extends StatelessWidget {
             if (diff.conflicts.isNotEmpty) ...[
               const Divider(),
               const Text('Conflicts'),
+              Text(
+                'Resolve each conflict with one explicit edit or reject this review. Bulk apply is disabled.',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
               ...diff.conflicts.expand(
                 (conflict) => [
                   Text('Current: ${conflict.code ?? 'Unspecified conflict'}'),

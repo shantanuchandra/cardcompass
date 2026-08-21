@@ -2091,7 +2091,6 @@ Deno.test("v6 decisions reject duplicate proposal and live identities across eve
       absent_legacy_benefit_ids: [],
     },
     diff: {
-      unchanged: [{ current, proposed: proposal }],
       possibleRemovals: [{
         benefit: current,
         retirementEligible: true,
@@ -2138,6 +2137,295 @@ Deno.test("v6 decisions reject duplicate proposal and live identities across eve
       "duplicate decision identity was accepted",
     );
   }
+});
+
+Deno.test("v6 reject wire distinguishes proposal current and global targets", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const liveBenefitId = "11111111-1111-4111-8111-111111111111";
+  const current = { ...proposal, liveBenefitId };
+  const extraction = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v6",
+    proposals: [proposal],
+    diff: { modifications: [{ current, proposed: proposal }] },
+  };
+
+  const proposalReject = await validateV6ApprovalDecisions(
+    [{ action: "reject", benefit: proposal }],
+    extraction,
+    "card-1",
+  );
+  const currentReject = await validateV6ApprovalDecisions(
+    [{ action: "reject", benefit_id: liveBenefitId, current }],
+    extraction,
+    "card-1",
+  );
+  const globalReject = await validateV6ApprovalDecisions(
+    [{ action: "reject" }],
+    extraction,
+    "card-1",
+  );
+  assert(
+    proposalReject[0].proposal_index === 0 &&
+      !("benefit_id" in proposalReject[0]),
+    "canonical reject was not bound to its proposal",
+  );
+  assert(
+    currentReject[0].benefit_id === liveBenefitId &&
+      !("proposal_index" in currentReject[0]),
+    "current reject was not bound to its live UUID",
+  );
+  assert(
+    !("benefit_id" in globalReject[0]) &&
+      !("proposal_index" in globalReject[0]),
+    "global reject acquired an accidental target",
+  );
+
+  let proposedOnly: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      [{ action: "reject", proposed: proposal }],
+      extraction,
+      "card-1",
+    );
+  } catch (caught) {
+    proposedOnly = caught;
+  }
+  assert(
+    proposedOnly instanceof Error &&
+      (proposedOnly as { code?: string }).code ===
+        "client_publication_authority_rejected",
+    "proposed-only reject widened into a global reject",
+  );
+});
+
+Deno.test("v6 validates every canonical and live diff target before decisions", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const liveBenefitId = "11111111-1111-4111-8111-111111111111";
+  const current = { ...proposal, liveBenefitId };
+  const duplicateDiffs = [
+    {
+      additions: [proposal],
+      conflicts: [{
+        code: "conflicting_proposed_terms",
+        current: [],
+        proposed: [proposal],
+      }],
+    },
+    {
+      modifications: [{ current, proposed: proposal }],
+      conflicts: [{
+        code: "conflicting_current_terms",
+        current: [current],
+        proposed: [],
+      }],
+    },
+  ];
+
+  for (const diff of duplicateDiffs) {
+    let error: unknown;
+    try {
+      await validateV6ApprovalDecisions(
+        [{ action: "reject" }],
+        {
+          request_type: "official_benefit_enrichment",
+          parser_version: "benefits-v6",
+          proposals: [proposal],
+          diff,
+        },
+        "card-1",
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert(
+      error instanceof Error &&
+        (error as { code?: string }).code ===
+          "duplicate_staged_decision_target",
+      "duplicate diff target survived global validation",
+    );
+  }
+});
+
+Deno.test("v6 conflicting proposals require exactly one explicit resolution", async () => {
+  const [first] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const [second] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 20% cashback on dining spends.",
+      contentHash: "b".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const current = {
+    ...first,
+    liveBenefitId: "11111111-1111-4111-8111-111111111111",
+  };
+  const extraction = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v6",
+    proposals: [first, second],
+    diff: {
+      conflicts: [{
+        code: "conflicting_proposed_terms",
+        current: [current],
+        proposed: [first, second],
+      }],
+    },
+  };
+
+  let bulk: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      [
+        { action: "approve", benefit: first },
+        { action: "approve", benefit: second },
+      ],
+      extraction,
+      "card-1",
+    );
+  } catch (caught) {
+    bulk = caught;
+  }
+  assert(
+    bulk instanceof Error &&
+      (bulk as { code?: string }).code === "conflicting_proposal_decisions",
+    "one conflict group approved every contradictory proposal",
+  );
+
+  const selected = await validateV6ApprovalDecisions(
+    [{ action: "approve", benefit: first }],
+    extraction,
+    "card-1",
+  );
+  assert(selected.length === 1, "explicit conflict selection was rejected");
+
+  let unresolved: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      [{ action: "keep_existing", benefit_id: current.liveBenefitId }],
+      extraction,
+      "card-1",
+    );
+  } catch (caught) {
+    unresolved = caught;
+  }
+  assert(
+    unresolved instanceof Error &&
+      (unresolved as { code?: string }).code ===
+        "conflicting_proposal_decisions",
+    "conflict group completed without one proposed resolution",
+  );
+});
+
+Deno.test("v6 approval binds the full projection and edits preserve immutable fields", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text:
+        "Get 10% cashback on dining spends, capped at ₹500 per month until 31 December 2027.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const extraction = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v6",
+    proposals: [proposal],
+  };
+  const rate = Number(proposal.rate ?? 10);
+  const mutations = [
+    { ...proposal, rate: rate + 1 },
+    {
+      ...proposal,
+      valueConfig: { ...proposal.valueConfig, cap: 999 },
+    },
+    {
+      ...proposal,
+      exclusions: {
+        ...proposal.exclusions,
+        merchants: ["tampered merchant"],
+      },
+    },
+    { ...proposal, sourceIdentity: "f".repeat(64) },
+    { ...proposal, effectiveTo: "2099-12-31" },
+  ];
+  for (const mutated of mutations) {
+    let error: unknown;
+    try {
+      await validateV6ApprovalDecisions(
+        [{ action: "approve", benefit: mutated }],
+        extraction,
+        "card-1",
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert(error instanceof Error, "mutated approval projection was accepted");
+  }
+
+  let immutableEdit: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      [{
+        action: "edit",
+        edited_benefit: {
+          ...proposal,
+          rate: rate + 1,
+          sourceIdentity: "f".repeat(64),
+        },
+      }],
+      extraction,
+      "card-1",
+    );
+  } catch (caught) {
+    immutableEdit = caught;
+  }
+  assert(
+    immutableEdit instanceof Error &&
+      (immutableEdit as { code?: string }).code ===
+        "immutable_benefit_projection",
+    "edit changed immutable source identity",
+  );
+
+  const supported = await validateV6ApprovalDecisions(
+    [{
+      action: "edit",
+      edited_benefit: { ...proposal, rate: rate + 1 },
+    }],
+    extraction,
+    "card-1",
+  );
+  assert(
+    (supported[0].edited_benefit as Record<string, unknown>).rate === rate + 1,
+    "documented commercial edit was rejected",
+  );
 });
 
 Deno.test("v6 decision validation bounds one review payload before identity work", async () => {
@@ -2920,6 +3208,89 @@ Deno.test("pending v5 rollback approval uses the locked legacy identity migratio
     error = caught;
   }
   assert(error instanceof Error, "v5 client change_type became authoritative");
+});
+
+Deno.test("v5 rollback preserves reject wire and conflict resolution parity", async () => {
+  const [first] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 10% cashback on dining spends.",
+    contentHash: "a".repeat(64),
+  }], "benefits-v5");
+  const [second] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 20% cashback on dining spends.",
+    contentHash: "b".repeat(64),
+  }], "benefits-v5");
+  assert(
+    first != null && second != null,
+    "v5 conflict fixture did not extract",
+  );
+  const extraction = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v5",
+    proposals: [first, second],
+    diff: {
+      conflicts: [{
+        code: "conflicting_proposed_terms",
+        current: [],
+        proposed: [first, second],
+      }],
+    },
+  };
+
+  for (
+    const fixture of [
+      {
+        decisions: [{ action: "reject", proposed: first }],
+        code: "client_publication_authority_rejected",
+        extraction: {
+          request_type: "official_benefit_enrichment",
+          parser_version: "benefits-v5",
+          proposals: [first],
+        },
+      },
+      {
+        decisions: [
+          { action: "approve", benefit: first },
+          { action: "approve", benefit: second },
+        ],
+        code: "conflicting_proposal_decisions",
+        extraction,
+      },
+    ]
+  ) {
+    let error: unknown;
+    try {
+      await validateV5ApprovalDecisions(
+        fixture.decisions,
+        fixture.extraction,
+        "card-1",
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert(
+      error instanceof Error &&
+        (error as { code?: string }).code === fixture.code,
+      `v5 parity failure did not return ${fixture.code}`,
+    );
+  }
+
+  const selected = await validateV5ApprovalDecisions(
+    [{ action: "approve", benefit: first }],
+    extraction,
+    "card-1",
+  );
+  const global = await validateV5ApprovalDecisions(
+    [{ action: "reject" }],
+    extraction,
+    "card-1",
+  );
+  assert(selected.length === 1, "v5 explicit selection was rejected");
+  assert(
+    !("benefit_id" in global[0]) && !("proposal_index" in global[0]),
+    "v5 global reject acquired an accidental target",
+  );
 });
 
 Deno.test("oversized locked proposal sets cannot approve a displayed subset", async () => {
